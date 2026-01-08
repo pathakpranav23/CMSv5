@@ -1,0 +1,76 @@
+{% extends "layout.html" %}
+{% block page_class %}attendance-module module-cards{% endblock %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (role or (current_user.role if current_user.is_authenticated else 'Guest')) %}
+  {% set role_display_lower = (role_display or '')|lower %}
+  {% set role_display_pretty = ('Staff' if role_display_lower == 'faculty' else (role_display|capitalize)) %}
+  <div class="section-header d-flex align-items-center justify-content-between mb-2">
+    <h3 class="mb-0 title d-flex align-items-center">Attendance Module <span class="role-badge ms-2">{{ role_display_pretty }}</span></h3>
+    <div class="actions"></div>
+  </div>
+  {% if role_display_lower == 'admin' %}
+    <div class="small text-muted" data-bs-toggle="tooltip" data-bs-placement="right" title="Admins can mark, show, search, and view admin reports across programs and divisions.">Admin: Elevated access on this module.</div>
+  {% endif %}
+  <p class="text-muted soft-hint">Quick actions and helpful links for managing attendance.</p>
+
+  <div class="row g-3">
+    <div class="col-md-6">
+      <div class="card mod-card mod-card--quick">
+        <div class="card-header">Quick Actions</div>
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-calendar-check"></i></div>
+          <div class="list-group">
+            <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_mark') }}">Mark Attendance</a>
+            <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_show') }}">Show Attendance</a>
+            <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_search') }}">Attendance Search</a>
+            {% if (role or '') in ['admin','principal'] %}
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_report_admin') }}">Admin Report</a>
+            {% endif %}
+            {% if (role or '') == 'faculty' %}
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_report_faculty') }}">My Attendance Report</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card mod-card mod-card--links">
+        <div class="card-header">Helpful Links</div>
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-info-circle"></i></div>
+          <ul class="list-unstyled mb-0">
+            <li>Use Program → Semester → Division filters to narrow context.</li>
+            <li>CSV exports are available in report pages.</li>
+            <li>Late (L) counts as Present for percent metrics.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-3">
+    <button class="btn btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#attendancePower">Power Actions</button>
+    <div id="attendancePower" class="collapse mt-2">
+      <div class="card mod-card mod-card--links">
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-12">
+        <div class="small text-muted soft-hint">Advanced links for power users.</div>
+            </div>
+            <div class="col-md-4">
+              <a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.students') }}">View Students</a>
+            </div>
+            <div class="col-md-4">
+              <a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.subjects_list') }}">View Subjects</a>
+            </div>
+            <div class="col-md-4">
+<a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.faculty_list') }}">View Staff</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

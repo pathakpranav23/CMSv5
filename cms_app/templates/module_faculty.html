@@ -1,0 +1,64 @@
+{% extends "layout.html" %}
+{% block page_class %}faculty-module module-cards{% endblock %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (role or (current_user.role if current_user.is_authenticated else 'Guest')) %}
+  {% set role_display_pretty = 'Staff' if (role_display|lower == 'faculty') else (role_display|capitalize) %}
+  {% set role_display_lower = (role_display or '')|lower %}
+  <div class="section-header d-flex align-items-center">
+    <h3 class="mb-0">{{ t('Staff Module') }}</h3>
+    <span class="role-badge ms-2">{{ role_display_pretty }}</span>
+  </div>
+  {% if role_display_lower == 'admin' %}
+    <div class="small text-muted" data-bs-toggle="tooltip" data-bs-placement="right" title="Admins can add staff and manage assignments with program-wide scope.">Admin: Elevated access on this module.</div>
+  {% endif %}
+  <p class="text-muted soft-hint">{{ t('Manage staff profiles and teaching assignments.') }}</p>
+
+  <div class="row g-3">
+    <div class="col-md-6">
+      <div class="card mod-card mod-card--quick">
+        <div class="card-header">{{ t('Quick Actions') }}</div>
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-person-badge"></i></div>
+          <div class="list-group">
+            <a class="list-group-item list-group-item-action" href="{{ url_for('main.faculty_list') }}">{{ t('View Staff') }}</a>
+            {% if (role or '') in ['admin','principal'] %}
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.faculty_new') }}">{{ t('Add Staff') }}</a>
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.subjects_list') }}">{{ t('Assign Staff to Divisions') }}</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card mod-card mod-card--links">
+        <div class="card-header">{{ t('Helpful Links') }}</div>
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-info-circle"></i></div>
+          <ul class="list-unstyled mb-0">
+            <li>{{ t('Assignments drive subject visibility in attendance pages.') }}</li>
+            <li>{{ t('Use academic year and program for accurate mappings.') }}</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mt-3">
+    <button class="btn btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#facultyPower">{{ t('Power Actions') }}</button>
+    <div id="facultyPower" class="collapse mt-2">
+      <div class="card mod-card mod-card--links">
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-12"><div class="small text-muted soft-hint">{{ t('Advanced links for power users.') }}</div></div>
+            <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.subjects_list') }}">{{ t('Subjects') }}</a></div>
+            <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.attendance_report_faculty') }}">{{ t('My Attendance Report') }}</a></div>
+            {% if (role or '') in ['admin','principal'] %}
+              <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.attendance_report_admin') }}">{{ t('Admin Attendance Report') }}</a></div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

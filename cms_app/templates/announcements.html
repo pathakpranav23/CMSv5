@@ -1,0 +1,88 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+    {% set role_display_lower = (role_display or '')|lower %}
+    {% set role_display_pretty = ('Staff' if role_display_lower == 'faculty' else (role_display|capitalize)) %}
+    <h2 class="mb-0 title d-flex align-items-center">Announcements <span class="role-badge ms-2">{{ role_display_pretty }}</span></h2>
+    <div class="actions">
+      {% set user_role = (current_user.role or '')|lower %}
+      {% if user_role in ['admin','clerk','principal','faculty'] %}
+        <a class="btn btn-primary btn-sm" href="{{ url_for('main.announcement_new') }}">New Announcement</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for('main.announcements_list') }}">
+    <div class="col-auto">
+      <label class="form-label mb-0">Severity</label>
+      <select name="severity" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for s in ['info','success','warning','danger'] %}
+          <option value="{{ s }}" {% if (selected_severity or '') == s %}selected{% endif %}>{{ s|capitalize }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label mb-0">Program</label>
+      <select name="program_id" class="form-select form-select-sm">
+        <option value="">All</option>
+        {% for p in programs %}
+          <option value="{{ p.program_id }}" {% if selected_program_id and selected_program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-auto form-check">
+      <input class="form-check-input" type="checkbox" id="activeOnly" name="active" value="true" {% if only_active %}checked{% endif %}>
+      <label class="form-check-label" for="activeOnly">Active only</label>
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-sm btn-primary" type="submit">Apply</button>
+    </div>
+  </form>
+
+  <div class="table-responsive">
+    <table class="table table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Severity</th>
+          <th>Program</th>
+          <th>Active</th>
+          <th>Start</th>
+          <th>End</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in rows %}
+        <tr>
+          <td>{{ a.title }}</td>
+          <td><span class="badge bg-{{ a.severity or 'info' }}">{{ (a.severity or 'info')|capitalize }}</span></td>
+          <td>{{ a.program.program_name if a.program_id_fk and a.program else 'All' }}</td>
+          <td>{% if a.is_active %}<span class="badge bg-success">Active</span>{% else %}<span class="badge bg-secondary">Inactive</span>{% endif %}</td>
+          <td>{{ a.start_at.strftime('%Y-%m-%d %H:%M') if a.start_at else '-' }}</td>
+          <td>{{ a.end_at.strftime('%Y-%m-%d %H:%M') if a.end_at else '-' }}</td>
+          <td>
+            {% set user_role = (current_user.role or '')|lower %}
+            {% set is_admin_clerk = (user_role in ['admin','clerk']) %}
+            {% set is_owner = current_user.is_authenticated and (a.created_by == current_user.user_id) %}
+            {% if is_admin_clerk or is_owner %}
+              <a class="btn btn-sm btn-outline-primary me-1" href="{{ url_for('main.announcement_edit', announcement_id=a.announcement_id) }}">Edit</a>
+              {% if a.is_active %}
+              <form method="post" action="{{ url_for('main.announcement_deactivate', announcement_id=a.announcement_id) }}" class="d-inline">
+                <button class="btn btn-sm btn-outline-warning" type="submit">Deactivate</button>
+              </form>
+              {% endif %}
+            {% else %}
+              <span class="text-muted">No actions</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

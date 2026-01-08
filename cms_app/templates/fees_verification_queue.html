@@ -1,0 +1,81 @@
+{% extends 'layout.html' %}
+{% block title %}Verification Queue{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h3 class="mb-0 title">Verification Queue</h3>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.dashboard') }}">Back</a>
+  </div>
+
+  {% if payments|length == 0 %}
+    <div class="alert alert-info">No submitted payments awaiting verification.</div>
+  {% else %}
+    <div class="table-responsive">
+      <table class="table table-striped align-middle">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>ENR</th>
+            <th>Student</th>
+            <th>Program</th>
+            <th>Sem</th>
+            <th>Medium</th>
+            <th>Amount</th>
+            <th>UTR</th>
+            <th>Proof</th>
+            <th>Submitted</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for p in payments %}
+          {% set s = students.get(p.enrollment_no) %}
+          {% set prog = programs.get(p.program_id_fk) %}
+          <tr>
+            <td>{{ p.payment_id }}</td>
+            <td>{{ p.enrollment_no }}</td>
+            <td>{{ s.student_name if s else '' }}</td>
+            <td>{{ prog.program_name if prog else '' }}</td>
+            <td>{{ p.semester }}</td>
+            <td>{{ p.medium_tag or '' }}</td>
+            <td>₹ {{ '%.2f'|format(p.amount or 0) }}</td>
+            <td>{{ p.utr }}</td>
+            <td>
+              {% if p.proof_image_path %}
+                <a class="btn btn-sm btn-outline-primary" target="_blank" href="{{ url_for('static', filename=p.proof_image_path) }}">View</a>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>{{ p.created_at.strftime('%Y-%m-%d %H:%M') if p.created_at else '' }}</td>
+            <td class="d-flex gap-2">
+              <form method="post" action="{{ url_for('main.fees_payment_verify', payment_id=p.payment_id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                <div class="row g-1 mb-1">
+                  <div class="col-auto">
+                    <input type="text" name="payer_name" class="form-control form-control-sm" placeholder="Payer name" value="{{ p.payer_name or '' }}" />
+                  </div>
+                  <div class="col-auto">
+                    <input type="datetime-local" name="bank_credit_at" class="form-control form-control-sm" placeholder="Bank credit date" value="{{ p.bank_credit_at.strftime('%Y-%m-%dT%H:%M') if p.bank_credit_at else '' }}" />
+                  </div>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="ovr{{ p.payment_id }}" name="override_duplicate" value="true">
+                  <label class="form-check-label" for="ovr{{ p.payment_id }}">Override duplicate</label>
+                </div>
+                <button type="submit" class="btn btn-success btn-sm mt-1">Verify</button>
+              </form>
+              <form method="post" action="{{ url_for('main.fees_payment_reject', payment_id=p.payment_id) }}" class="d-flex align-items-center">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                <input type="text" name="remarks" class="form-control form-control-sm" placeholder="Remarks" />
+                <button type="submit" class="btn btn-danger btn-sm ms-2">Reject</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,152 @@
+{% extends 'layout.html' %}
+{% import '_macros.html' as ui %}
+{% block content %}
+<div class="section-header">
+  <h2 class="mb-0">Edit Student</h2>
+  <div class="d-flex align-items-center gap-2">
+    {{ ui.back_link(url_for('main.students'), 'Back to Students') }}
+  </div>
+</div>
+{{ ui.breadcrumbs([
+  ('Dashboard', url_for('main.dashboard')),
+  ('Students', url_for('main.students')),
+  ('Edit', '')
+]) }}
+<div class="soft-hint text-muted mb-2">
+  Editing: <strong>{{ form_data.get('enrollment_no') }}</strong>
+  {% if form_data.get('photo_url') %}
+    <img src="{{ form_data.get('photo_url') }}" alt="Photo" class="ms-2 rounded" style="height:28px; width:auto; object-fit:cover; border:1px solid #ddd;" />
+  {% endif %}
+</div>
+
+{% if errors and errors|length > 0 %}
+<div class="alert alert-danger" role="alert">
+  <strong>Please fix the following:</strong>
+  <ul class="mb-0">
+    {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('main.students_edit', enrollment_no=form_data.get('enrollment_no')) }}" class="row g-3" enctype="multipart/form-data">
+  <div class="col-md-4">
+    <label class="form-label">Enrollment No</label>
+    <input type="text" class="form-control" value="{{ form_data.get('enrollment_no','') }}" disabled />
+  </div>
+  <div class="col-md-4">
+    <label for="program_id_fk" class="form-label">Program</label>
+    <select id="program_id_fk" name="program_id_fk" class="form-select" required>
+      <option value="">-- Select Program --</option>
+      {% for p in programs %}
+        <option value="{{ p.program_id }}" {{ 'selected' if form_data.get('program_id_fk') == p.program_id|string else '' }}>{{ p.program_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-4">
+    <label for="division_id_fk" class="form-label">Division (optional)</label>
+    <select id="division_id_fk" name="division_id_fk" class="form-select">
+      <option value="">-- None --</option>
+      {% for d in divisions %}
+        {% set key = d.division_id %}
+        <option value="{{ key }}" {{ 'selected' if form_data.get('division_id_fk') == key|string else '' }}>{{ d.semester }} - {{ d.division_code }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="col-md-4">
+    <label for="surname" class="form-label">Surname</label>
+    <input type="text" id="surname" name="surname" class="form-control" value="{{ form_data.get('surname','') }}" />
+  </div>
+  <div class="col-md-4">
+    <label for="student_name" class="form-label">Student Name</label>
+    <input type="text" id="student_name" name="student_name" class="form-control" value="{{ form_data.get('student_name','') }}" required />
+  </div>
+  <div class="col-md-4">
+    <label for="father_name" class="form-label">Father's Name</label>
+    <input type="text" id="father_name" name="father_name" class="form-control" value="{{ form_data.get('father_name','') }}" />
+  </div>
+
+  <div class="col-md-4">
+    <label for="date_of_birth" class="form-label">Date of Birth</label>
+    <input type="date" id="date_of_birth" name="date_of_birth" class="form-control" value="{{ form_data.get('date_of_birth','') }}" />
+  </div>
+  <div class="col-md-4">
+    <label for="mobile" class="form-label">Mobile</label>
+    <input type="text" id="mobile" name="mobile" class="form-control" value="{{ form_data.get('mobile','') }}" />
+  </div>
+  <div class="col-md-4">
+    <label for="gender" class="form-label">Gender</label>
+    {% set g = form_data.get('gender','') %}
+    <select id="gender" name="gender" class="form-select">
+      <option value="">-- Select --</option>
+      <option value="Male" {{ 'selected' if g == 'Male' else '' }}>Male</option>
+      <option value="Female" {{ 'selected' if g == 'Female' else '' }}>Female</option>
+      <option value="Other" {{ 'selected' if g == 'Other' else '' }}>Other</option>
+    </select>
+  </div>
+  <div class="col-md-4">
+    <label for="medium_tag" class="form-label">Medium</label>
+    {% set m = form_data.get('medium_tag','') %}
+    <select id="medium_tag" name="medium_tag" class="form-select">
+      <option value="">-- Select --</option>
+      <option value="General" {{ 'selected' if m == 'General' else '' }}>General</option>
+      <option value="English" {{ 'selected' if m == 'English' else '' }}>English</option>
+      <option value="Gujarati" {{ 'selected' if m == 'Gujarati' else '' }}>Gujarati</option>
+    </select>
+  </div>
+  <div class="col-md-4">
+    <label for="photo_file" class="form-label">Photo (optional)</label>
+    <input type="file" id="photo_file" name="photo_file" class="form-control" accept="image/*" />
+    {% if form_data.get('photo_url') %}
+      <div class="form-text">Current: {{ form_data.get('photo_url') }}</div>
+      <div class="form-check mt-1">
+        <input class="form-check-input" type="checkbox" value="1" id="remove_photo" name="remove_photo">
+        <label class="form-check-label" for="remove_photo">Remove photo</label>
+      </div>
+    {% endif %}
+  </div>
+  <div class="col-md-4">
+    <label for="current_semester" class="form-label">Current Semester</label>
+    <select id="current_semester" name="current_semester" class="form-select">
+      <option value="">-- Select --</option>
+      {% for s in range(1, 13) %}
+        <option value="{{ s }}" {{ 'selected' if form_data.get('current_semester') == s|string else '' }}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="col-12">
+    <label for="permanent_address" class="form-label">Permanent Address</label>
+    <textarea id="permanent_address" name="permanent_address" class="form-control" rows="2">{{ form_data.get('permanent_address','') }}</textarea>
+  </div>
+
+  <div class="col-12">
+    <button type="submit" class="btn btn-primary">Save Changes</button>
+    <a class="btn btn-outline-secondary ms-1" href="/students">Cancel</a>
+  </div>
+</form>
+<script>
+  (function() {
+    const progSel = document.getElementById('program_id_fk');
+    const medSel = document.getElementById('medium_tag');
+    function normalizeName(s) {
+      return (s || '').trim().toUpperCase().replace(/\./g, '').replace(/\s+/g, '');
+    }
+    function updateMediumState() {
+      const opt = progSel ? progSel.options[progSel.selectedIndex] : null;
+      const name = opt ? opt.text : '';
+      const isBCom = normalizeName(name) === 'BCOM';
+      if (medSel) {
+        medSel.disabled = !isBCom;
+        if (!isBCom) {
+          medSel.value = '';
+        }
+      }
+    }
+    if (progSel) {
+      progSel.addEventListener('change', updateMediumState);
+      updateMediumState();
+    }
+  })();
+</script>
+{% endblock %}

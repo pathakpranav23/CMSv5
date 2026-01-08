@@ -1,0 +1,529 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container mt-4 dashboard-linear">
+  <!-- Role-themed Dashboard Hero: keeps existing content below -->
+  <div class="page-hero mb-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap">
+      <div class="mb-2">
+        <div class="h4 mb-0">{{ t('The Group of Parekh Colleges - Mahuva') }}</div>
+        <div class="small">{{ t('Managed by Shri Balvant Parekh Education Trust (SBPET)') }}</div>
+      </div>
+      <div class="actions d-flex gap-2 flex-wrap">
+        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.notice_board') }}">{{ t('Notices') }}</a>
+        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.module_announcements') }}">{{ t('Announcements') }}</a>
+        {% if current_user.is_authenticated %}
+          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.dashboard', chart_semester=request.args.get('chart_semester'), chart_program_id=request.args.get('chart_program_id')) }}">{{ t('Refresh') }}</a>
+        {% endif %}
+        {% if redis_active is not none %}
+          {% if redis_active %}
+            <span class="badge bg-success align-self-center">{{ t('Redis Active') }}</span>
+          {% else %}
+            <span class="badge bg-warning text-dark align-self-center">{{ t('In-memory cache') }}</span>
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% if announcements and (announcements|length) > 0 %}
+    {% for a in announcements %}
+      <div class="alert alert-{{ a.severity or 'info' }} d-flex justify-content-between align-items-center" role="alert">
+        <div>
+          <strong>{{ a.title_gu if (lang_code=='gu' and a.title_gu) else a.title }}</strong>
+          <div class="small">{{ a.message_gu if (lang_code=='gu' and a.message_gu) else a.message }}</div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          {% if current_user.is_authenticated and (current_user.role|lower in ['admin','clerk','principal','faculty']) %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.announcements_list') }}">{{ t('Manage') }}</a>
+          {% endif %}
+          {% if current_user.is_authenticated %}
+            <form method="post" action="{{ url_for('main.announcement_dismiss', announcement_id=a.announcement_id) }}">
+              <button type="submit" class="btn btn-sm btn-outline-secondary">{{ t('Dismiss') }}</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  {% if notifications_vm and (notifications_vm|length) > 0 and (current_user.role|lower) == 'student' %}
+    {% for n in notifications_vm %}
+      {% set sev = 'danger' if (n.kind=='fee_rejected') else ('success' if (n.kind=='fee_verified') else 'info') %}
+      <div class="alert alert-{{ sev }} d-flex justify-content-between align-items-center" role="alert">
+        <div>
+          <strong>{{ n.title }}</strong>
+          {% if n.message %}<div class="small">{{ n.message }}</div>{% endif %}
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          {% if n.kind == 'fee_rejected' %}
+            <a class="btn btn-sm btn-outline-danger" href="{{ n.resubmit_url or url_for('main.module_fees') }}">Resubmit Fees</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.fees_payment_status') }}">View Status</a>
+          {% elif n.kind == 'fee_verified' %}
+            <a class="btn btn-sm btn-outline-success" href="{{ url_for('main.fees_payment_status') }}">View Receipt</a>
+          {% endif %}
+          <form method="post" action="{{ n.dismiss_post }}" class="ms-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Dismiss</button>
+          </form>
+        </div>
+      </div>
+    {% endfor %}
+  {% endif %}
+  <div class="card kpi-hero mb-3 role-{{ current_user.role|lower }}">
+    <div class="card-body d-flex justify-content-between align-items-center flex-wrap">
+      <div class="mb-2">
+        <div class="h4 mb-0">{{ (summary.program or t('Program')) }} {{ t('Dashboard') }}</div>
+        <div class="text-muted">{{ t('Academic Year:') }} {{ summary.academic_year or 'N/A' }}</div>
+      </div>
+      <div class="d-flex gap-3 flex-wrap">
+        <div class="kpi">
+          <div class="label">{{ t('Students') }}</div>
+          <div class="value">{{ summary.students or 0 }}</div>
+        </div>
+        <div class="kpi">
+          <div class="label">{{ t('Subjects') }}</div>
+          <div class="value">{{ summary.subjects or 0 }}</div>
+        </div>
+        <div class="kpi">
+          <div class="label">{{ t('Divisions') }}</div>
+          <div class="value">{{ summary.divisions or 0 }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Role-Based Infographics placed right after hero and above modules grid -->
+  <div class="mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="mb-0">{{ t('Role-Based Infographics') }}</h5>
+      <div class="d-flex align-items-center gap-3">
+        {% if (current_user.role|lower) in ['principal','clerk'] and semester_list %}
+        <form method="get" action="{{ url_for('main.dashboard') }}" class="d-flex align-items-center gap-2">
+          <label class="small text-muted mb-0" for="chartSemester">{{ t('Semester') }}</label>
+          <select id="chartSemester" name="chart_semester" class="form-select form-select-sm" onchange="this.form.submit()">
+            <option value="">{{ t('All') }}</option>
+            {% for sem in semester_list %}
+              {% set sel_sem = request.args.get('chart_semester') %}
+              <option value="{{ sem }}" {% if sel_sem and (sel_sem|int)==sem %}selected{% endif %}>{{ sem }}</option>
+            {% endfor %}
+          </select>
+        </form>
+        {% endif %}
+        {% if (current_user.role|lower) == 'principal' and subject_list and (subject_list|length) > 0 %}
+        <form method="get" action="{{ url_for('main.dashboard') }}" class="d-flex align-items-center gap-2">
+          <label class="small text-muted mb-0" for="chartSubject">{{ t('Subject') }}</label>
+          <select id="chartSubject" name="chart_subject_id" class="form-select form-select-sm" onchange="this.form.submit()">
+            <option value="">{{ t('All') }}</option>
+            {% set sel_subj = request.args.get('chart_subject_id') %}
+            {% for s in subject_list %}
+              <option value="{{ s.subject_id }}" {% if sel_subj and (sel_subj|int)==s.subject_id %}selected{% endif %}>{{ s.subject_name }}</option>
+            {% endfor %}
+          </select>
+          {% if request.args.get('chart_semester') %}
+            <input type="hidden" name="chart_semester" value="{{ request.args.get('chart_semester') }}" />
+          {% endif %}
+        </form>
+        {% endif %}
+        {% if (current_user.role|lower) == 'admin' and program_list and (program_list|length) > 1 %}
+        <form method="get" action="{{ url_for('main.dashboard') }}" class="d-flex align-items-center gap-2">
+          <label class="small text-muted mb-0" for="chartProgram">{{ t('Program') }}</label>
+          <select id="chartProgram" name="chart_program_id" class="form-select form-select-sm" onchange="this.form.submit()">
+            <option value="">{{ t('All') }}</option>
+            {% set sel_pid = request.args.get('chart_program_id') %}
+            {% for p in program_list %}
+              <option value="{{ p.program_id }}" {% if sel_pid and (sel_pid|int)==p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+            {% endfor %}
+          </select>
+          {% if request.args.get('chart_semester') %}
+            <input type="hidden" name="chart_semester" value="{{ request.args.get('chart_semester') }}" />
+          {% endif %}
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if (current_user.role|lower) == 'admin' %}
+      <div class="row row-cols-1 row-cols-md-2 g-3">
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Students by Program') }}</div></div>
+            <div class="card-body"><canvas id="chartStudentsProgram" height="140"></canvas></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Fees Collection by Program') }}</div></div>
+            <div class="card-body"><canvas id="chartFeesProgram" height="140"></canvas></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Staff Count by Program') }}</div></div>
+            <div class="card-body"><canvas id="chartStaffProgram" height="140"></canvas></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Annual Income vs Expenses') }}</div></div>
+            <div class="card-body"><canvas id="chartIncomeExpensesAnnual" height="140"></canvas></div>
+          </div>
+        </div>
+      </div>
+    {% elif (current_user.role|lower) in ['principal','clerk'] %}
+      <div class="row row-cols-1 row-cols-md-2 g-3">
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Students by Semester (My Program)') }}</div></div>
+            <div class="card-body"><canvas id="chartStudentsSemester" height="140"></canvas></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Fees Collection by Semester (My Program)') }}</div></div>
+            <div class="card-body"><canvas id="chartFeesSemester" height="140"></canvas></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Male/Female Students by Semester') }}</div></div>
+            <div class="card-body"><canvas id="chartGenderSemester" height="140"></canvas></div>
+          </div>
+        </div>
+        {% if (current_user.role|lower) == 'principal' %}
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Semester Results by Subject (Avg GPA)') }}</div></div>
+            <div class="card-body"><canvas id="chartSubjectResults" height="140"></canvas></div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    
+  </div>
+
+  {% if current_user.is_authenticated and (current_user.role|lower in ['admin','principal']) %}
+  <div class="modules-grid mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <div class="h5 mb-0">{{ t('Admin Modules') }}</div>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.module_admin') }}">{{ t('Open Admin Center') }}</a>
+    </div>
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-3">
+      <div class="col">
+        <div class="module-card card">
+          <a class="stretched-link" href="{{ url_for('main.module_announcements') }}" aria-label="Announcements"></a>
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-megaphone"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Announcements') }}</div>
+              <div class="small text-muted">{{ t('Create and publish alerts') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="module-card card">
+          <a class="stretched-link" href="{{ url_for('main.module_attendance') }}" aria-label="Attendance"></a>
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-calendar-check"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Attendance') }}</div>
+              <div class="small text-muted">{{ t('Mark, view, and report') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="module-card card">
+          <a class="stretched-link" href="{{ url_for('main.module_students') }}" aria-label="Students"></a>
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-people"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Students') }}</div>
+              <div class="small text-muted">{{ t('Manage student records') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="module-card card">
+          <a class="stretched-link" href="{{ url_for('main.module_subjects') }}" aria-label="Subjects"></a>
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-journal-bookmark"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Subjects') }}</div>
+              <div class="small text-muted">{{ t('Configure and assign') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="module-card card">
+          <a class="stretched-link" href="{{ url_for('main.materials_hub') }}" aria-label="Materials"></a>
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-folder2"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Materials') }}</div>
+              <div class="small text-muted">{{ t('Share and manage') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="module-card card">
+          <a class="stretched-link" href="{{ url_for('main.module_faculty') }}" aria-label="Staff"></a>
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-person-badge"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Staff') }}</div>
+              <div class="small text-muted">{{ t('Profiles and assignments') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {% if (current_user.role|lower) in ['admin','principal','clerk'] %}
+      <div class="col">
+        <div class="module-card card">
+          <a class="stretched-link" href="{{ url_for('main.module_divisions') }}" aria-label="Divisions"></a>
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-diagram-3"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Divisions') }}</div>
+              <div class="small text-muted">{{ t('Semesters and batches') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if not fees_disabled and (current_user.role|lower) in ['admin','principal','clerk'] %}
+      <div class="col">
+        <div class="module-card card">
+          {% if (current_user.role|lower) == 'clerk' %}
+            <a class="stretched-link" href="{{ url_for('main.fees_entry') }}" aria-label="Fees"></a>
+          {% else %}
+            <a class="stretched-link" href="{{ url_for('main.module_fees') }}" aria-label="Fees"></a>
+          {% endif %}
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-cash-coin"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Fees Module') }}</div>
+              <div class="small text-muted">{{ t('Collection and reports') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="col">
+        <div class="module-card card">
+          <a class="stretched-link" href="{{ url_for('main.programs_list') }}" aria-label="Programs"></a>
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-mortarboard"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Programs') }}</div>
+              <div class="small text-muted">{{ t('Create and manage programs') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="module-card card">
+          <a class="stretched-link" href="{{ url_for('main.users_list') }}" aria-label="Accounts"></a>
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-people"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Manage Accounts') }}</div>
+              <div class="small text-muted">{{ t('Create and manage accounts') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col">
+        <div class="module-card card">
+          <a class="stretched-link" href="{{ url_for('main.module_admin') }}" aria-label="Admin"></a>
+          <div class="card-body d-flex align-items-center gap-3">
+            <span class="module-icon"><i class="bi bi-sliders"></i></span>
+            <div>
+              <div class="h6 mb-0">{{ t('Admin Module') }}</div>
+              <div class="small text-muted">{{ t('Configuration and tools') }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="row row-cols-2 row-cols-sm-2 row-cols-md-3 row-cols-lg-6 g-3 mb-4 dashboard-metrics">
+    <div class="col">
+      <div class="card text-center">
+        <div class="card-body">
+          <div class="h5 mb-1">{{ t('Students') }}</div>
+          <div class="display-6">{{ summary.students }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card text-center">
+        <div class="card-body">
+          <div class="h5 mb-1">{{ t('Subjects') }}</div>
+          <div class="display-6">{{ summary.subjects }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card text-center">
+        <div class="card-body">
+          <div class="h5 mb-1">{{ t('Staff') }}</div>
+          <div class="display-6">{{ summary.faculties }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card text-center">
+        <div class="card-body">
+          <div class="h5 mb-1">{{ t('Divisions') }}</div>
+          <div class="display-6">{{ summary.divisions }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card text-center">
+        <div class="card-body">
+          <div class="h5 mb-1">{{ t('Assignments') }}</div>
+          <div class="display-6">{{ summary.assignments }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card text-center">
+        <div class="card-body">
+          <div class="h5 mb-1">{{ t('Enrollments') }}</div>
+          <div class="display-6">{{ summary.enrollments }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Post-metrics cards removed to avoid duplication -->
+  
+<script id="chartsData" type="application/json">{{ charts | tojson | safe }}</script>
+<script id="chartsConfig" type="application/json">{{ {"isAdmin": is_admin, "isPrincipal": is_principal} | tojson | safe }}</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  (function(){
+    const charts = JSON.parse(document.getElementById('chartsData').textContent);
+    const cfg = JSON.parse(document.getElementById('chartsConfig').textContent);
+    const isAdmin = !!cfg.isAdmin;
+    const isPrincipal = !!cfg.isPrincipal;
+    // Admin charts
+    if (isAdmin && charts) {
+      // Students by Program (pie)
+      const el1 = document.getElementById('chartStudentsProgram');
+      if (el1 && charts.students_by_program) {
+        const labels = charts.students_by_program.map(x=>x.label);
+        const data = charts.students_by_program.map(x=>x.value);
+        new Chart(el1, {
+          type: 'pie',
+          data: { labels, datasets: [{ data, backgroundColor: ['#0d6efd','#6f42c1','#198754','#fd7e14','#20c997','#6610f2'] }] },
+          options: { responsive:true, plugins:{ legend:{ position:'bottom' } } }
+        });
+      }
+      // Fees by Program (bar)
+      const el2 = document.getElementById('chartFeesProgram');
+      if (el2 && charts.fees_by_program) {
+        const labels = charts.fees_by_program.map(x=>x.label);
+        const data = charts.fees_by_program.map(x=>x.value);
+        new Chart(el2, {
+          type: 'bar',
+          data: { labels, datasets: [{ label:'Amount (INR)', data, backgroundColor:'#0d6efd' }] },
+          options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
+        });
+      }
+      // Staff by Program (bar)
+      const el3 = document.getElementById('chartStaffProgram');
+      if (el3 && charts.staff_by_program) {
+        const labels = charts.staff_by_program.map(x=>x.label);
+        const data = charts.staff_by_program.map(x=>x.value);
+        new Chart(el3, {
+          type: 'bar',
+          data: { labels, datasets: [{ label:'Staff', data, backgroundColor:'#198754' }] },
+          options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, precision:0 } } }
+        });
+      }
+      // Annual Income vs Expenses (bar)
+      const el4 = document.getElementById('chartIncomeExpensesAnnual');
+      if (el4 && charts.income_vs_expenses) {
+        const labels = charts.income_vs_expenses.labels;
+        const income = charts.income_vs_expenses.income;
+        const expenses = charts.income_vs_expenses.expenses;
+        new Chart(el4, {
+          type: 'bar',
+          data: { labels, datasets: [
+            { label:'Income', data: income, backgroundColor:'#20c997' },
+            { label:'Expenses', data: expenses, backgroundColor:'#dc3545' }
+          ] },
+          options: { responsive:true, plugins:{ legend:{ position:'bottom' } }, scales:{ y:{ beginAtZero:true } } }
+        });
+      }
+    }
+
+    // Principal/Clerk charts
+    if (!isAdmin && charts) {
+      // Students by Semester (pie)
+      const el5 = document.getElementById('chartStudentsSemester');
+      if (el5 && charts.students_by_semester) {
+        new Chart(el5, {
+          type: 'pie',
+          data: { labels: charts.students_by_semester.labels, datasets: [{ data: charts.students_by_semester.data, backgroundColor: ['#0d6efd','#6f42c1','#198754','#fd7e14','#20c997','#6610f2'] }] },
+          options: { responsive:true, plugins:{ legend:{ position:'bottom' } } }
+        });
+      }
+      // Fees by Semester (bar)
+      const el6 = document.getElementById('chartFeesSemester');
+      if (el6 && charts.fees_by_semester) {
+        new Chart(el6, {
+          type: 'bar',
+          data: { labels: charts.fees_by_semester.labels, datasets: [{ label:'Amount (INR)', data: charts.fees_by_semester.data, backgroundColor:'#0d6efd' }] },
+          options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
+        });
+      }
+      // Gender by Semester (stacked bar)
+      const el7 = document.getElementById('chartGenderSemester');
+      if (el7 && charts.gender_by_semester) {
+        new Chart(el7, {
+          type: 'bar',
+          data: { labels: charts.gender_by_semester.labels, datasets: [
+            { label:'Male', data: charts.gender_by_semester.male, backgroundColor:'#0d6efd' },
+            { label:'Female', data: charts.gender_by_semester.female, backgroundColor:'#e83e8c' }
+          ] },
+          options: { responsive:true, plugins:{ legend:{ position:'bottom' } }, scales:{ x:{ stacked:true }, y:{ stacked:true, beginAtZero:true, precision:0 } } }
+        });
+      }
+      // Subject Results (principal only)
+      if (isPrincipal && charts.subject_results) {
+        const el8 = document.getElementById('chartSubjectResults');
+        if (el8) {
+          new Chart(el8, {
+            type: 'bar',
+            data: { labels: charts.subject_results.labels, datasets: [{ label:'Avg GPA', data: charts.subject_results.data, backgroundColor:'#6f42c1' }] },
+            options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, max:10 } } }
+          });
+        }
+      }
+    }
+
+    // Admin charts are filtered at server-side when a program is selected
+  })();
+</script>
+</div>
+{% endblock %}

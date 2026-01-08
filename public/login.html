@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login</title>
+  <link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+<body>
+  <header>
+    <div class="nav">
+      <div class="brand"><span class="brand-dot"></span>Gym Management</div>
+      <div class="actions">
+        <a class="btn btn-secondary" href="/index.html">Home</a>
+      </div>
+    </div>
+  </header>
+  <main class="container">
+    <div class="panel" style="max-width:440px;margin:40px auto">
+      <h2 style="margin:0 0 12px">Sign in</h2>
+      <form class="form" action="#" method="post">
+        <label>Email</label>
+        <input class="input" type="email" name="email" placeholder="you@example.com" required>
+        <label>Password</label>
+        <input class="input" type="password" name="password" placeholder="••••••••" required>
+        <label>Role</label>
+        <select class="select" name="role">
+          <option value="admin">Admin</option>
+          <option value="staff">Staff</option>
+          <option value="trainer">Trainer</option>
+          <option value="member">Member</option>
+        </select>
+        <button class="btn btn-primary" type="submit">Login</button>
+      </form>
+    </div>
+  </main>
+  <footer class="footer">© Gym Management</footer>
+  <script src="/assets/js/app.js"></script>
+</body>
+</html>

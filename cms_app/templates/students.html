@@ -1,0 +1,189 @@
+{% extends 'layout.html' %}
+{% block content %}
+{% set can_manage = current_user.is_authenticated and (current_user.role|lower in ['admin','principal']) %}
+{% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+<div class="section-header d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0 title d-flex align-items-center">{{ t('Students') }} <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+  <div class="actions">
+    <a class="btn btn-primary btn-sm" href="/dashboard">Back to Dashboard</a>
+    {% if can_manage %}
+    <a class="btn btn-success btn-sm ms-2" href="{{ url_for('main.students_new') }}">Add Student</a>
+    {% endif %}
+  </div>
+</div>
+
+<form class="students-filters mb-2" method="get" action="{{ url_for('main.students') }}">
+    <div class="row g-1 align-items-center">
+      <div class="col-12 col-md-4 col-lg-5">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">{{ t('Program') }}</span>
+          {% set role_lower = (current_user.role or '')|lower %}
+          {% if role_lower in ['clerk','principal'] %}
+            <div class="form-control-plaintext">{{ (selected_program_id and program_map.get(selected_program_id)) or (program_list and program_list[0].program_name) }}</div>
+            <input type="hidden" id="program_id" name="program_id" value="{{ selected_program_id or (program_list and program_list[0].program_id) }}" />
+          {% else %}
+            <select id="program_id" name="program_id" class="form-select" onchange="this.form.submit()">
+              {% if allow_all_programs %}
+                <option value="" {{ 'selected' if not selected_program_id else '' }}>All Programs</option>
+              {% endif %}
+              {% for p in program_list %}
+                <option value="{{ p.program_id }}" {{ 'selected' if selected_program_id and (p.program_id == selected_program_id) else '' }}>{{ p.program_name }}</option>
+              {% endfor %}
+            </select>
+          {% endif %}
+        </div>
+      </div>
+      <div class="col-12 col-md-auto">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">{{ t('Semester') }}</span>
+          <select id="semester" name="semester" class="form-select" onchange="this.form.submit()">
+            {% set sem = (selected_semester or 'all') %}
+            <option value="all" {{ 'selected' if sem == 'all' else '' }}>All</option>
+            <option value="5" {{ 'selected' if sem == '5' else '' }}>5</option>
+            <option value="3" {{ 'selected' if sem == '3' else '' }}>3</option>
+          </select>
+        </div>
+      </div>
+      <div class="col-12 col-md-auto">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">{{ t('Medium') }}</span>
+          {% set med = (selected_medium or 'all') %}
+          <select id="medium" name="medium" class="form-select" onchange="this.form.submit()">
+            <option value="all" {{ 'selected' if med == 'all' else '' }}>All</option>
+            <option value="english" {{ 'selected' if med == 'english' else '' }}>English</option>
+            <option value="gujarati" {{ 'selected' if med == 'gujarati' else '' }}>Gujarati</option>
+            <option value="general" {{ 'selected' if med == 'general' else '' }}>General</option>
+          </select>
+        </div>
+      </div>
+      <div class="col-12 col-md-auto">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">{{ t('Per Page') }}</span>
+          <select id="limit" name="limit" class="form-select" onchange="this.form.submit()">
+            {% set lim = (selected_limit or 20) %}
+            {% for opt in [10,20,50,100] %}
+              <option value="{{ opt }}" {{ 'selected' if lim == opt else '' }}>{{ opt }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="col-12 col-md-auto">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">Enroll</span>
+          <input id="enrollment_no" name="enrollment_no" type="text" class="form-control" value="{{ q_enrollment_no or '' }}" placeholder="23BCA001" />
+        </div>
+      </div>
+      <div class="col-12 col-md-4 col-lg-5">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">Name</span>
+          <input id="name" name="name" type="text" class="form-control" value="{{ q_name or '' }}" placeholder="Patel or Ananya" />
+        </div>
+      </div>
+      <div class="col-12 col-md-auto">
+        <div class="filter-actions d-flex flex-column flex-md-row gap-2">
+          <button type="submit" class="btn btn-primary btn-sm">Search</button>
+          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.students', semester=sem, program_id=(selected_program_id if selected_program_id else None)) }}">Reset</a>
+        </div>
+      </div>
+    </div>
+  </form>
+  <span class="ms-2 text-muted">
+    Showing {{ 'all' if (selected_semester == 'all' or not selected_semester) else ('Semester ' ~ selected_semester) }} students.
+    {% if selected_program_id %}• Program is {{ program_map.get(selected_program_id) }}{% elif allow_all_programs %}• Program is All{% endif %}
+    {% if q_enrollment_no %}• Enrollment contains "{{ q_enrollment_no }}"{% endif %}
+    {% if q_name %}• Name contains "{{ q_name }}"{% endif %}
+    {% if selected_medium and selected_medium != 'all' %}• Medium is {{ selected_medium|capitalize }}{% endif %}
+  </span>
+  <span class="ms-2"><code>scripts/import_students.py</code> imports Excel data.</span>
+  
+
+ 
+
+{% if students and students|length > 0 %}
+<div class="table-responsive">
+  <table class="table table-sm table-striped align-middle">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Photo</th>
+        <th>Enrollment No.</th>
+        <th>Roll No</th>
+        <th>Surname</th>
+        <th>Student Name</th>
+        <th>Father's Name</th>
+        <th>Program</th>
+        <th>Medium</th>
+        <th>Division</th>
+        <th>Semester</th>
+        <th>Mobile</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% set ns = namespace(cur_sem=None, roll=0) %}
+      {% for s in students %}
+      {% set sem_div = division_map.get(s.division_id_fk) %}
+      {% set row_sem = sem_div[0] if sem_div else s.current_semester %}
+      {% if ns.cur_sem != row_sem %}
+        {% set ns.cur_sem = row_sem %}
+        {% set ns.roll = 1 %}
+      {% else %}
+        {% set ns.roll = ns.roll + 1 %}
+      {% endif %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>
+          {% if s.photo_url %}
+            <a href="{{ s.photo_url }}" target="_blank" rel="noopener">
+              <img src="{{ s.photo_url }}" alt="Photo" style="height:32px; width:auto; object-fit:cover; border:1px solid #ddd; border-radius:4px;" />
+            </a>
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </td>
+        <td><a href="{{ url_for('main.students_show', enrollment_no=s.enrollment_no) }}">{{ s.enrollment_no }}</a></td>
+        <td>{{ ns.roll }}</td>
+        <td>{{ s.surname }}</td>
+        <td>{{ s.student_name }}</td>
+        <td>{{ s.father_name }}</td>
+        <td>{{ program_map.get(s.program_id_fk) }}</td>
+        <td>
+          {% if s.medium_tag %}
+            <span class="badge bg-light text-dark">{{ s.medium_tag }}</span>
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </td>
+        <td>{{ sem_div[1] if sem_div else '' }}</td>
+        <td>{{ sem_div[0] if sem_div else s.current_semester }}</td>
+        <td>{{ s.mobile }}</td>
+        <td class="text-nowrap">
+          {% if can_manage %}
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.students_edit', enrollment_no=s.enrollment_no) }}">Edit</a>
+            <form method="post" action="{{ url_for('main.students_delete', enrollment_no=s.enrollment_no) }}" class="d-inline" onsubmit="return confirm('Delete {{ s.enrollment_no }}?');">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="d-flex justify-content-between align-items-center mt-2">
+  {% set start_idx = ((selected_page - 1) * selected_limit) + 1 %}
+  {% set end_idx = (start_idx + students|length - 1) %}
+  <div class="small text-muted">Showing {{ start_idx if total_count else 0 }}–{{ end_idx if total_count else 0 }} of {{ total_count or 0 }}</div>
+  <div class="btn-group">
+    {% set base_url = url_for('main.students') %}
+    {% set prev_page = selected_page - 1 %}
+    {% set next_page = selected_page + 1 %}
+    <a class="btn btn-sm btn-outline-secondary" href="{{ base_url }}?program_id={{ selected_program_id or '' }}&semester={{ selected_semester or 'all' }}&medium={{ selected_medium or 'all' }}&enrollment_no={{ q_enrollment_no or '' }}&name={{ q_name or '' }}&limit={{ selected_limit }}&page={{ prev_page }}" {% if selected_page <= 1 %}disabled{% endif %}>Prev</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ base_url }}?program_id={{ selected_program_id or '' }}&semester={{ selected_semester or 'all' }}&medium={{ selected_medium or 'all' }}&enrollment_no={{ q_enrollment_no or '' }}&name={{ q_name or '' }}&limit={{ selected_limit }}&page={{ next_page }}" {% if end_idx >= total_count %}disabled{% endif %}>Next</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.students_export_csv') }}?program_id={{ selected_program_id or '' }}&semester={{ selected_semester or 'all' }}&medium={{ selected_medium or 'all' }}&enrollment_no={{ q_enrollment_no or '' }}&name={{ q_name or '' }}">Export CSV</a>
+  </div>
+</div>
+{% else %}
+<p class="text-muted">No student data yet. Import the provided Excel files to populate the database.</p>
+{% endif %}
+{% endblock %}

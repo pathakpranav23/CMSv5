@@ -1,0 +1,85 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title d-flex align-items-center">Import Logs</h2>
+    <div class="actions"></div>
+  </div>
+  <form class="row g-2 mb-3" method="get" action="{{ url_for('main.admin_import_logs') }}">
+    <div class="col-md-3">
+      <label class="form-label">Kind</label>
+      <select name="kind" class="form-select">
+        <option value="">All</option>
+        <option value="students" {% if (filters.kind or '') == 'students' %}selected{% endif %}>Students</option>
+        <option value="subjects" {% if (filters.kind or '') == 'subjects' %}selected{% endif %}>Subjects</option>
+        <option value="fees" {% if (filters.kind or '') == 'fees' %}selected{% endif %}>Fees</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Program</label>
+      <select name="program_id" class="form-select">
+        <option value="">All</option>
+        {% for p in programs %}
+          <option value="{{ p.program_id }}" {% if filters.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Semester</label>
+      <input type="number" name="semester" class="form-control" value="{{ filters.semester or '' }}" />
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Dry-run</label>
+      <select name="dry_run" class="form-select">
+        <option value="">All</option>
+        <option value="1" {% if (filters.dry_run or '') in ['1','true','yes'] %}selected{% endif %}>Only Dry-run</option>
+      </select>
+    </div>
+    <div class="col-md-2 align-self-end"><button class="btn btn-primary w-100" type="submit">Apply</button></div>
+  </form>
+
+  <div class="card">
+    <div class="card-header card-header-standard"><div class="card-title">Logs</div></div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-striped mb-0">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Kind</th>
+              <th>User</th>
+              <th>Program</th>
+              <th>Sem</th>
+              <th>Medium</th>
+              <th>Dry-run</th>
+              <th>Created</th>
+              <th>Updated</th>
+              <th>Skipped</th>
+              <th>Errors</th>
+              <th>Path</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+            <tr>
+              <td>{{ r.created_at }}</td>
+              <td><span class="badge bg-light text-dark">{{ r.kind }}</span></td>
+              <td>{{ (users.get(r.user_id_fk).username if users.get(r.user_id_fk) else '-') }}</td>
+              <td>{{ (r.program_id_fk and (programs | selectattr('program_id', 'equalto', r.program_id_fk) | list | first).program_name) if r.program_id_fk else '-' }}</td>
+              <td>{{ r.semester or '-' }}</td>
+              <td>{{ r.medium_tag or '-' }}</td>
+              <td>{% if r.dry_run %}<span class="badge bg-warning text-dark">Yes</span>{% else %}No{% endif %}</td>
+              <td>{{ r.created_count or 0 }}</td>
+              <td>{{ r.updated_count or 0 }}</td>
+              <td>{{ r.skipped_count or 0 }}</td>
+              <td>{{ r.errors_count or 0 }}</td>
+              <td class="text-truncate" style="max-width:240px;" title="{{ r.path or '' }}">{{ r.path or '' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

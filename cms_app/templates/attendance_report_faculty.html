@@ -1,0 +1,360 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-3">
+  <h4>Attendance Report (Staff)</h4>
+  <form class="row g-3 mb-3" method="get" action="{{ url_for('main.attendance_report_faculty') }}">
+    <div class="col-md-4">
+      <label class="form-label">Subject</label>
+      <select name="subject_id" class="form-select">
+        <option value="">All</option>
+        {% for s in subjects %}
+        <option value="{{ s.subject_id }}" {% if (filters.subject_id or '') == (s.subject_id|string) %}selected{% endif %}>{{ s.subject_name }} (Sem {{ s.semester }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Division</label>
+      <select name="division_id" class="form-select">
+        <option value="">All</option>
+        {% for d in divisions %}
+        <option value="{{ d.division_id }}" {% if (filters.division_id or '') == (d.division_id|string) %}selected{% endif %}>Sem {{ d.semester }} - {{ d.division_code }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Start</label>
+      <input type="date" class="form-control" name="start" value="{{ filters.start or '' }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">End</label>
+      <input type="date" class="form-control" name="end" value="{{ filters.end or '' }}">
+    </div>
+    <div class="col-12">
+      <button class="btn btn-primary">Apply Filters</button>
+      <a class="btn btn-outline-secondary" href="{{ csv_export_url }}">Export CSV</a>
+    </div>
+  </form>
+
+  <div class="row">
+    <div class="col-md-6">
+      <h6>Totals by Subject</h6>
+      <table class="table table-sm table-striped">
+        <thead><tr><th>Subject</th><th>P</th><th>A</th><th>L</th><th>Total</th></tr></thead>
+        <tbody>
+        {% for sid, t in totals_by_subject.items() %}
+          <tr>
+            <td>{{ t.name }}</td>
+            <td>{{ t.P }}</td>
+            <td>{{ t.A }}</td>
+            <td>{{ t.L }}</td>
+            <td>{{ t.total }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <canvas id="chartSubjects" height="160"></canvas>
+      <div id="chartSubjectsGrid" class="row row-cols-2 row-cols-md-3 g-2 mt-2"></div>
+    </div>
+    <div class="col-md-6">
+      <h6>Totals by Division</h6>
+      <table class="table table-sm table-striped">
+        <thead><tr><th>Division</th><th>P</th><th>A</th><th>L</th><th>Total</th></tr></thead>
+        <tbody>
+        {% for did, t in totals_by_division.items() %}
+          <tr>
+            <td>{{ t.name }}</td>
+            <td>{{ t.P }}</td>
+            <td>{{ t.A }}</td>
+            <td>{{ t.L }}</td>
+            <td>{{ t.total }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <canvas id="chartDivisions" height="160"></canvas>
+      <div id="chartDivisionsGrid" class="row row-cols-2 row-cols-md-3 g-2 mt-2"></div>
+    </div>
+  </div>
+
+  <div class="row mt-3">
+    <div class="col-12">
+      <h6>Students (Scoped to Filters)</h6>
+      {% if students_metrics and students_metrics|length > 0 %}
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="input-group input-group-sm" style="max-width: 340px;">
+          <span class="input-group-text">Search</span>
+          <input type="text" id="studentsSearch" class="form-control" placeholder="Search by name" />
+        </div>
+        <div class="d-flex gap-2">
+          <button id="exportFilteredCSV" class="btn btn-sm btn-outline-secondary">Export CSV (Filtered)</button>
+          <span class="badge bg-primary-subtle text-primary border">Pro Table</span>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table id="studentsTable" class="table table-sm table-striped">
+      <thead>
+        <tr>
+          <th class="sortable" data-idx="0">Sr#</th>
+          <th class="sortable" data-idx="1">Enrollment</th>
+          <th class="sortable" data-idx="2">Roll No</th>
+          <th class="sortable" data-idx="3">Name</th>
+          <th class="text-center sortable" data-idx="4">P</th>
+          <th class="text-center sortable" data-idx="5">A</th>
+          <th class="text-center sortable" data-idx="6">L</th>
+          <th class="text-center sortable" data-idx="7">Total</th>
+          <th class="text-center sortable" data-idx="8">Present % (P+L)</th>
+          <th class="text-center sortable" data-idx="9">Absent %</th>
+        </tr>
+      </thead>
+          <tbody>
+            {% for s in students_metrics %}
+            <tr>
+              <td>{{ loop.index }}</td>
+              <td>{{ s.enrollment_no }}</td>
+              <td>{{ s.roll_no or '-' }}</td>
+              <td>{{ s.name }}</td>
+              <td class="text-center">{{ s.P }}</td>
+              <td class="text-center">{{ s.A }}</td>
+              <td class="text-center">{{ s.L }}</td>
+              <td class="text-center">{{ s.total }}</td>
+              <td class="text-center">{% if s.total %}{{ s.present_pct }}{% else %}-{% endif %}</td>
+              <td class="text-center">{% if s.total %}{{ s.absent_pct }}{% else %}-{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+  <div class="alert alert-info soft-hint">Apply subject/division/date filters to see per-student metrics.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  (function(){
+    // Center label plugin for donut charts
+    const centerLabelPlugin = {
+      id: 'centerLabel',
+      afterDatasetsDraw(chart) {
+        const opts = chart.options.plugins && chart.options.plugins.centerLabel || {};
+        const text = opts.text || '';
+        if (!text) return;
+        const {ctx, chartArea:{left, right, top, bottom}} = chart;
+        const x = (left + right) / 2;
+        const y = (top + bottom) / 2;
+        ctx.save();
+        ctx.fillStyle = '#222';
+        ctx.font = '600 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, x, y);
+        ctx.restore();
+      }
+    };
+    const labelsS = JSON.parse('{{ chart_subject_labels | tojson | safe }}');
+    const dataSP = JSON.parse('{{ chart_subject_P | tojson | safe }}');
+    const dataSA = JSON.parse('{{ chart_subject_A | tojson | safe }}');
+    const dataSL = JSON.parse('{{ chart_subject_L | tojson | safe }}');
+    const ctxS = document.getElementById('chartSubjects');
+    if (ctxS) {
+      const sum = (arr)=> (arr||[]).reduce((a,b)=> a + (Number(b)||0), 0);
+      const totalP = sum(dataSP);
+      const totalA = sum(dataSA);
+      const totalL = sum(dataSL);
+      const present = totalP + totalL; // Late counts as present
+      const total = present + totalA;
+      const presentPct = total ? (present / total) * 100 : 0;
+      const absentPct = total ? (totalA / total) * 100 : 0;
+
+      new Chart(ctxS, {
+        type: 'doughnut',
+        data: {
+          labels: ['Present % (P+L)', 'Absent %'],
+          datasets: [{ data: [presentPct, absentPct], backgroundColor: ['#198754','#dc3545'] }]
+        },
+        options: {
+          responsive:true,
+          cutout: '60%',
+          plugins:{
+            legend:{position:'bottom'},
+            tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${ctx.raw.toFixed(2)}%` } },
+            centerLabel:{ text: `${presentPct.toFixed(1)}%` }
+          }
+        },
+        plugins:[centerLabelPlugin]
+      });
+
+      // Small multiples per subject (mini donuts)
+      const gridS = document.getElementById('chartSubjectsGrid');
+      if (gridS && Array.isArray(labelsS)) {
+        labelsS.forEach((label, i) => {
+          const p = (Number(dataSP[i])||0) + (Number(dataSL[i])||0);
+          const a = (Number(dataSA[i])||0);
+          const t = p + a;
+          const pp = t ? (p/t)*100 : 0;
+          const ap = t ? (a/t)*100 : 0;
+          const col = document.createElement('div');
+          col.className = 'col';
+          col.innerHTML = `<div class="card p-2"><canvas height="120"></canvas><div class="small text-muted text-center mt-1">${label}</div></div>`;
+          gridS.appendChild(col);
+          const cv = col.querySelector('canvas');
+          new Chart(cv, {
+            type: 'doughnut',
+            data: { labels: ['Present % (P+L)','Absent %'], datasets: [{ data: [pp, ap], backgroundColor: ['#198754','#dc3545'] }] },
+            options: { responsive:true, cutout:'60%', plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${ctx.raw.toFixed(2)}%` } } } }
+          });
+        });
+      }
+    }
+    const labelsD = JSON.parse('{{ chart_division_labels | tojson | safe }}');
+    const dataDP = JSON.parse('{{ chart_division_P | tojson | safe }}');
+    const dataDA = JSON.parse('{{ chart_division_A | tojson | safe }}');
+    const dataDL = JSON.parse('{{ chart_division_L | tojson | safe }}');
+  const ctxD = document.getElementById('chartDivisions');
+    if (ctxD) {
+      const sumD = (arr)=> (arr||[]).reduce((a,b)=> a + (Number(b)||0), 0);
+      const totalDP = sumD(dataDP);
+      const totalDA = sumD(dataDA);
+      const totalDL = sumD(dataDL);
+      const presentD = totalDP + totalDL; // Late counts as present
+      const totalD = presentD + totalDA;
+      const presentPctD = totalD ? (presentD / totalD) * 100 : 0;
+      const absentPctD = totalD ? (totalDA / totalD) * 100 : 0;
+
+      new Chart(ctxD, {
+        type: 'doughnut',
+        data: {
+          labels: ['Present % (P+L)', 'Absent %'],
+          datasets: [{ data: [presentPctD, absentPctD], backgroundColor: ['#198754','#dc3545'] }]
+        },
+        options: {
+          responsive:true,
+          cutout: '60%',
+          plugins:{
+            legend:{position:'bottom'},
+            tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${ctx.raw.toFixed(2)}%` } },
+            centerLabel:{ text: `${presentPctD.toFixed(1)}%` }
+          }
+        },
+        plugins:[centerLabelPlugin]
+      });
+
+      // Small multiples per division (mini donuts)
+      const gridD = document.getElementById('chartDivisionsGrid');
+      if (gridD && Array.isArray(labelsD)) {
+        labelsD.forEach((label, i) => {
+          const p = (Number(dataDP[i])||0) + (Number(dataDL[i])||0);
+          const a = (Number(dataDA[i])||0);
+          const t = p + a;
+          const pp = t ? (p/t)*100 : 0;
+          const ap = t ? (a/t)*100 : 0;
+          const col = document.createElement('div');
+          col.className = 'col';
+          col.innerHTML = `<div class="card p-2"><canvas height="120"></canvas><div class="small text-muted text-center mt-1">${label}</div></div>`;
+          gridD.appendChild(col);
+          const cv = col.querySelector('canvas');
+          new Chart(cv, {
+            type: 'doughnut',
+            data: { labels: ['Present % (P+L)','Absent %'], datasets: [{ data: [pp, ap], backgroundColor: ['#198754','#dc3545'] }] },
+            options: { responsive:true, cutout:'60%', plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${ctx.raw.toFixed(2)}%` } } } }
+          });
+        });
+      }
+    }
+  })();
+</script>
+<script>
+  // Pro Table: search by name, sort by any column, export filtered CSV
+  (function(){
+    const table = document.getElementById('studentsTable');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    const headers = Array.from(table.querySelectorAll('thead th'));
+    const searchInput = document.getElementById('studentsSearch');
+    const exportBtn = document.getElementById('exportFilteredCSV');
+
+    // Determine name column index from headers (fallback to 3)
+    let nameIdx = headers.findIndex(h => (h.textContent||'').trim().toLowerCase() === 'name');
+    if (nameIdx < 0) nameIdx = 3;
+
+    function getRows(){ return Array.from(tbody.querySelectorAll('tr')); }
+    function cellText(row, idx){
+      const c = row.children[idx];
+      return (c ? c.textContent : '').trim();
+    }
+    function parseVal(v){
+      if (!v || v === '-' || v === 'N/A') return NaN;
+      // strip % if present
+      const s = v.replace(/%/g,'');
+      const n = Number(s);
+      return isNaN(n) ? v.toLowerCase() : n;
+    }
+    function sortBy(idx, dir){
+      const rows = getRows();
+      rows.sort((r1, r2) => {
+        const a = parseVal(cellText(r1, idx));
+        const b = parseVal(cellText(r2, idx));
+        if (typeof a === 'number' && typeof b === 'number'){
+          return dir === 'asc' ? a - b : b - a;
+        }
+        return dir === 'asc' ? String(a).localeCompare(String(b)) : String(b).localeCompare(String(a));
+      });
+      rows.forEach(r => tbody.appendChild(r));
+    }
+    function clearSortIndicators(){ headers.forEach(h => h.removeAttribute('data-order')); }
+    headers.forEach(h => {
+      if (!h.classList.contains('sortable')) return;
+      h.style.cursor = 'pointer';
+      h.title = 'Click to sort';
+      h.addEventListener('click', () => {
+        const idx = Number(h.getAttribute('data-idx'));
+        const current = h.getAttribute('data-order') || 'desc';
+        const next = current === 'asc' ? 'desc' : 'asc';
+        clearSortIndicators();
+        h.setAttribute('data-order', next);
+        sortBy(idx, next);
+      });
+    });
+
+    function applyFilter(){
+      const q = (searchInput && searchInput.value || '').trim().toLowerCase();
+      getRows().forEach(row => {
+        const name = cellText(row, nameIdx).toLowerCase();
+        row.style.display = (!q || name.includes(q)) ? '' : 'none';
+      });
+    }
+    if (searchInput){
+      searchInput.addEventListener('input', applyFilter);
+    }
+
+    function exportCSV(){
+      const visibleRows = getRows().filter(r => r.style.display !== 'none');
+      const headerVals = headers.map(h => (h.textContent||'').trim());
+      const lines = [headerVals.join(',')];
+      visibleRows.forEach(r => {
+        const cells = Array.from(r.children).map(td => {
+          const v = (td.textContent||'').trim();
+          // Wrap values with commas in quotes
+          return /,/.test(v) ? `"${v.replace(/"/g,'""')}"` : v;
+        });
+        lines.push(cells.join(','));
+      });
+      const blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+      const a = document.createElement('a');
+      const dateStr = new Date().toISOString().slice(0,10);
+      a.href = URL.createObjectURL(blob);
+      a.download = `staff-report-students-${dateStr}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }
+    if (exportBtn){ exportBtn.addEventListener('click', (e)=>{ e.preventDefault(); exportCSV(); }); }
+
+    // Initial sort by Enrollment asc
+    const defaultHeader = headers[1];
+    if (defaultHeader){ defaultHeader.setAttribute('data-order','asc'); sortBy(1, 'asc'); }
+  })();
+</script>
+{% endblock %}

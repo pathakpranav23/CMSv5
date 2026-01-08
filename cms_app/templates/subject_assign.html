@@ -1,0 +1,71 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header">
+    <h2 class="mb-0">Assign Subject</h2>
+    <div class="d-flex align-items-center gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.subjects_list', program_id=subject.program_id_fk, semester=subject.semester) }}">Back to Subjects</a>
+    </div>
+  </div>
+
+  {% if errors and errors|length %}
+  <div class="alert alert-danger">
+    <ul class="mb-0">
+      {% for e in errors %}
+      <li>{{ e }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-8">
+          <div><strong>Subject:</strong> {{ subject.subject_name }}</div>
+          <div><strong>Code:</strong> {{ subject.subject_code or '—' }}</div>
+          <div><strong>Program:</strong> {{ program.program_name }}</div>
+          <div><strong>Semester:</strong> {{ subject.semester }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <form method="post" action="{{ url_for('main.subject_assign', subject_id=subject.subject_id) }}">
+    <div class="card">
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="faculty_user_id" class="form-label">Staff</label>
+            <select id="faculty_user_id" name="faculty_user_id" class="form-select" required>
+              <option value="">Select staff…</option>
+              {% for f in faculties %}
+              <option value="{{ f.user_id_fk }}" {% if form_data.faculty_user_id == f.user_id_fk %}selected{% endif %}>{{ f.full_name }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">Staff list is filtered by program.</div>
+          </div>
+          <div class="col-md-4">
+            <label for="division_id" class="form-label">Division</label>
+            <select id="division_id" name="division_id" class="form-select" required>
+              <option value="">Select division…</option>
+              <option value="ALL" {{ 'selected' if (form_data.division_id|string) == 'ALL' else '' }}>All divisions</option>
+              {% for d in divisions %}
+              <option value="{{ d.division_id }}" {% if form_data.division_id == d.division_id %}selected{% endif %}>{{ d.division_code }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">Choose a specific division or select “All divisions”. Only divisions for this semester are shown.</div>
+          </div>
+          <div class="col-md-2">
+            <label for="academic_year" class="form-label">Academic Year</label>
+            <input type="text" id="academic_year" name="academic_year" class="form-control" value="{{ form_data.academic_year or '' }}" placeholder="2024-25" required />
+          </div>
+        </div>
+      </div>
+      <div class="card-footer text-end">
+        <button type="submit" class="btn btn-primary">Assign</button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

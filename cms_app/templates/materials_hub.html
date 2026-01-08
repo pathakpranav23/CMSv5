@@ -1,0 +1,63 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title">{{ t('Materials') }}</h2>
+    {% if role in ['admin','principal'] %}
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.materials_moderation') }}">{{ t('Moderation') }}</a>
+    {% endif %}
+    {% if role == 'student' %}
+      <a class="btn btn-primary btn-sm" href="{{ url_for('main.materials_downloads') }}">{{ t('All Downloads') }}</a>
+    {% endif %}
+  </div>
+
+  {% if role == 'student' %}
+    <div class="card mb-4">
+      <div class="card-header card-header-standard"><div class="card-title">{{ t('Your Subjects') }} — {{ ay }}</div></div>
+      <div class="card-body">
+        {% if student_subjects %}
+          <div class="list-group">
+            {% for s in student_subjects %}
+              <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="{{ url_for('main.subject_materials', subject_id=s.subject_id) }}">
+                <span>
+                  <span class="fw-semibold">{{ s.subject_name }}</span>
+                  <span class="text-muted small">(Sem {{ s.semester }})</span>
+                </span>
+                <span class="badge bg-primary">Browse</span>
+              </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="text-muted">{{ t('No enrolled subjects found for') }} {{ ay }}.</div>
+        {% endif %}
+      </div>
+    </div>
+  {% elif role == 'faculty' %}
+    <div class="card mb-4">
+      <div class="card-header card-header-standard"><div class="card-title">{{ t('Assigned Subjects') }} — {{ ay }}</div></div>
+      <div class="card-body">
+        {% if faculty_subjects %}
+          <div class="list-group">
+            {% for s in faculty_subjects %}
+              <div class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                  <span class="fw-semibold">{{ s.subject_name }}</span>
+                  <span class="text-muted small">(Sem {{ s.semester }})</span>
+                </div>
+                <div class="d-flex gap-2">
+                  <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.subject_materials', subject_id=s.subject_id) }}">{{ t('Manage') }}</a>
+                  <a class="btn btn-primary btn-sm" href="{{ url_for('main.subject_material_new', subject_id=s.subject_id) }}">{{ t('Share') }}</a>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="text-muted">{{ t('No active assignments found.') }}</div>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="alert alert-info">{{ t('Select a subject to view or manage materials.') }}</div>
+  {% endif %}
+</div>
+{% endblock %}

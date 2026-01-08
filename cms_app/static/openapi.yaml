@@ -1,0 +1,82 @@
+openapi: 3.0.3
+info:
+  title: CMSv5 API
+  version: '1.0.0'
+servers:
+  - url: /
+paths:
+  /api/students/search:
+    get:
+      summary: Search students
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+        - in: query
+          name: program_id
+          schema:
+            type: integer
+        - in: query
+          name: semester
+          schema:
+            type: integer
+        - in: query
+          name: medium
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopeItems'
+  /api/chart/students-by-program:
+    get:
+      summary: Students by program
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopeData'
+  /api/chart/students-by-semester:
+    get:
+      summary: Students by semester
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopeData'
+  /api/chart/staff-by-program:
+    get:
+      summary: Staff by program
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopeData'
+components:
+  schemas:
+    EnvelopeData:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+    EnvelopeItems:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+        meta:
+          type: object

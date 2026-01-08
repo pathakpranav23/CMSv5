@@ -1,0 +1,34 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title d-flex align-items-center">System Status</h2>
+  </div>
+  <div class="row g-3">
+    <div class="col-md-3">
+      <div class="card h-100"><div class="card-body">
+        <div class="text-muted">Database</div>
+        <div class="h5">{% if status.db %}<span class="badge bg-success">OK</span>{% else %}<span class="badge bg-danger">Error</span>{% endif %}</div>
+      </div></div>
+    </div>
+    <div class="col-md-3">
+      <div class="card h-100"><div class="card-body">
+        <div class="text-muted">Cache</div>
+        <div class="h5">{% if status.cache %}<span class="badge bg-success">OK</span>{% else %}<span class="badge bg-danger">Error</span>{% endif %}</div>
+      </div></div>
+    </div>
+    <div class="col-md-3">
+      <div class="card h-100"><div class="card-body">
+        <div class="text-muted">Email</div>
+        <div class="h5">{% if status.email %}<span class="badge bg-success">Configured</span>{% else %}<span class="badge bg-warning text-dark">Not Set</span>{% endif %}</div>
+      </div></div>
+    </div>
+    <div class="col-md-3">
+      <div class="card h-100"><div class="card-body">
+        <div class="text-muted">Storage</div>
+        <div class="h5">{% if status.storage %}<span class="badge bg-success">OK</span>{% else %}<span class="badge bg-danger">Error</span>{% endif %}</div>
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

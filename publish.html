@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Project Blueprint for CMS</title>
+  <link rel="icon" href="favicon.ico" />
+  <style>
+    body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 32px; color: #222; }
+    h1,h2,h3 { margin-top: 1.2em; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background: #f7f7f7; }
+    #toc { border: 1px solid #eee; padding: 12px; background: #fafafa; }
+    #toc ul { list-style: none; padding-left: 0; }
+    #toc li { margin: 6px 0; }
+    .sub { margin-left: 16px; }
+    .btn { display: inline-block; background: #0d6efd; color: #fff; padding: 8px 12px; border-radius: 6px; text-decoration: none; }
+    @page { margin: 20mm; }
+    @media print { a[href^="#"]::after { content: ""; } }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+</head>
+<body>
+  <div style="margin-bottom: 12px;">
+    <a class="btn" href="http://127.0.0.1:5000/">Open CMS App</a>
+  </div>
+  <div id="toc"><strong>Table of Contents</strong><ul id="toc-list"></ul></div>
+  <div id="content"></div>
+  <textarea id="md-src" style="display:none"># Project Blueprint: Scalable College Management System (CMS)
+
+For The Group of Parekh Colleges, Under the Management of Shri Balvant Parekh Education Trust
+
+## Table of Contents
+- [Executive Summary and System Goals](#1-executive-summary-and-system-goals)
+- [Key System Objectives](#key-system-objectives)
+- [Technical Architecture and Stack](#2-technical-architecture-and-stack)
+  - [Cloud Database Strategy (Discussion)](#21-cloud-database-strategy-discussion)
+- [NEP 2020 Academic Framework](#3-nep-2020-academic-framework)
+  - [Subject Categorization and Credit Allocation](#31-subject-categorization-and-credit-allocation)
+  - [Theory and Practical Credits](#32-theory-and-practical-credits)
+  - [Multiple Entry and Exit Points](#33-multiple-entry-and-exit-points)
+- [User Roles, Hierarchy, and Permissions](#4-user-roles-hierarchy-and-permissions)
+- [Detailed Functional Modules](#5-detailed-functional-modules)
+- [Comprehensive Database Schema (PostgreSQL)](#6-comprehensive-database-schema-postgresql)
+
+## 1. 1. Executive Summary and System Goals
+
+This document outlines the final, comprehensive plan for developing a robust and scalable College Management System (CMS), hereinafter referred to as PCMS (Parekh Colleges Management System). The system is designed to manage all academic and administrative operations efficiently, ensuring full compliance with the National Education Policy (NEP) 2020 framework.
+
+### 1.1 Key System Objectives
+
+| Objective | Description |
+| --- | --- |
+| NEP 2020 Compliance | Implement support for the Credit-Based Choice System (CBCS), Multiple Entry/Exit, and Academic Bank of Credits (ABC). |
+| Scalability | Designed to easily integrate new Degree Programs (BBA, BCom, etc.) without re-engineering the core database structure. |
+| Operational Efficiency | Handle large student intake by managing multiple Divisions (A, B, C, etc.) within each Semester and Program. |
+| Granularity | Accurate tracking of Subject Types (Major, Minor, MDC, etc.) and separate allocation for Theory and Practical Credits. |
+
+## 2. 2. Technical Architecture and Stack
+
+The architecture focuses on non-complexity, high performance, and long-term maintainability, leveraging cloud services for critical components.
+
+| Component | Technology / Platform | Rationale |
+| --- | --- | --- |
+| Frontend (UI) | HTML5, CSS3, JavaScript (Bootstrap 5) | Responsive, mobile-first design for universal access by students and faculty. |
+| Backend (Server) | Python (Flask Micro-framework) | Provides simplicity, speed, and modularity, making it ideal for the defined core academic logic. |
+| Database | PostgreSQL (Managed Cloud Service) | CRITICAL for Scalability and Availability. Enterprise-grade reliability, data integrity, automatic backups, and disaster recovery managed by a cloud provider. |
+| Deployment | Gunicorn / Nginx on Linux | Standard, secure, and high-performance production environment. |
+
+### 2.1 2.1 Cloud Database Strategy (Discussion)
+
+The database will be hosted on a Managed Cloud PostgreSQL Service. This strategy ensures:
+
+High Availability: Automatic failover and replication across zones.
+
+Reduced Overhead: Automated patching, backups, and maintenance.
+
+Security: Enhanced network security (VPC), encryption at rest and in transit (SSL/TLS).
+
+Scalability: Ability to instantly adjust compute and storage capacity as the college&#39;s data footprint grows.
+
+## 3. 3. NEP 2020 Academic Framework
+
+The CMS core academic structure is built around the following highly granular components:
+
+### 3.1 3.1 Subject Categorization and Credit Allocation
+
+Every subject must be defined with both its Type and its Credit Split.
+
+| Subject Type | Full Form | Credit Structure Tracking |
+| --- | --- | --- |
+| Major | Major Course | Core discipline subjects (e.g., Programming). Highest credit weight. |
+| Minor | Minor Course | Secondary discipline subjects. |
+| MDC | Multi-Disciplinary Course | Subjects taken from outside the primary program. |
+| AEC | Ability Enhancement Course | Mandatory for skill or value enhancement (e.g., Environmental Studies). |
+| SEC | Skill Enhancement Course | Vocational/Skill-based training with a high Practical focus. |
+| IKS | Indian Knowledge System | Courses related to traditional Indian knowledge systems. |
+
+### 3.2 3.2 Theory and Practical Credits
+
+All academic records must distinguish between these two credit types for a single subject:
+
+Total Credits = Theory Credits + Practical Credits.
+
+Marks/Grades are recorded separately for each component.
+
+### 3.3 3.3 Multiple Entry and Exit Points
+
+The system tracks the total credits earned via the Student_Credit_Log table to determine eligibility for various exit points:
+
+| Exit Point | Required Credits (Example) | CMS Logic |
+| --- | --- | --- |
+| Certificate | Completion of Semester 2 | Flag student as eligible when min. credits are met. |
+| Diploma | Completion of Semester 4 | Flag student as eligible when min. credits are met. |
+| Degree (Full) | Completion of Semester 6 | Final credit tally and degree award. |
+
+## 4. 4. User Roles, Hierarchy, and Permissions
+
+Access control is rigidly defined based on the organizational structure, filtered by Program, Semester, and Division.
+
+| Role | Scope / Hierarchy | Key Permissions (R/W = Read/Write) |
+| --- | --- | --- |
+| System Administrator | Global (All data) | Full R/W control over all tables. Configure Programs, Divisions, and User Accounts. |
+| Program Principal | Program-Specific | R/W on Faculty assignment. Read-Only access to all data (Attendance, Grades, Fees) for their assigned Program (e.g., all BCA). |
+| Faculty | Subject/Division Specific | R/W on Attendance, Assignment creation, and Grade entry ONLY for their assigned Subject, Semester, and Division. |
+| Clerk / Office Staff | Global (Administrative) | R/W on Admissions, Student Profile updates, Fees records. R/W on System-wide Announcements. |
+| Student | Individual | Read-Only access to their own profile, attendance, grades, and course content. |
+
+## 5. 5. Detailed Functional Modules
+
+| Module | Core Functionality (Division and Semester Context) | User Roles |
+| --- | --- | --- |
+| Admissions &amp; Enrollment | Assigns incoming students to an available Division (A, B, C, etc.) within their starting Semester. Uses Enrollment Number as the permanent unique ID. | Clerk, Admin |
+| Program Setup | Defines Semester structure, links Subjects to a Semester, assigns Subject Type and Theory/Practical Credits. | Admin |
+| Faculty Assignment | Assigns Faculty to a specific Subject, Semester, and Division (via Course_Assignments). | Admin, Principal |
+| Attendance Management | Faculty marks P/A. The system ensures the faculty member only sees the list of students belonging to their assigned Division. Generates aggregate reports by Division. | Faculty, Principal |
+| Grading &amp; Results | Faculty enters separate marks for Theory and Practical components. The system calculates Semester GPA and updates the Credit Log. | Faculty, Principal |
+| Digital Content | Faculty shares course material, filtered by Subject, Semester, and Division. Students only see relevant materials. | Faculty, Student |
+| Announcement System | Displays critical, system-wide messages prominently on the dashboard for all user roles. | Clerk, Admin |
+| Reporting (Principal) | Provides analytics and compliance checks: GPA comparison across Divisions; list of students eligible for NEP Exit Points. | Principal, Admin |
+| Fees Management | Tracks fee structure, payment history, and outstanding balances per student. | Clerk |
+
+## 6. 6. Comprehensive Database Schema (PostgreSQL)
+
+The schema is highly normalized to support all required relationships, including the crucial linking of Division, Semester, and Subject Type.
+
+| Table Name | Primary Key (PK) | Foreign Keys (FK) | Key Data Fields |
+| --- | --- | --- | --- |
+| Users | user_id | program_id_fk (Links Principal to their Program) | username (Email/Enrollment No.), password_hash, role |
+| Programs | program_id | - | program_name (BCA, BBA), program_duration_years |
+| Subject_Types | type_id | - | type_code (MAJOR, MDC, AEC), description |
+| Divisions | division_id | program_id_fk | semester, division_code (A, B, C), capacity |
+| Students | enrollment_no (PK) | program_id_fk, user_id_fk, division_id_fk | surname, student_name, date_of_birth, mobile, current_semester |
+| Subjects | subject_id | program_id_fk, subject_type_id_fk | subject_name, semester |
+| Credit_Structure | structure_id | subject_id_fk | theory_credits, practical_credits, total_credits |
+| Course_Assignments | assignment_id | faculty_id_fk, subject_id_fk, division_id_fk | academic_year, is_active |
+| Attendance | attendance_id | student_id_fk, subject_id_fk, division_id_fk | date_marked, status (P/A/L), semester |
+| Grades | grade_id | student_id_fk, subject_id_fk, division_id_fk | theory_marks, practical_marks, gpa_for_subject |
+| Student_Credit_Log | log_id | student_id_fk, subject_id_fk | credits_earned, date_awarded, is_exit_eligible |
+| Fees_Records | fee_id | student_id_fk | amount_due, amount_paid, date_paid, semester |
+
+</textarea>
+  <script>
+    const src = document.getElementById('md-src').value;
+    const escapeId = s => s.toLowerCase().replace(/[^a-z0-9\s\.\-]/g,'').replace(/\s+/g,'-');
+    const renderer = new marked.Renderer();
+    renderer.heading = function (text, level) {
+      const fixed = text.replace(/^(\d+\.\s*)\1/, '$1'); // de-duplicate leading numbering like "1. 1. Title"
+      const id = escapeId(fixed);
+      return `<h${level} id="${id}">${fixed}</h${level}>`;
+    };
+    marked.setOptions({ renderer });
+    document.getElementById('content').innerHTML = marked.parse(src);
+    // Build TOC from h2/h3
+    const toc = document.getElementById('toc-list');
+    document.querySelectorAll('#content h2, #content h3').forEach(h => {
+      const li = document.createElement('li');
+      if (h.tagName.toLowerCase() === 'h3') li.className = 'sub';
+      const a = document.createElement('a');
+      a.textContent = h.textContent;
+      a.href = '#' + h.id;
+      li.appendChild(a);
+      toc.appendChild(li);
+    });
+  </script>
+</body>
+</html>

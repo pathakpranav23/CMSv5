@@ -1,0 +1,314 @@
+{% extends 'layout.html' %}
+{% import '_macros.html' as ui %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+    <h2 class="mb-0 title d-flex align-items-center">Edit Announcement <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions">
+      {{ ui.back_link(url_for('main.announcements_list'), 'Back to Announcements') }}
+    </div>
+  </div>
+  {{ ui.breadcrumbs([
+    ('Dashboard', url_for('main.dashboard')),
+    ('Announcements', url_for('main.announcements_list')),
+    ('Edit', '')
+  ]) }}
+  {% if errors and errors|length > 0 %}
+    <div class="alert alert-danger">{{ errors[0] }}</div>
+  {% endif %}
+  {% set user_role = (current_user.role or '')|lower %}
+  <form method="post" action="{{ url_for('main.announcement_edit', announcement_id=a.announcement_id) }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="mb-3">
+      <label class="form-label">Title</label>
+      <input type="text" name="title" class="form-control" value="{{ a.title }}" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Message</label>
+      <textarea name="message" class="form-control" rows="4" required>{{ a.message }}</textarea>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Attachments (docx/pdf/xlsx/jpg)</label>
+      <input type="file" name="attachments" class="form-control" multiple accept=".pdf,.docx,.xlsx,.jpg,.jpeg">
+      <div class="form-text soft-hint">Optional. Attach multiple files. Allowed: .pdf, .docx, .xlsx, .jpg/.jpeg. Max size: 8 MB per file.</div>
+      {% if attachments and attachments|length > 0 %}
+        <div class="mt-2">
+          <div class="small text-muted">Existing attachments:</div>
+          <ul class="list-unstyled mb-0">
+            {% for att in attachments %}
+              <li class="d-flex align-items-center justify-content-between">
+                <a href="{{ att.url }}" target="_blank" rel="noopener">{{ att.name }}</a>
+                <form method="post" action="{{ url_for('main.announcement_attachment_delete', announcement_id=a.announcement_id) }}" class="ms-2">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="filename" value="{{ att.name }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                </form>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+    </div>
+    <div class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">Severity</label>
+        <select name="severity" class="form-select">
+          {% for s in ['info','success','warning','danger'] %}
+            <option value="{{ s }}" {% if (a.severity or 'info') == s %}selected{% endif %}>{{ s|capitalize }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">{% if user_role == 'principal' %}Program{% else %}Program (optional){% endif %}</label>
+        <select name="program_id_fk" class="form-select" {% if user_role == 'principal' %}{% endif %}>
+          {% if user_role in ['admin','clerk'] %}
+            <option value="">All Programs</option>
+            {% for p in programs %}
+              <option value="{{ p.program_id }}" {% if a.program_id_fk and a.program_id_fk == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+            {% endfor %}
+          {% else %}
+            {% for p in programs %}
+              {% if current_user.program_id_fk and p.program_id == current_user.program_id_fk %}
+                <option value="{{ p.program_id }}" selected>{{ p.program_name }}</option>
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+        </select>
+        {% if user_role == 'principal' %}
+          <div class="form-text">As principal, you can announce only to your program.</div>
+        {% elif user_role == 'faculty' %}
+          <div class="form-text">Staff must select a specific program; global announcements are allowed only for admin/clerk.</div>
+        {% endif %}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Start At</label>
+        <input type="datetime-local" name="start_at" class="form-control" value="{{ a.start_at.strftime('%Y-%m-%dT%H:%M') if a.start_at else '' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">End At (optional)</label>
+        <input type="datetime-local" name="end_at" class="form-control" value="{{ a.end_at.strftime('%Y-%m-%dT%H:%M') if a.end_at else '' }}">
+      </div>
+    </div>
+    <div class="mt-3">
+      <label class="form-label">Audience{% if user_role in ['principal','faculty'] %} (restricted to Students/Staff){% else %} (leave empty for all){% endif %}</label>
+      <div class="d-flex flex-wrap gap-3">
+        {% set aud = aud_roles or [] %}
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="audience_roles" id="audStudent" value="student" {% if 'student' in aud %}checked{% endif %}>
+          <label class="form-check-label" for="audStudent">Students</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="audience_roles" id="audFaculty" value="faculty" {% if 'faculty' in aud %}checked{% endif %}>
+          <label class="form-check-label" for="audFaculty">Staff</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="audience_roles" id="audPrincipal" value="principal" {% if 'principal' in aud %}checked{% endif %} {% if user_role in ['principal','faculty'] %}disabled{% endif %}>
+          <label class="form-check-label" for="audPrincipal">Principal</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="audience_roles" id="audClerk" value="clerk" {% if 'clerk' in aud %}checked{% endif %} {% if user_role in ['principal','faculty'] %}disabled{% endif %}>
+          <label class="form-check-label" for="audClerk">Clerk</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="audience_roles" id="audAdmin" value="admin" {% if 'admin' in aud %}checked{% endif %} {% if user_role in ['principal','faculty'] %}disabled{% endif %}>
+          <label class="form-check-label" for="audAdmin">Admin</label>
+        </div>
+      </div>
+      <div class="form-text soft-hint">
+        Check one or more roles to target; leave empty to show to everyone.
+      </div>
+    </div>
+    <div class="mt-3">
+      <label class="form-label">Personal recipients (Enrollment Nos)</label>
+      <textarea name="recipient_enrollment_nos" id="recipientEnrollmentNos" class="form-control" rows="2" placeholder="e.g. 5034240001, 5034240008">{{ recipient_enrollment_nos or '' }}</textarea>
+      <div class="form-text soft-hint">Private: visible only to listed students and Principal/Clerk. Separate by commas or spaces.</div>
+    </div>
+    <div class="mt-3">
+      <label class="form-label">Pick students</label>
+      <div class="d-flex gap-2 align-items-start">
+        <input type="text" id="studentPickerInput" class="form-control" list="studentPickerList" placeholder="Type name, enrollment, division, or semester..." style="max-width: 420px;">
+        <button type="button" class="btn btn-outline-primary" id="addRecipientBtn">Add</button>
+      </div>
+      <datalist id="studentPickerList">
+        {% for s in (students_for_picker or []) %}
+          <option value="{{ s.enrollment_no }}">{{ s.display_name }} ({{ s.enrollment_no }}) — Sem {{ s.semester or '-' }}, Div {{ s.division_code or '-' }}</option>
+        {% endfor %}
+      </datalist>
+      <div class="d-flex gap-2 mt-2" id="pickerFilters">
+        <select id="programFilter" class="form-select" style="max-width: 260px;" aria-label="Filter by program">
+          <option value="">All Programs</option>
+          {% for p in programs %}
+            <option value="{{ p.program_id }}">{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+        <select id="semesterFilter" class="form-select" style="max-width: 160px;" aria-label="Filter by semester">
+          <option value="">All Semesters</option>
+          {% for s in range(1, 9) %}
+            <option value="{{ s }}">Sem {{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div id="studentSuggestions" class="list-group mt-2" style="max-width: 420px;"></div>
+      <div id="recipientChips" class="d-flex flex-wrap gap-2 mt-2"></div>
+      <div class="form-text soft-hint">Use the picker to add recipients and manage them via chips below.</div>
+    </div>
+    <div class="form-check mt-3">
+      <input class="form-check-input" type="checkbox" name="is_active" id="isActive" {% if a.is_active %}checked{% endif %}>
+      <label class="form-check-label" for="isActive">Active</label>
+    </div>
+
+    <!-- Inline data to avoid JS parser confusion with templating -->
+    <script id="studentsData" type="application/json">{{ (students_for_picker or []) | tojson }}</script>
+    <script>
+      (function() {
+        const textArea = document.getElementById('recipientEnrollmentNos');
+        const input = document.getElementById('studentPickerInput');
+        const addBtn = document.getElementById('addRecipientBtn');
+        const chips = document.getElementById('recipientChips');
+        const suggestions = document.getElementById('studentSuggestions');
+        const studentsDataEl = document.getElementById('studentsData');
+        const programFilter = document.getElementById('programFilter');
+        const semesterFilter = document.getElementById('semesterFilter');
+        const formProgramSelect = document.querySelector('select[name="program_id_fk"]');
+        const STUDENTS = studentsDataEl ? JSON.parse(studentsDataEl.textContent || '[]') : [];
+        let activeIdx = -1;
+        let recipients = [];
+
+        function parseInitial() {
+          const raw = (textArea.value || '').replace(/\n/g, ' ').replace(/,/g, ' ');
+          const toks = raw.split(' ').map(t => t.trim()).filter(Boolean);
+          const seen = new Set();
+          recipients = [];
+          for (const t of toks) { if (!seen.has(t)) { seen.add(t); recipients.push(t); } }
+        }
+
+        function formatStudentLabel(s) {
+          const semTxt = (s.semester != null && s.semester !== '') ? 'Sem ' + s.semester : '';
+          const divTxt = (s.division_code) ? 'Div ' + s.division_code : '';
+          const meta = [semTxt, divTxt].filter(Boolean).join(' • ');
+          return `${s.enrollment_no} — ${s.display_name}${meta ? ' (' + meta + ')' : ''}`;
+        }
+
+        function render() {
+          chips.innerHTML = '';
+          recipients.forEach(enr => {
+            const span = document.createElement('span');
+            span.className = 'badge bg-secondary rounded-pill px-2 py-1';
+            const st = STUDENTS.find(x => x.enrollment_no === enr);
+            const label = st ? formatStudentLabel(st) : enr;
+            span.textContent = label + ' ';
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'btn btn-sm btn-light ms-1';
+            close.textContent = '×';
+            close.setAttribute('data-enr', enr);
+            close.addEventListener('click', (e) => {
+              const val = e.currentTarget.getAttribute('data-enr');
+              recipients = recipients.filter(r => r !== val);
+              render();
+            });
+            span.appendChild(close);
+            chips.appendChild(span);
+          });
+          textArea.value = recipients.join(', ');
+        }
+
+        function addRecipient(val) {
+          const enr = (val || '').trim();
+          if (!enr) return;
+          if (!recipients.includes(enr)) {
+            recipients.push(enr);
+            render();
+          }
+        }
+
+        addBtn?.addEventListener('click', () => { addRecipient(input.value); input.value = ''; suggestions.innerHTML = ''; activeIdx = -1; });
+
+        // Live fuzzy suggestions
+        function scoreStudent(s, q) {
+          const hay = `${s.enrollment_no} ${s.display_name} ${s.division_code || ''} sem ${s.semester || ''}`.toLowerCase();
+          const query = (q || '').toLowerCase().trim();
+          if (!query) return 0;
+          let score = 0;
+          if (hay.includes(query)) score += 10;
+          if (hay.startsWith(query)) score += 20;
+          if ((s.enrollment_no || '').toLowerCase().startsWith(query)) score += 30;
+          let i = 0, j = 0;
+          while (i < hay.length && j < query.length) { if (hay[i] === query[j]) j++; i++; }
+          if (j === query.length) score += Math.max(1, 10 - (i - j));
+          return score;
+        }
+
+        function renderSuggestions(q) {
+          const query = (q || '').trim();
+          const hasFilters = !!(programFilter?.value || semesterFilter?.value);
+          if (!query && !hasFilters) { suggestions.innerHTML = ''; input.setAttribute('aria-expanded', 'false'); return; }
+          const filtered = STUDENTS.filter(s => (
+            (!programFilter?.value || String(s.program_id_fk) === String(programFilter.value)) &&
+            (!semesterFilter?.value || String(s.semester || '') === String(semesterFilter.value))
+          ));
+          const scored = filtered.map(s => ({ s, score: scoreStudent(s, query) }))
+                                 .filter(x => x.score > 0 || !query)
+                                 .sort((a, b) => b.score - a.score)
+                                 .slice(0, 10);
+          suggestions.innerHTML = '';
+          suggestions.setAttribute('role', 'listbox');
+          scored.forEach(({ s }) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'list-group-item list-group-item-action';
+            item.setAttribute('role', 'option');
+            item.textContent = formatStudentLabel(s);
+            item.addEventListener('click', () => { addRecipient(s.enrollment_no); input.value = ''; suggestions.innerHTML = ''; activeIdx = -1; });
+            suggestions.appendChild(item);
+          });
+          activeIdx = -1;
+          input.setAttribute('aria-expanded', scored.length ? 'true' : 'false');
+        }
+
+        input?.addEventListener('input', (e) => { renderSuggestions(e.target.value); });
+        input?.addEventListener('keydown', (e) => {
+          const items = Array.from(suggestions.querySelectorAll('.list-group-item'));
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!items.length) return;
+            activeIdx = (activeIdx + 1) % items.length;
+            items.forEach((el, idx) => el.classList.toggle('active', idx === activeIdx));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!items.length) return;
+            activeIdx = (activeIdx - 1 + items.length) % items.length;
+            items.forEach((el, idx) => el.classList.toggle('active', idx === activeIdx));
+          } else if (e.key === 'Enter') {
+            if (activeIdx >= 0 && items[activeIdx]) {
+              e.preventDefault();
+              items[activeIdx].click();
+            }
+          } else if (e.key === 'Escape') {
+            suggestions.innerHTML = '';
+            activeIdx = -1;
+          }
+        });
+        programFilter?.addEventListener('change', () => { renderSuggestions(input.value); });
+        semesterFilter?.addEventListener('change', () => { renderSuggestions(input.value); });
+        if (formProgramSelect && programFilter) {
+          programFilter.value = formProgramSelect.value || '';
+          formProgramSelect.addEventListener('change', () => {
+            programFilter.value = formProgramSelect.value || '';
+            renderSuggestions(input.value);
+          });
+        }
+        document.addEventListener('click', (e) => { if (!suggestions.contains(e.target) && e.target !== input) suggestions.innerHTML = ''; });
+
+        parseInitial();
+        render();
+      })();
+    </script>
+    <div class="mt-3">
+      <button class="btn btn-primary" type="submit">Save</button>
+      <a class="btn btn-secondary" href="{{ url_for('main.announcements_list') }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,69 @@
+{% extends 'layout.html' %}
+{% import '_macros.html' as ui %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title">Add Material — {{ subject.subject_name }}</h2>
+    <div class="actions">
+      {{ ui.back_link(url_for('main.subject_materials', subject_id=subject.subject_id), 'Back to Materials') }}
+    </div>
+  </div>
+  {{ ui.breadcrumbs([
+    ('Dashboard', url_for('main.dashboard')),
+    ('Subjects', url_for('main.subjects_list', program_id=subject.program_id_fk, semester=subject.semester)),
+    ('Materials', url_for('main.subject_materials', subject_id=subject.subject_id)),
+    ('New', '')
+  ]) }}
+
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('main.subject_material_new', subject_id=subject.subject_id) }}" class="card">
+    <div class="card-header card-header-standard"><div class="card-title">New Material</div></div>
+    <div class="card-body">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <div class="mb-3">
+        <label for="title" class="form-label">Title</label>
+        <input type="text" class="form-control" id="title" name="title" required />
+      </div>
+      <div class="mb-3">
+        <label for="description" class="form-label">Description</label>
+        <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+      </div>
+      <div class="mb-3">
+        <label for="kind" class="form-label">Kind</label>
+        <select class="form-select" id="kind" name="kind" onchange="toggleKindFields()">
+          <option value="file" selected>File Upload</option>
+          <option value="link">External Link</option>
+          <option value="embed">Embed Link</option>
+        </select>
+      </div>
+      <div class="mb-3" id="file_field">
+        <label for="file" class="form-label">File</label>
+        <input type="file" class="form-control" id="file" name="file" />
+        <div class="form-text">Allowed: pdf, doc/x, ppt/x, xls/x, png, jpg, jpeg</div>
+      </div>
+      <div class="mb-3 d-none" id="url_field">
+        <label for="external_url" class="form-label">External URL</label>
+        <input type="url" class="form-control" id="external_url" name="external_url" placeholder="https://..." />
+      </div>
+    </div>
+    <div class="card-footer text-end">
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+    </div>
+  </form>
+</div>
+
+<script>
+function toggleKindFields() {
+  const kind = document.getElementById('kind').value;
+  const fileField = document.getElementById('file_field');
+  const urlField = document.getElementById('url_field');
+  if (kind === 'file') {
+    fileField.classList.remove('d-none');
+    urlField.classList.add('d-none');
+  } else {
+    fileField.classList.add('d-none');
+    urlField.classList.remove('d-none');
+  }
+}
+document.addEventListener('DOMContentLoaded', toggleKindFields);
+</script>
+{% endblock %}

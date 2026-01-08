@@ -1,0 +1,66 @@
+{% extends "layout.html" %}
+{% block page_class %}announcements-module module-cards{% endblock %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (role or (current_user.role if current_user.is_authenticated else 'Guest')) %}
+  {% set role_display_lower = (role_display or '')|lower %}
+  {% set role_display_pretty = ('Staff' if role_display_lower == 'faculty' else (role_display|capitalize)) %}
+  <div class="section-header">
+    <h2 class="mb-0 d-flex align-items-center title">{{ t('Announcements') }} <span class="role-badge ms-2">{{ role_display_pretty }}</span></h2>
+  </div>
+  {% if role_display_lower == 'admin' %}
+    <div class="small text-muted" data-bs-toggle="tooltip" data-bs-placement="right" title="Admins can create announcements and manage visibility across all audiences.">Admin: Elevated access on this module.</div>
+  {% endif %}
+  <p class="text-muted soft-hint">{{ t('Publish and manage college-wide announcements.') }}</p>
+
+  <div class="row g-3">
+    <div class="col-md-6">
+      <div class="card mod-card mod-card--quick">
+        <div class="card-header"><div class="card-title">{{ t('Quick Actions') }}</div></div>
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-megaphone"></i></div>
+          <div class="list-group">
+            <a class="list-group-item list-group-item-action" href="{{ url_for('main.announcements_list') }}">{{ t('View Announcements') }}</a>
+            {% if (role or '') in ['admin','clerk','principal','faculty'] %}
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.announcement_new') }}">{{ t('Create Announcement') }}</a>
+            {% endif %}
+            <a class="list-group-item list-group-item-action" href="{{ url_for('main.notice_board') }}">{{ t('Notice Board') }}</a>
+            <a class="list-group-item list-group-item-action" href="{{ url_for('main.notice_archive') }}">{{ t('Archive') }}</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card mod-card mod-card--links">
+        <div class="card-header"><div class="card-title">{{ t('Helpful Links') }}</div></div>
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-info-circle"></i></div>
+          <ul class="list-unstyled mb-0 soft-hint">
+            <li>{{ t('Audience targeting supports program, division, and roles.') }}</li>
+            <li>{{ t('Dismissals let users hide announcements from their view.') }}</li>
+            <li>{{ t('Use archive to keep the notice board clean.') }}</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-3">
+    <button class="btn btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#announcePower">Power Actions</button>
+    <div id="announcePower" class="collapse mt-2">
+      <div class="card mod-card mod-card--links">
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-12"><div class="small text-muted soft-hint">{{ t('Advanced links for power users.') }}</div></div>
+            {% if (role or '') in ['admin','principal'] %}
+              <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.users_list') }}">{{ t('Manage Accounts') }}</a></div>
+            {% endif %}
+            <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.dashboard') }}">{{ t('Dashboard') }}</a></div>
+            <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.students') }}">{{ t('Students') }}</a></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

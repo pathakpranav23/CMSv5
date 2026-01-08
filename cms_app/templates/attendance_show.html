@@ -1,0 +1,123 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container-fluid">
+  <div class="section-header d-flex align-items-center justify-content-between mb-3">
+    {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+    {% set role_display_lower = (role_display or '')|lower %}
+    {% set role_display_pretty = ('Staff' if role_display_lower == 'faculty' else (role_display|capitalize)) %}
+    <h2 class="mb-0 title d-flex align-items-center">Show Attendance <span class="role-badge ms-2">{{ role_display_pretty }}</span></h2>
+    <div class="actions">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.dashboard') }}">Dashboard</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.attendance_mark') }}">Mark Attendance</a>
+    </div>
+  </div>
+
+  <form method="get" action="" class="card mb-3">
+    <div class="card-header">Select Date and Student (optional)</div>
+    <div class="card-body row g-3">
+      <div class="col-md-3">
+        <label class="form-label">Date</label>
+        <input type="date" name="date" class="form-control" value="{{ selected_date }}" required />
+      </div>
+      <div class="col-md-4">
+        <label class="form-label d-flex justify-content-between align-items-center">
+          <span>Student Enrollment (optional)</span>
+          <a href="{{ url_for('main.attendance_search') }}" id="attSearchLink" class="small text-decoration-none">Attendance Search</a>
+        </label>
+        <input type="text" name="enrollment_no" class="form-control" value="{{ student.enrollment_no if student else '' }}" placeholder="e.g., 23BCA001" />
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <button type="submit" class="btn btn-primary w-100">Show</button>
+      </div>
+    </div>
+  </form>
+  <script>
+    (function(){
+      const link = document.getElementById('attSearchLink');
+      if (!link) return;
+      link.addEventListener('click', function(e){
+        e.preventDefault();
+        const input = document.querySelector('input[name="enrollment_no"]');
+        const v = (input && input.value) ? input.value : '';
+        const baseUrl = "{{ url_for('main.attendance_search') }}";
+        window.location.href = baseUrl + "?q=" + encodeURIComponent(v);
+      });
+    })();
+  </script>
+
+  <div class="row">
+    <div class="col-lg-6">
+      <div class="card mb-3">
+        <div class="card-header">Student Daily Report{% if student %} — {{ student.enrollment_no }} — Roll No: {{ student_roll_no or 'N/A' }}{% endif %}</div>
+        <div class="card-body">
+          {% if student and student_daily and student_daily|length > 0 %}
+            <div class="table-responsive">
+              <table class="table table-sm table-striped">
+                <thead>
+                  <tr>
+                    <th scope="col">Roll No</th>
+                    <th scope="col">Lecture</th>
+                    <th scope="col">Subject</th>
+                    <th scope="col">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for r in student_daily %}
+                    <tr>
+                      <td>{{ student_roll_no or '-' }}</td>
+                      <td>Lecture {{ r.period_no }}</td>
+                      <td>{{ r.subject }}</td>
+                      <td>{{ r.status }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% elif student %}
+            <div class="text-muted">No attendance records for the selected date.</div>
+          {% else %}
+            <div class="text-muted">Enter a student enrollment to view their daily report.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card mb-3">
+        <div class="card-header">Principal/Admin Daily Summary</div>
+        <div class="card-body">
+          {% if daily_summary and daily_summary|length > 0 %}
+            <div class="table-responsive">
+              <table class="table table-sm table-striped">
+                <thead>
+                  <tr>
+                    <th scope="col">Subject</th>
+                    <th scope="col" class="text-center">Present</th>
+                    <th scope="col" class="text-center">Absent</th>
+                    <th scope="col" class="text-center">Late</th>
+                    <th scope="col" class="text-center">Present % (P+L)</th>
+                    <th scope="col" class="text-center">Absent %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for r in daily_summary %}
+                    <tr>
+                      <td>{{ r.subject }}</td>
+                      <td class="text-center">{{ r.present }}</td>
+                      <td class="text-center">{{ r.absent }}</td>
+                      <td class="text-center">{{ r.late }}</td>
+                      <td class="text-center">{% if r.total %}{{ r.present_pct }}{% else %}-{% endif %}</td>
+                      <td class="text-center">{% if r.total %}{{ r.absent_pct }}{% else %}-{% endif %}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div class="text-muted">No attendance recorded for the selected date.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

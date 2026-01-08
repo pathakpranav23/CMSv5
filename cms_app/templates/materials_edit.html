@@ -1,0 +1,72 @@
+{% extends 'layout.html' %}
+{% import '_macros.html' as ui %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title">Edit Material — {{ subject.subject_name }}</h2>
+    <div class="actions">
+      {{ ui.back_link(url_for('main.subject_materials', subject_id=subject.subject_id), 'Back to Materials') }}
+    </div>
+  </div>
+  {{ ui.breadcrumbs([
+    ('Dashboard', url_for('main.dashboard')),
+    ('Subjects', url_for('main.subjects_list', program_id=subject.program_id_fk, semester=subject.semester)),
+    ('Materials', url_for('main.subject_materials', subject_id=subject.subject_id)),
+    ('Edit', '')
+  ]) }}
+
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('main.subject_material_edit', material_id=material.material_id) }}" class="card">
+    <div class="card-header card-header-standard"><div class="card-title">Edit Material</div></div>
+    <div class="card-body">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <div class="mb-3">
+        <label for="title" class="form-label">Title</label>
+        <input type="text" class="form-control" id="title" name="title" value="{{ material.title }}" required />
+      </div>
+      <div class="mb-3">
+        <label for="description" class="form-label">Description</label>
+        <textarea class="form-control" id="description" name="description" rows="3">{{ material.description or '' }}</textarea>
+      </div>
+      <div class="mb-3">
+        <label for="kind" class="form-label">Kind</label>
+        <select class="form-select" id="kind" name="kind" onchange="toggleKindFields()">
+          <option value="file" {% if material.kind == 'file' %}selected{% endif %}>File Upload</option>
+          <option value="link" {% if material.kind == 'link' %}selected{% endif %}>External Link</option>
+          <option value="embed" {% if material.kind == 'embed' %}selected{% endif %}>Embed Link</option>
+        </select>
+      </div>
+      <div class="mb-3" id="file_field">
+        <label for="file" class="form-label">Replace File</label>
+        <input type="file" class="form-control" id="file" name="file" />
+        {% if material.kind == 'file' and material.file_path %}
+          <div class="form-text">Current: <a href="{{ url_for('static', filename=material.file_path) }}" target="_blank">Download</a></div>
+        {% endif %}
+        <div class="form-text">Allowed: pdf, doc/x, ppt/x, xls/x, png, jpg, jpeg</div>
+      </div>
+      <div class="mb-3 d-none" id="url_field">
+        <label for="external_url" class="form-label">External URL</label>
+        <input type="url" class="form-control" id="external_url" name="external_url" value="{{ material.external_url or '' }}" placeholder="https://..." />
+      </div>
+    </div>
+    <div class="card-footer text-end">
+      <button type="submit" class="btn btn-primary btn-sm">Update</button>
+    </div>
+  </form>
+</div>
+
+<script>
+function toggleKindFields() {
+  const kind = document.getElementById('kind').value;
+  const fileField = document.getElementById('file_field');
+  const urlField = document.getElementById('url_field');
+  if (kind === 'file') {
+    fileField.classList.remove('d-none');
+    urlField.classList.add('d-none');
+  } else {
+    fileField.classList.add('d-none');
+    urlField.classList.remove('d-none');
+  }
+}
+document.addEventListener('DOMContentLoaded', toggleKindFields);
+</script>
+{% endblock %}

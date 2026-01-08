@@ -1,0 +1,141 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h2>Offer Electives — {{ selected_program.program_name if selected_program else '' }} (Semester {{ semester }})</h2>
+
+  {% if electives_count == 0 %}
+    <div class="alert alert-info">No electives are configured for this program and semester. Core subjects are handled via division assignments. This page is shared across all programs; when electives are added, they will appear here.
+      <a class="ms-2" href="{{ url_for('main.subjects_list') }}?program_id={{ selected_program.program_id if selected_program else '' }}&semester={{ semester }}">View subjects</a>
+    </div>
+  {% endif %}
+
+  {% if errors and errors|length %}
+    <div class="alert alert-danger">
+      <ul class="mb-0">
+        {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <form class="row g-3 mb-4" method="get" action="{{ url_for('main.offer_electives') }}">
+    {% set role_lower = (current_user.role|lower) if current_user.is_authenticated else 'guest' %}
+    {% set user_program_id = current_user.program_id_fk if current_user.is_authenticated else None %}
+    <div class="col-md-6">
+      <label class="form-label">Program</label>
+      {% if role_lower in ['principal','clerk'] and user_program_id %}
+        <select class="form-select" disabled>
+          {% for p in programs %}
+            {% if p.program_id == user_program_id %}
+              <option value="{{ p.program_id }}" selected>{{ p.program_name }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+        <input type="hidden" name="program_id" value="{{ user_program_id }}" />
+      {% else %}
+        <select name="program_id" class="form-select" onchange="this.form.submit()">
+          {% for p in programs %}
+            <option value="{{ p.program_id }}" {% if selected_program and p.program_id == selected_program.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+      {% endif %}
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Semester</label>
+      <input type="number" min="1" max="10" name="semester" value="{{ semester }}" class="form-control" onchange="this.form.submit()" />
+    </div>
+    <div class="col-md-3 d-flex align-items-end">
+      <button type="submit" class="btn btn-secondary w-100">Apply</button>
+    </div>
+  </form>
+
+  <form method="post" action="{{ url_for('main.offer_electives', program_id=(selected_program.program_id if selected_program else None), semester=semester) }}">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="card">
+          <div class="card-header">Academic Year</div>
+          <div class="card-body">
+            <input type="text" name="academic_year" placeholder="2024-25" value="{{ academic_year }}" class="form-control" />
+            <small class="text-muted">Format: YYYY-YY</small>
+          </div>
+        </div>
+
+        <div class="card mt-3">
+          <div class="card-header">Core Subjects (read-only)</div>
+          <ul class="list-group list-group-flush">
+            {% for s in subjects_core %}
+              <li class="list-group-item">
+                {{ s.subject_code or '' }} {{ s.subject_name }}
+              </li>
+            {% else %}
+              <li class="list-group-item text-muted">No core subjects found.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Elective Subjects</span>
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="toggleAll('subject_ids', true)">Select All</button>
+          </div>
+          <ul class="list-group list-group-flush">
+            {% set selected_subject_ids = form_data.get('subject_ids') if form_data else None %}
+            {% for s in subjects_electives %}
+              {% set checked = (selected_subject_ids and (s.subject_id|string in selected_subject_ids)) or (not selected_subject_ids) %}
+              <li class="list-group-item">
+                <label class="form-check-label w-100">
+                  <input class="form-check-input me-2" type="checkbox" name="subject_ids" value="{{ s.subject_id }}" {% if checked %}checked{% endif %} />
+                  {{ s.subject_code or '' }} {{ s.subject_name }}
+                </label>
+              </li>
+            {% else %}
+              <li class="list-group-item text-muted">No elective subjects found.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Students (Semester {{ semester }})</span>
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="toggleAll('student_ids', true)">Select All</button>
+          </div>
+          <ul class="list-group list-group-flush" style="max-height: 420px; overflow:auto;">
+            {% set selected_student_ids = form_data.get('student_ids') if form_data else None %}
+            {% for st in students %}
+              {% set dm = division_map.get(st.division_id_fk) %}
+              {% set checked = (selected_student_ids and (st.student_id|string in selected_student_ids)) or (not selected_student_ids) %}
+              <li class="list-group-item">
+                <label class="form-check-label w-100">
+                  <input class="form-check-input me-2" type="checkbox" name="student_ids" value="{{ st.student_id }}" {% if checked %}checked{% endif %} />
+                  {{ st.enrollment_no }} — {{ st.full_name }}
+                  <span class="badge bg-light text-dark float-end">{{ dm[1] if dm else '' }}</span>
+                </label>
+              </li>
+            {% else %}
+              <li class="list-group-item text-muted">No students for selected program and semester.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-3 d-flex justify-content-end">
+      {% if electives_count == 0 %}
+        <button type="button" class="btn btn-secondary" disabled>No electives to enroll</button>
+      {% else %}
+        <button type="submit" class="btn btn-success">Enroll Selected</button>
+      {% endif %}
+    </div>
+  </form>
+
+  <script>
+    function toggleAll(name, checked) {
+      const inputs = document.querySelectorAll('input[name="' + name + '"]');
+      inputs.forEach(i => { i.checked = checked; });
+    }
+  </script>
+</div>
+{% endblock %}

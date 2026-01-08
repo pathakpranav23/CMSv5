@@ -1,0 +1,97 @@
+{% extends "layout.html" %}
+{% block page_class %}fees-module{% endblock %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (role or (current_user.role if current_user.is_authenticated else 'Guest')) %}
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title d-flex align-items-center">{{ t('Fees Module') }} <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions"></div>
+  </div>
+  <p class="text-muted soft-hint">{{ t('Manage fee heads, enter semester-wise amounts, and view structures.') }}</p>
+
+  <div class="row g-4 fees-grid">
+    <div class="col-md-4 fees-item fees-item--heads">
+      <div class="card fees-card fees-card--heads h-100 position-relative">
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-tags"></i></div>
+          <h5 class="card-title">{{ t('Fee Heads') }}</h5>
+          <p class="card-text">{{ t('Add, rename, or delete heads per program and semester.') }}</p>
+          <a href="{{ url_for('main.fees_heads') }}" class="btn btn-light btn-fees stretched-link" aria-label="Manage Fee Heads">{{ t('Manage Fee Heads') }}</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4 fees-item fees-item--entry">
+      <div class="card fees-card fees-card--entry h-100 position-relative">
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-pencil-square"></i></div>
+          <h5 class="card-title">{{ t('Fees Entry') }}</h5>
+          <p class="card-text">{{ t('Enter and review semester-wise component amounts, then freeze.') }}</p>
+          <a href="{{ url_for('main.fees_entry') }}" class="btn btn-light btn-fees stretched-link" aria-label="Open Fees Entry">{{ t('Open Fees Entry') }}</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4 fees-item fees-item--import">
+      <div class="card fees-card fees-card--import h-100 position-relative">
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-file-earmark-arrow-up"></i></div>
+          <h5 class="card-title">{{ t('Bulk Import') }}</h5>
+          <p class="card-text">{{ t('Download sample and upload semester fees for a program.') }}</p>
+          <a href="{{ url_for('main.fees_import') }}" class="btn btn-light btn-fees stretched-link" aria-label="Open Bulk Import">{{ t('Open Bulk Import') }}</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4 fees-item fees-item--structure">
+      <div class="card fees-card fees-card--structure h-100 position-relative">
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-layout-text-sidebar"></i></div>
+          <h5 class="card-title">{{ t('Structure View') }}</h5>
+          <p class="card-text">{{ t('Browse fee structure totals and components across programs.') }}</p>
+          <a href="{{ url_for('main.fees_structure_view') }}" class="btn btn-light btn-fees stretched-link" aria-label="View Structure">{{ t('View Structure') }}</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4 fees-item fees-item--quickpay">
+      <div class="card fees-card fees-card--quickpay h-100 position-relative">
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-credit-card"></i></div>
+          <h5 class="card-title">{{ t('Quick Payment') }}</h5>
+          <p class="card-text">{{ t('Select program and semester, then pay via receipt page.') }}</p>
+          <a href="{{ url_for('main.fees_receipt_semester') }}" class="btn btn-light btn-fees stretched-link" aria-label="Open Quick Payment">{{ t('Open Quick Payment') }}</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4 fees-item fees-item--bank">
+      <div class="card fees-card fees-card--bank h-100 position-relative">
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-wallet2"></i></div>
+          <h5 class="card-title">{{ t('Program Bank Details') }}</h5>
+          <p class="card-text">{{ t('Manage bank info and UPI QR per program for receipts.') }}</p>
+          <a href="{{ url_for('main.fees_bank_details') }}" class="btn btn-light btn-fees stretched-link" aria-label="Open Bank Details">{{ t('Open Bank Details') }}</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4 fees-item fees-item--status">
+      <div class="card fees-card fees-card--status h-100 position-relative">
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-bar-chart"></i></div>
+          <h5 class="card-title">{{ t('Payment Status') }}</h5>
+          <p class="card-text">{{ t('View paid/unpaid by program, semester, and medium.') }}</p>
+          <a href="{{ url_for('main.fees_payment_status') }}" class="btn btn-light btn-fees stretched-link" aria-label="Open Payment Status">{{ t('Open Payment Status') }}</a>
+        </div>
+      </div>
+    </div>
+    {% if current_user.is_authenticated and (current_user.role|lower) in ['admin','clerk'] %}
+    <div class="col-md-4 fees-item fees-item--verify">
+      <div class="card fees-card fees-card--verify h-100 position-relative">
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-shield-check"></i></div>
+          <h5 class="card-title">{{ t('Verification Queue') }}</h5>
+          <p class="card-text">{{ t('Review UTRs and proofs, then verify or reject payments.') }}</p>
+          <a href="{{ url_for('main.fees_payments_queue') }}" class="btn btn-light btn-fees stretched-link" aria-label="Open Verification Queue">{{ t('Open Verification Queue') }}</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

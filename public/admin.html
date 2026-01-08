@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Dashboard</title>
+  <link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+<body>
+  <header>
+    <div class="nav">
+      <div class="brand"><span class="brand-dot"></span>Admin</div>
+      <div class="actions">
+        <button class="btn btn-secondary" data-toggle-sidebar>Menu</button>
+        <a class="btn btn-secondary" href="/index.html">Home</a>
+        <button class="btn btn-primary" data-toggle-theme>Theme</button>
+      </div>
+    </div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <nav class="menu">
+        <a class="active" href="#">Dashboard</a>
+        <a href="#">Members</a>
+        <a href="#">Memberships</a>
+        <a href="#">Attendance</a>
+        <a href="#">Payments</a>
+        <a href="#">Classes</a>
+        <a href="#">Inventory</a>
+        <a href="#">Reports</a>
+        <a href="#">Notifications</a>
+        <a href="#">Settings</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <div class="grid">
+        <div class="card"><h3>Revenue</h3><div class="kpi">₹2.4L</div></div>
+        <div class="card"><h3>Active Members</h3><div class="kpi">128</div></div>
+        <div class="card"><h3>Churn</h3><div class="kpi">4%</div></div>
+      </div>
+      <div class="panel" style="margin-top:16px">
+        <h2 style="margin:0 0 12px">Recent Attendance</h2>
+        <table class="table">
+          <thead><tr><th>Member</th><th>Method</th><th>Time</th></tr></thead>
+          <tbody>
+            <tr><td>Ravi Kumar</td><td><span class="pill">rfid</span></td><td>08:10</td></tr>
+            <tr><td>Anita Singh</td><td><span class="pill">manual</span></td><td>08:25</td></tr>
+            <tr><td>Rahul Verma</td><td><span class="pill">fingerprint</span></td><td>08:41</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+  <footer class="footer">© Gym Management</footer>
+  <script src="/assets/js/app.js"></script>
+</body>
+</html>

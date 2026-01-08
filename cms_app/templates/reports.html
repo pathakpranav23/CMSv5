@@ -1,0 +1,707 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4 dashboard-linear">
+  {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title d-flex align-items-center">{{ t('Reports') }} <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions"></div>
+  </div>
+
+  <form class="row g-2 mb-3" id="repFilters" onsubmit="return false;">
+    <div class="col-md-4">
+      <label class="form-label">{{ t('Program') }}</label>
+      <select id="repProgram" class="form-select">
+        <option value="">All</option>
+        {% for p in programs %}
+          <option value="{{ p.program_id }}">{{ p.program_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">{{ t('Semester') }}</label>
+      <select id="repSemester" class="form-select">
+        <option value="">All</option>
+        {% for s in range(1,9) %}
+          <option value="{{ s }}">{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">{{ t('Medium') }}</label>
+      <select id="repMedium" class="form-select">
+        <option value="">All</option>
+        <option value="english">English</option>
+        <option value="gujarati">Gujarati</option>
+      </select>
+    </div>
+    <div class="col-md-2 align-self-end">
+      <button class="btn btn-primary w-100" id="repRefresh">{{ t('Refresh') }}</button>
+    </div>
+    <div class="col-md-2 align-self-end">
+      <a class="btn btn-outline-secondary w-100" id="repExportFees">{{ t('Export Fees CSV') }}</a>
+    </div>
+  </form>
+
+  <div class="row g-3">
+    <div class="col-12">
+      <div class="card h-100">
+        <div class="card-header"><div class="card-title">{{ t('Enrollment Summary') }}</div><div class="card-icon"><i class="bi bi-clipboard-data"></i></div></div>
+        <div class="card-body">
+          <div id="enrollTotal" class="h5">Total: —</div>
+          <div class="table-responsive">
+            <table class="table table-sm table-modern">
+              <thead><tr><th>{{ t('Semester') }}</th><th>{{ t('Count') }}</th></tr></thead>
+              <tbody id="enrollRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row g-3">
+    <div class="col-12">
+      <div class="card h-100">
+        <div class="card-header"><div class="card-title">{{ t('Fees Summary') }}</div><div class="card-icon"><i class="bi bi-cash-coin"></i></div></div>
+        <div class="card-body">
+          <div id="feesTotal" class="h5">Total Amount: —</div>
+          <div class="table-responsive">
+            <table class="table table-sm table-modern">
+              <thead><tr><th>{{ t('Status') }}</th><th>{{ t('Count') }}</th></tr></thead>
+              <tbody id="feesRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if false %}
+  <div class="row g-3 mt-2">
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header"><div class="card-title">{{ t('Attendance Compliance') }}</div></div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table table-sm table-modern">
+              <thead><tr><th>{{ t('Subject') }}</th><th>{{ t('Present') }}</th><th>{{ t('Total') }}</th><th>{{ t('Rate %') }}</th></tr></thead>
+              <tbody id="attRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  <div class="row g-3 mt-2">
+    <div class="col-12">
+      <div class="card h-100">
+        <div class="card-header"><div class="card-title">{{ t('Materials Publishing') }}</div><div class="card-icon"><i class="bi bi-folder2"></i></div></div>
+        <div class="card-body">
+          <div id="matSummary" class="h6">Total: — | Published: — | Flagged: —</div>
+          <div class="table-responsive">
+            <table class="table table-sm table-modern">
+              <thead><tr><th>{{ t('Subject ID') }}</th><th>{{ t('Total') }}</th><th>{{ t('Published') }}</th><th>{{ t('Flagged') }}</th></tr></thead>
+              <tbody id="matRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row g-3 mt-2">
+    <div class="col-12">
+      <div class="card h-100">
+        <div class="card-header"><div class="card-title">{{ t('Fees Program Status') }}</div><div class="card-icon"><i class="bi bi-cash-stack"></i></div></div>
+        <div class="card-body">
+          <form class="row g-2" id="feesProgForm" onsubmit="return false;">
+            <div class="col-md-3">
+              <label class="form-label">{{ t('Program') }}</label>
+              <select id="fpsProgram" class="form-select">
+                <option value="">{{ t('All') }}</option>
+                {% for p in programs %}
+                  <option value="{{ p.program_id }}">{{ p.program_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{{ t('Semester') }}</label>
+              <select id="fpsSemester" class="form-select">
+                <option value="">{{ t('All') }}</option>
+                {% for s in range(1,9) %}
+                  <option value="{{ s }}">{{ s }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{{ t('Medium') }}</label>
+              <select id="fpsMedium" class="form-select">
+                <option value="">{{ t('All') }}</option>
+              </select>
+            </div>
+            <div class="col-md-3 align-self-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="fpsIncludeSubmitted">
+                <label class="form-check-label" for="fpsIncludeSubmitted">{{ t('Include Submitted Payments') }}</label>
+              </div>
+            </div>
+            <div class="col-md-2 align-self-end">
+              <button class="btn btn-primary w-100" id="fpsGenerate">{{ t('Generate') }}</button>
+            </div>
+          </form>
+          <div class="d-flex justify-content-end mt-2">
+            <a class="btn btn-outline-secondary" id="fpsExport">{{ t('Export CSV') }}</a>
+          </div>
+          <div class="small text-muted mt-2" id="fpsSummary"></div>
+          <div class="table-responsive mt-2">
+            <table class="table table-sm table-modern">
+              <thead><tr><th>{{ t('EnrollmentNo') }}</th><th>{{ t('Name') }}</th><th id="fpsColMedium">{{ t('Medium') }}</th><th id="fpsColPaid">{{ t('Paid') }}</th><th id="fpsColDue">{{ t('Due') }}</th><th>{{ t('Bucket') }}</th></tr></thead>
+              <tbody id="fpsRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row g-3 mt-2">
+    <div class="col-12">
+      <div class="card h-100">
+        <div class="card-header"><div class="card-title">{{ t('Subject Lectures') }}</div><div class="card-icon"><i class="bi bi-calendar3"></i></div></div>
+        <div class="card-body">
+          <form class="row g-2" id="slForm" onsubmit="return false;">
+            <div class="col-md-3">
+              <label class="form-label">{{ t('Program') }}</label>
+              <select id="slProgram" class="form-select">
+                <option value="">{{ t('All') }}</option>
+                {% for p in programs %}
+                  <option value="{{ p.program_id }}">{{ p.program_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{{ t('Semester') }}</label>
+              <select id="slSemester" class="form-select">
+                <option value="">{{ t('All') }}</option>
+                {% for s in range(1,9) %}
+                  <option value="{{ s }}">{{ s }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">{{ t('Subject') }}</label>
+              <select id="slSubject" class="form-select">
+                <option value="">{{ t('All') }}</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{{ t('Division') }}</label>
+              <select id="slDivision" class="form-select">
+                <option value="">{{ t('All') }}</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{{ t('From') }}</label>
+              <input type="date" id="slFrom" class="form-control" />
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{{ t('To') }}</label>
+              <input type="date" id="slTo" class="form-control" />
+            </div>
+            <div class="col-md-2 align-self-end">
+              <button class="btn btn-primary w-100" id="slGenerate">{{ t('Generate') }}</button>
+            </div>
+          </form>
+          <div class="d-flex justify-content-end mt-2">
+            <a class="btn btn-outline-secondary" id="slExport">{{ t('Export CSV') }}</a>
+          </div>
+          <div class="small text-muted mt-2" id="slSummary"></div>
+          <div class="table-responsive mt-2">
+            <table class="table table-sm table-modern">
+              <thead><tr><th>{{ t('Date') }}</th><th>{{ t('Period') }}</th><th>{{ t('Timing') }}</th><th id="slColDiv">{{ t('Division') }}</th></tr></thead>
+              <tbody id="slRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row g-3 mt-2">
+    <div class="col-12">
+      <div class="card h-100">
+        <div class="card-header"><div class="card-title">{{ t('Attendance Threshold Report') }}</div><div class="card-icon"><i class="bi bi-people"></i></div></div>
+        <div class="card-body">
+          <form class="row g-2" id="attThreshForm" onsubmit="return false;">
+            <div class="col-md-3">
+              <label class="form-label">{{ t('Program') }}</label>
+              <select id="attProgram" class="form-select">
+                <option value="">{{ t('All') }}</option>
+                {% for p in programs %}
+                  <option value="{{ p.program_id }}">{{ p.program_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{{ t('Semester') }}</label>
+              <select id="attSemester" class="form-select">
+                <option value="">{{ t('All') }}</option>
+                {% for s in range(1,9) %}
+                  <option value="{{ s }}">{{ s }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">{{ t('Subject') }}</label>
+              <select id="attSubject" class="form-select">
+                <option value="">{{ t('All') }}</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{{ t('Threshold %') }}</label>
+              <input type="number" id="attThreshold" class="form-control" value="50" min="0" max="100" />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">{{ t('Mode') }}</label>
+              <select id="attMode" class="form-select">
+                <option value="below">{{ t('Below') }}</option>
+                <option value="above">{{ t('Above') }}</option>
+              </select>
+            </div>
+            <div class="col-md-2 align-self-end">
+              <button class="btn btn-primary w-100" id="attLoad">{{ t('Generate') }}</button>
+            </div>
+          </form>
+          <div class="d-flex justify-content-end mt-2">
+            <a class="btn btn-outline-secondary" id="attExport">{{ t('Export CSV') }}</a>
+          </div>
+          <div class="small text-muted mt-2" id="attSummary"></div>
+          <div class="table-responsive mt-2">
+            <table class="table table-sm">
+              <thead><tr><th>{{ t('EnrollmentNo') }}</th><th>{{ t('Name') }}</th><th id="attColMedium">{{ t('Medium') }}</th><th>{{ t('Present') }}</th><th>{{ t('Total') }}</th><th>{{ t('Rate %') }}</th></tr></thead>
+              <tbody id="attThreshRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if (role or '').lower() == 'principal' %}
+  <div class="row g-3 mt-2">
+    <div class="col-12">
+      <div class="card h-100">
+        <div class="card-header"><div class="card-title">{{ t('Division Capacity vs Enrolled') }}</div><div class="card-icon"><i class="bi bi-diagram-3"></i></div></div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table table-sm">
+              <thead><tr><th>{{ t('Semester') }}</th><th>{{ t('Division') }}</th><th>{{ t('Capacity') }}</th><th>{{ t('Enrolled') }}</th><th>{{ t('Utilization %') }}</th><th>{{ t('Medium Split') }}</th></tr></thead>
+              <tbody id="divRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if (role or '').lower() == 'faculty' %}
+    <div class="alert alert-info mt-3">Faculty-specific attendance and materials reports can be added here.</div>
+  {% endif %}
+</div>
+<script>
+(function(){
+  const pidSel = document.getElementById('repProgram');
+  const semSel = document.getElementById('repSemester');
+  const medSel = document.getElementById('repMedium');
+  const refreshBtn = document.getElementById('repRefresh');
+  const enrollTotal = document.getElementById('enrollTotal');
+  const enrollRows = document.getElementById('enrollRows');
+  const feesTotal = document.getElementById('feesTotal');
+  const feesRows = document.getElementById('feesRows');
+  const exportFees = document.getElementById('repExportFees');
+  function qs(){
+    const p = pidSel.value || '';
+    const s = semSel.value || '';
+    const m = medSel.value || '';
+    return {p,s,m};
+  }
+  async function loadEnrollment(){
+    const {p,s,m} = qs();
+    const url = new URL("{{ url_for('main.api_reports_enrollment_summary') }}", window.location.origin);
+    if (p) url.searchParams.set('program_id', p);
+    if (s) url.searchParams.set('semester', s);
+    if (m) url.searchParams.set('medium', m);
+    enrollRows.innerHTML = '<tr><td colspan="2" class="text-muted">Loading…</td></tr>';
+    const resp = await fetch(url.toString());
+    const data = await resp.json();
+    enrollTotal.textContent = 'Total: ' + (data && data.data && data.data.total || 0);
+    const items = (data && data.data && data.data.by_semester) || [];
+    enrollRows.innerHTML = items.map(r => `<tr><td>${r.semester}</td><td>${r.count}</td></tr>`).join('');
+  }
+  async function loadFees(){
+    const {p,s,m} = qs();
+    const url = new URL("{{ url_for('main.api_reports_fees_summary') }}", window.location.origin);
+    if (p) url.searchParams.set('program_id', p);
+    if (s) url.searchParams.set('semester', s);
+    if (m) url.searchParams.set('medium', m);
+    feesRows.innerHTML = '<tr><td colspan="2" class="text-muted">Loading…</td></tr>';
+    const resp = await fetch(url.toString());
+    const data = await resp.json();
+    feesTotal.textContent = 'Total Amount: ' + (data && data.data && data.data.total_amount || 0);
+    const by_status = (data && data.data && data.data.by_status) || {};
+    const rows = Object.keys(by_status).map(k => `<tr><td>${k}</td><td>${by_status[k]}</td></tr>`);
+    feesRows.innerHTML = rows.join('');
+  }
+  function refresh(){ loadEnrollment(); loadFees(); }
+  refreshBtn.addEventListener('click', refresh);
+  exportFees.addEventListener('click', function(){
+    const {p,s,m} = qs();
+    const url = new URL("{{ url_for('main.fees_export_csv') }}", window.location.origin);
+    if (p) url.searchParams.set('program_id', p);
+    if (s) url.searchParams.set('semester', s);
+    if (m) url.searchParams.set('medium', m);
+    this.href = url.toString();
+  });
+  document.getElementById('attLoad').addEventListener('click', async function(){
+    const p = document.getElementById('attProgram').value || '';
+    const s = document.getElementById('attSemester').value || '';
+    const subj = document.getElementById('attSubject').value || '';
+    const thr = document.getElementById('attThreshold').value || '50';
+    const mode = document.getElementById('attMode').value || 'below';
+    const url = new URL("{{ url_for('main.api_reports_attendance_students') }}", window.location.origin);
+    if (p) url.searchParams.set('program_id', p);
+    if (s) url.searchParams.set('semester', s);
+    if (subj) url.searchParams.set('subject_id', subj);
+    url.searchParams.set('threshold', thr);
+    url.searchParams.set('mode', mode);
+    const rowsEl = document.getElementById('attThreshRows');
+    rowsEl.innerHTML = '<tr><td colspan="6" class="text-muted">Loading…</td></tr>';
+    try {
+      const resp = await fetch(url.toString());
+      const data = await resp.json();
+      if (!data || data.success === false) {
+        rowsEl.innerHTML = `<tr><td colspan="6" class="text-danger">${(data && data.error && data.error.message) || 'Failed to load report'}</td></tr>`;
+        return;
+      }
+      const items = (data && data.data && data.data.items) || [];
+      const hasMedium = items.some(r => (r.medium || '').trim() !== '');
+      const showMedium = !!hasMedium;
+      const thMedium = document.getElementById('attColMedium');
+      if (thMedium) thMedium.style.display = showMedium ? '' : 'none';
+      if (!items.length) {
+        const emptyCols = 5 + (showMedium ? 1 : 0);
+        rowsEl.innerHTML = `<tr><td colspan="${emptyCols}" class="text-muted">No matching students for the selected filters.</td></tr>`;
+        return;
+      }
+    const progSel = document.getElementById('attProgram');
+    const subjSel = document.getElementById('attSubject');
+    const semSel = document.getElementById('attSemester');
+    const modeSel = document.getElementById('attMode');
+    const progText = (progSel.selectedOptions[0] && progSel.selectedOptions[0].textContent) || "{{ t('All') }}";
+    const subjText = (subjSel.selectedOptions[0] && subjSel.selectedOptions[0].textContent) || "{{ t('All') }}";
+    const semText = (semSel.selectedOptions[0] && semSel.selectedOptions[0].textContent) || "{{ t('All') }}";
+    const modeText = (modeSel.selectedOptions[0] && modeSel.selectedOptions[0].textContent) || '';
+    rowsEl.innerHTML = items.map(r => {
+      let row = `<tr><td>${r.enrollment_no||''}</td><td>${r.name||''}</td>`;
+      if (showMedium) row += `<td>${r.medium||''}</td>`;
+      row += `<td>${r.present||0}</td><td>${r.total||0}</td><td>${r.rate??0}</td></tr>`;
+      return row;
+    }).join('');
+    const summaryEl = document.getElementById('attSummary');
+    summaryEl.textContent = `${"{{ t('Program') }}"}: ${progText} • ${"{{ t('Subject') }}"}: ${subjText} • ${"{{ t('Semester') }}"}: ${semText} • ${"{{ t('Threshold %') }}"} ${thr} (${modeText})`;
+    } catch (e) {
+      rowsEl.innerHTML = '<tr><td colspan="6" class="text-danger">Network error while loading report.</td></tr>';
+    }
+  });
+  document.getElementById('attExport').addEventListener('click', function(){
+    const p = document.getElementById('attProgram').value || '';
+    const s = document.getElementById('attSemester').value || '';
+    const subj = document.getElementById('attSubject').value || '';
+    const thr = document.getElementById('attThreshold').value || '50';
+    const mode = document.getElementById('attMode').value || 'below';
+    const url = new URL("{{ url_for('main.attendance_students_export_csv') }}", window.location.origin);
+    if (p) url.searchParams.set('program_id', p);
+    if (s) url.searchParams.set('semester', s);
+    if (subj) url.searchParams.set('subject_id', subj);
+    url.searchParams.set('threshold', thr);
+    url.searchParams.set('mode', mode);
+    this.href = url.toString();
+  });
+  async function loadSubjectsForScope(){
+    const p = document.getElementById('attProgram').value || '';
+    const s = document.getElementById('attSemester').value || '';
+    const sel = document.getElementById('attSubject');
+    sel.innerHTML = "<option value=''>{{ t('All') }}</option>";
+    if (!p && !s) return;
+    const url = new URL("{{ url_for('main.api_subjects') }}", window.location.origin);
+    if (p) url.searchParams.set('program_id', p);
+    if (s) url.searchParams.set('semester', s);
+    const resp = await fetch(url.toString());
+    const data = await resp.json();
+    const items = (data && data.data && data.data.items) || [];
+    items.forEach(it => {
+      const opt = document.createElement('option');
+      opt.value = String(it.subject_id);
+      opt.textContent = it.subject_name;
+      sel.appendChild(opt);
+    });
+  }
+  document.getElementById('attProgram').addEventListener('change', loadSubjectsForScope);
+  document.getElementById('attSemester').addEventListener('change', loadSubjectsForScope);
+  // Initialize subjects on first load
+  loadSubjectsForScope();
+  async function loadAttendance(){
+    const el = document.getElementById('attRows');
+    if (!el) return;
+    const {p,s,m} = qs();
+    const url = new URL("{{ url_for('main.api_reports_attendance_summary') }}", window.location.origin);
+    if (p) url.searchParams.set('program_id', p);
+    if (s) url.searchParams.set('semester', s);
+    el.innerHTML = '<tr><td colspan="4" class="text-muted">Loading…</td></tr>';
+    const resp = await fetch(url.toString());
+    const data = await resp.json();
+    const items = (data && data.data && data.data.items) || [];
+    el.innerHTML = items.map(r => `<tr><td>${r.subject_name || r.subject_id}</td><td>${r.present}</td><td>${r.total}</td><td>${(r.rate ?? '—')}</td></tr>`).join('');
+  }
+  async function loadMaterials(){
+    const url = new URL("{{ url_for('main.api_reports_materials_summary') }}", window.location.origin);
+    matRows.innerHTML = '<tr><td colspan="4" class="text-muted">Loading…</td></tr>';
+    const resp = await fetch(url.toString());
+    const data = await resp.json();
+    matSummary.textContent = `Total: ${(data && data.data && data.data.total) || 0} | Published: ${(data && data.data && data.data.published) || 0} | Flagged: ${(data && data.data && data.data.flagged) || 0}`;
+    const items = (data && data.data && data.data.items) || [];
+    matRows.innerHTML = items.map(r => `<tr><td>${r.subject_id}</td><td>${r.total}</td><td>${r.published}</td><td>${r.flagged}</td></tr>`).join('');
+  }
+  function refreshAll(){ refresh(); loadAttendance(); loadMaterials(); }
+  refreshBtn.addEventListener('click', refreshAll);
+  async function loadDivisions(){
+    const {p,s,m} = qs();
+    const url = new URL("{{ url_for('main.api_reports_division_capacity') }}", window.location.origin);
+    if (p) url.searchParams.set('program_id', p);
+    if (s) url.searchParams.set('semester', s);
+    const divRows = document.getElementById('divRows');
+    if (!divRows) return;
+    divRows.innerHTML = '<tr><td colspan="6" class="text-muted">Loading…</td></tr>';
+    const resp = await fetch(url.toString());
+    const data = await resp.json();
+    const items = (data && data.data && data.data.items) || [];
+    divRows.innerHTML = items.map(r => {
+      const split = r.medium_counts ? Object.keys(r.medium_counts).map(k => `${k}: ${r.medium_counts[k]}`).join(', ') : '';
+      return `<tr><td>${r.semester}</td><td>${r.division_code}</td><td>${r.capacity}</td><td>${r.enrolled}</td><td>${r.utilization ?? '—'}</td><td>${split}</td></tr>`;
+    }).join('');
+  }
+  function refreshPrincipal(){ loadDivisions(); }
+  refreshAll();
+  refreshPrincipal();
+  refreshAll();
+  refresh();
+  document.getElementById('fpsGenerate').addEventListener('click', async function(){
+    const pid = document.getElementById('fpsProgram').value || '';
+    const sem = document.getElementById('fpsSemester').value || '';
+    const med = document.getElementById('fpsMedium').value || '';
+    const inc = document.getElementById('fpsIncludeSubmitted').checked;
+    const url = new URL("{{ url_for('main.api_reports_fees_program_status') }}", window.location.origin);
+    if (pid) url.searchParams.set('program_id', pid);
+    if (sem) url.searchParams.set('semester', sem);
+    if (med) url.searchParams.set('medium', med);
+    if (inc) url.searchParams.set('include_submitted', 'true');
+    const rowsEl = document.getElementById('fpsRows');
+    rowsEl.innerHTML = '<tr><td colspan="6" class="text-muted">Loading…</td></tr>';
+    try {
+      const resp = await fetch(url.toString());
+      const data = await resp.json();
+      if (!data || data.success === false) {
+        rowsEl.innerHTML = `<tr><td colspan="6" class="text-danger">${(data && data.error && data.error.message) || 'Failed to load report'}</td></tr>`;
+        return;
+      }
+      const items = (data && data.data && data.data.items) || [];
+      const summary = (data && data.data && data.data.summary) || {};
+      const hasMedium = items.some(r => (r.medium || '').trim() !== '');
+      const showMedium = !!hasMedium;
+      const thMedium = document.getElementById('fpsColMedium');
+      if (thMedium) thMedium.style.display = showMedium ? '' : 'none';
+      const thDue = document.getElementById('fpsColDue');
+      const thPaid = document.getElementById('fpsColPaid');
+      const hideDue = !sem;
+      if (thDue) thDue.style.display = hideDue ? 'none' : '';
+      if (thPaid) thPaid.textContent = hideDue ? "{{ t('Paid (All Semesters)') }}" : "{{ t('Paid') }}";
+      if (!items.length) {
+        const cols = 4 + (showMedium ? 1 : 0) + (hideDue ? 0 : 1);
+        rowsEl.innerHTML = `<tr><td colspan="${cols}" class="text-muted">No matching records for the selected filters.</td></tr>`;
+        return;
+      }
+      rowsEl.innerHTML = items.map(r => {
+        let row = `<tr><td>${r.enrollment_no||''}</td><td>${r.name||''}</td>`;
+        if (showMedium) row += `<td>${r.medium||''}</td>`;
+        row += `<td>${r.paid??0}</td>`;
+        if (!hideDue) row += `<td>${r.due??0}</td>`;
+        row += `<td>${r.bucket||''}</td></tr>`;
+        return row;
+      }).join('');
+      const progSel = document.getElementById('fpsProgram');
+      const semSel = document.getElementById('fpsSemester');
+      const medSel = document.getElementById('fpsMedium');
+      const progText = (progSel.selectedOptions[0] && progSel.selectedOptions[0].textContent) || "{{ t('All') }}";
+      const semText = (semSel.selectedOptions[0] && semSel.selectedOptions[0].textContent) || "{{ t('All') }}";
+      const medText = (medSel.selectedOptions[0] && medSel.selectedOptions[0].textContent) || "{{ t('All') }}";
+      const summaryEl = document.getElementById('fpsSummary');
+      const counts = (summary && summary.counts) || {};
+      const fullC = counts.full || 0;
+      const partialC = counts.partial || 0;
+      const noneC = counts.none || 0;
+      summaryEl.textContent = `${"{{ t('Program') }}"}: ${progText} • ${"{{ t('Semester') }}"}: ${semText} • ${"{{ t('Medium') }}"}: ${medText} • ${"{{ t('Due per student') }}"}: ${(summary && summary.due_per_student) ?? '—'} • ${"{{ t('Full') }}"}: ${fullC} • ${"{{ t('Partial') }}"}: ${partialC} • ${"{{ t('None') }}"}: ${noneC}`;
+    } catch (e) {
+      rowsEl.innerHTML = '<tr><td colspan="6" class="text-danger">Network error while loading report.</td></tr>';
+    }
+  });
+  async function loadMediumsForFees(){
+    const pid = document.getElementById('fpsProgram').value || '';
+    const sem = document.getElementById('fpsSemester').value || '';
+    const sel = document.getElementById('fpsMedium');
+    const wrap = sel && sel.parentElement;
+    sel.innerHTML = "<option value=''>{{ t('All') }}</option>";
+    if (!pid) { if (wrap) wrap.style.display = ''; return; }
+    const url = new URL("{{ url_for('main.api_program_mediums') }}", window.location.origin);
+    url.searchParams.set('program_id', pid);
+    if (sem) url.searchParams.set('semester', sem);
+    try {
+      const resp = await fetch(url.toString());
+      const data = await resp.json();
+      const items = (data && data.data && data.data.items) || [];
+      if (!items.length) { if (wrap) wrap.style.display = 'none'; return; }
+      if (wrap) wrap.style.display = '';
+      items.forEach(mt => {
+        const opt = document.createElement('option');
+        opt.value = mt;
+        opt.textContent = mt;
+        sel.appendChild(opt);
+      });
+    } catch (e) { if (wrap) wrap.style.display = ''; }
+  }
+  document.getElementById('fpsProgram').addEventListener('change', loadMediumsForFees);
+  document.getElementById('fpsSemester').addEventListener('change', loadMediumsForFees);
+  loadMediumsForFees();
+  document.getElementById('fpsExport').addEventListener('click', function(){
+    const pid = document.getElementById('fpsProgram').value || '';
+    const sem = document.getElementById('fpsSemester').value || '';
+    const med = document.getElementById('fpsMedium').value || '';
+    const inc = document.getElementById('fpsIncludeSubmitted').checked;
+    const url = new URL("{{ url_for('main.fees_program_status_export_csv') }}", window.location.origin);
+    if (pid) url.searchParams.set('program_id', pid);
+    if (sem) url.searchParams.set('semester', sem);
+    if (med) url.searchParams.set('medium', med);
+    if (inc) url.searchParams.set('include_submitted', 'true');
+    this.href = url.toString();
+  });
+  async function loadSubjectsForSL(){
+    const p = document.getElementById('slProgram').value || '';
+    const s = document.getElementById('slSemester').value || '';
+    const sel = document.getElementById('slSubject');
+    sel.innerHTML = "<option value=''>{{ t('All') }}</option>";
+    if (!p && !s) return;
+    const url = new URL("{{ url_for('main.api_subjects') }}", window.location.origin);
+    if (p) url.searchParams.set('program_id', p);
+    if (s) url.searchParams.set('semester', s);
+    const resp = await fetch(url.toString());
+    const data = await resp.json();
+    const items = (data && data.data && data.data.items) || [];
+    items.forEach(it => {
+      const opt = document.createElement('option');
+      opt.value = String(it.subject_id);
+      opt.textContent = it.subject_name;
+      sel.appendChild(opt);
+    });
+  }
+  document.getElementById('slProgram').addEventListener('change', loadSubjectsForSL);
+  document.getElementById('slSemester').addEventListener('change', loadSubjectsForSL);
+  async function loadDivisionsForSL(){
+    const p = document.getElementById('slProgram').value || '';
+    const s = document.getElementById('slSemester').value || '';
+    const sel = document.getElementById('slDivision');
+    sel.innerHTML = "<option value=''>{{ t('All') }}</option>";
+    if (!p && !s) return;
+    const url = new URL("{{ url_for('main.api_divisions') }}", window.location.origin);
+    if (p) url.searchParams.set('program_id', p);
+    if (s) url.searchParams.set('semester', s);
+    const resp = await fetch(url.toString());
+    const data = await resp.json();
+    const items = (data && data.data && data.data.items) || [];
+    items.forEach(it => {
+      const opt = document.createElement('option');
+      opt.value = String(it.division_id);
+      opt.textContent = it.division_code;
+      sel.appendChild(opt);
+    });
+  }
+  document.getElementById('slProgram').addEventListener('change', loadDivisionsForSL);
+  document.getElementById('slSemester').addEventListener('change', loadDivisionsForSL);
+  document.getElementById('slGenerate').addEventListener('click', async function(){
+    const pid = document.getElementById('slProgram').value || '';
+    const sem = document.getElementById('slSemester').value || '';
+    const sid = document.getElementById('slSubject').value || '';
+    const did = document.getElementById('slDivision').value || '';
+    const df = document.getElementById('slFrom').value || '';
+    const dt = document.getElementById('slTo').value || '';
+    const url = new URL("{{ url_for('main.api_reports_subject_lectures') }}", window.location.origin);
+    if (pid) url.searchParams.set('program_id', pid);
+    if (sem) url.searchParams.set('semester', sem);
+    if (sid) url.searchParams.set('subject_id', sid);
+    if (did) url.searchParams.set('division_id', did);
+    if (df) url.searchParams.set('date_from', df);
+    if (dt) url.searchParams.set('date_to', dt);
+    const rowsEl = document.getElementById('slRows');
+    rowsEl.innerHTML = '<tr><td colspan="4" class="text-muted">Loading…</td></tr>';
+    try {
+      const resp = await fetch(url.toString());
+      const data = await resp.json();
+      if (!data || data.success === false) {
+        rowsEl.innerHTML = `<tr><td colspan="4" class="text-danger">${(data && data.error && data.error.message) || 'Failed to load report'}</td></tr>`;
+        return;
+      }
+      const items = (data && data.data && data.data.items) || [];
+      const summary = (data && data.data && data.data.summary) || {};
+      const hasDiv = items.some(r => (r.division_code || '').trim() !== '');
+      const showDiv = !!hasDiv;
+      const thDiv = document.getElementById('slColDiv');
+      if (thDiv) thDiv.style.display = showDiv ? '' : 'none';
+      if (!items.length) {
+        const cols = 3 + (showDiv ? 1 : 0);
+        rowsEl.innerHTML = `<tr><td colspan="${cols}" class="text-muted">No sessions found for the selected filters.</td></tr>`;
+        return;
+      }
+      rowsEl.innerHTML = items.map(r => {
+        let row = `<tr><td>${r.date||''}</td><td>${r.period??0}</td><td>${r.timing||''}</td>`;
+        if (showDiv) row += `<td>${r.division_code||''}</td>`;
+        row += `</tr>`;
+        return row;
+      }).join('');
+      const progSel = document.getElementById('slProgram');
+      const semSel = document.getElementById('slSemester');
+      const subSel = document.getElementById('slSubject');
+      const summaryEl = document.getElementById('slSummary');
+      const progText = (progSel.selectedOptions[0] && progSel.selectedOptions[0].textContent) || "{{ t('All') }}";
+      const semText = (semSel.selectedOptions[0] && semSel.selectedOptions[0].textContent) || "{{ t('All') }}";
+      const subText = (subSel.selectedOptions[0] && subSel.selectedOptions[0].textContent) || "{{ t('All') }}";
+      const total = (summary && summary.total_lectures) || items.length || 0;
+      summaryEl.textContent = `${"{{ t('Program') }}"}: ${progText} • ${"{{ t('Semester') }}"}: ${semText} • ${"{{ t('Subject') }}"}: ${subText} • ${"{{ t('Total Lectures') }}"}: ${total}`;
+    } catch (e) {
+      rowsEl.innerHTML = '<tr><td colspan="3" class="text-danger">Network error while loading report.</td></tr>';
+    }
+  });
+  document.getElementById('slExport').addEventListener('click', function(){
+    const pid = document.getElementById('slProgram').value || '';
+    const sem = document.getElementById('slSemester').value || '';
+    const sid = document.getElementById('slSubject').value || '';
+    const did = document.getElementById('slDivision').value || '';
+    const df = document.getElementById('slFrom').value || '';
+    const dt = document.getElementById('slTo').value || '';
+    const url = new URL("{{ url_for('main.subject_lectures_export_csv') }}", window.location.origin);
+    if (pid) url.searchParams.set('program_id', pid);
+    if (sem) url.searchParams.set('semester', sem);
+    if (sid) url.searchParams.set('subject_id', sid);
+    if (did) url.searchParams.set('division_id', did);
+    if (df) url.searchParams.set('date_from', df);
+    if (dt) url.searchParams.set('date_to', dt);
+    this.href = url.toString();
+  });
+})();
+</script>
+{% endblock %}

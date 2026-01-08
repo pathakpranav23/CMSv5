@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="{{ lang_code or 'en' }}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Parekh Colleges CMS</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png', v=1) }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% if (lang_code or 'en') == 'gu' %}
+  <style>
+    @font-face { font-family: 'Noto Sans Gujarati'; src: url('{{ url_for('static', filename='fonts/NotoSansGujarati-Regular.woff2') }}') format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
+    @font-face { font-family: 'Noto Sans Gujarati'; src: url('{{ url_for('static', filename='fonts/NotoSansGujarati-SemiBold.woff2') }}') format('woff2'); font-weight: 600; font-style: normal; font-display: swap; }
+    html[lang="gu"], body.lang-gu, body.lang-gu * { font-family: 'Noto Sans Gujarati','Nirmala UI','Shruti','Padmaa','Arial Unicode MS', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important; }
+  </style>
+  <link rel="preload" href="{{ url_for('static', filename='fonts/NotoSansGujarati-Regular.woff2') }}" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="{{ url_for('static', filename='fonts/NotoSansGujarati-SemiBold.woff2') }}" as="font" type="font/woff2" crossorigin>
+  {% endif %}
+</head>
+<body class="role-{{ (current_user.role|lower) if (current_user.is_authenticated) else 'guest' }} {% if program_slug %}program-{{ program_slug }}{% endif %} {{ page_class|default('') }} {% block page_class %}{% endblock %} {% if not info_hints_enabled %}hints-off{% endif %} {% if (lang_code or 'en') == 'gu' %}lang-gu{% endif %}"
+      data-theme="{{ theme|default('lightblue') }}">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <a class="d-flex align-items-center gap-2 text-decoration-none" href="{{ url_for('main.index') }}" title="Shri Balvant Parekh Education Trust">
+          <img src="{{ url_for('static', filename='logo.png', v=1) }}" alt="Parekh Colleges Logo" />
+          <span class="fw-semibold" style="color: var(--nav-fg)">SBPET</span>
+          {% if program_name %}
+            <span class="program-badge" title="Program">{{ program_name }}</span>
+          {% endif %}
+        </a>
+      </div>
+      <ul class="nav">
+        {% if current_user.is_authenticated %}
+          <li><a href="{{ url_for('main.dashboard') }}"><span class="module-icon"><i class="bi bi-speedometer"></i></span><span class="label">{{ t('Dashboard') }}</span></a><br class="nav-break"></li>
+          <li><a href="{{ url_for('main.module_announcements') }}"><span class="module-icon"><i class="bi bi-megaphone"></i></span><span class="label">{{ t('Announcements') }}</span></a><br class="nav-break"></li>
+          <li><a href="{{ url_for('main.module_attendance') }}"><span class="module-icon"><i class="bi bi-calendar-check"></i></span><span class="label">{{ t('Attendance') }}</span></a><br class="nav-break"></li>
+          <li><a href="{{ url_for('main.module_students') }}"><span class="module-icon"><i class="bi bi-people"></i></span><span class="label">{{ t('Students') }}</span></a><br class="nav-break"></li>
+          <li><a href="{{ url_for('main.module_subjects') }}"><span class="module-icon"><i class="bi bi-journal-bookmark"></i></span><span class="label">{{ t('Subjects') }}</span></a><br class="nav-break"></li>
+          <li><a href="{{ url_for('main.materials_hub') }}"><span class="module-icon"><i class="bi bi-folder2"></i></span><span class="label">{{ t('Materials') }}</span></a><br class="nav-break"></li>
+          <li><a href="{{ url_for('main.module_faculty') }}"><span class="module-icon"><i class="bi bi-person-badge"></i></span><span class="label">{{ t('Staff') }}</span></a><br class="nav-break"></li>
+          {% if (current_user.role|lower) in ['admin','principal','clerk'] %}
+            <li><a href="{{ url_for('main.module_divisions') }}"><span class="module-icon"><i class="bi bi-diagram-3"></i></span><span class="label">{{ t('Divisions') }}</span></a><br class="nav-break"></li>
+          {% endif %}
+          {% if (current_user.role|lower) in ['admin','principal','clerk'] %}
+            {% if not fees_disabled %}<li><a href="{{ url_for('main.module_fees') }}"><span class="module-icon"><i class="bi bi-cash-coin"></i></span><span class="label">{{ t('Fees Module') }}</span></a><br class="nav-break"></li>{% endif %}
+          {% endif %}
+          {% if (current_user.role|lower) in ['admin','principal'] %}
+            <li><a href="{{ url_for('main.programs_list') }}"><span class="module-icon"><i class="bi bi-collection"></i></span><span class="label">{{ t('Programs') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.module_admin') }}"><span class="module-icon"><i class="bi bi-sliders"></i></span><span class="label">{{ t('Admin Module') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.reports_hub') }}"><span class="module-icon"><i class="bi bi-graph-up"></i></span><span class="label">{{ t('Reports') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.documents_index') }}"><span class="module-icon"><i class="bi bi-file-earmark-text"></i></span><span class="label">{{ t('Documents') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.users_list') }}"><span class="module-icon"><i class="bi bi-people"></i></span><span class="label">{{ t('Manage Accounts') }}</span></a><br class="nav-break"></li>
+          {% endif %}
+        {% else %}
+          <li><a href="{{ url_for('main.notice_board') }}"><span class="module-icon"><i class="bi bi-bell"></i></span><span class="label">{{ t('Notice Board') }}</span></a><br class="nav-break"></li>
+          <li><a href="{{ url_for('main.notice_archive') }}"><span class="module-icon"><i class="bi bi-archive"></i></span><span class="label">{{ t('Archive') }}</span></a><br class="nav-break"></li>
+        {% endif %}
+      </ul>
+      <div class="user-tools">
+        <ul class="nav">
+          {% if current_user.is_authenticated %}
+            <li><a href="{{ url_for('main.account_settings') }}"><span class="module-icon"><i class="bi bi-person-circle"></i></span><span class="label">{{ t('Manage Accounts') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.logout') }}"><span class="module-icon"><i class="bi bi-box-arrow-right"></i></span><span class="label">{{ t('Logout') }}</span></a><br class="nav-break"></li>
+          {% else %}
+            <li><a href="{{ url_for('main.login') }}"><span class="module-icon"><i class="bi bi-box-arrow-in-right"></i></span><span class="label">{{ t('Login') }}</span></a><br class="nav-break"></li>
+          {% endif %}
+          <li class="d-md-none mt-2">
+            <div class="btn-group w-100">
+              <a class="btn btn-outline-secondary" href="{{ url_for('main.set_lang', code='en') }}">EN</a>
+              <a class="btn btn-outline-secondary" href="{{ url_for('main.set_lang', code='gu') }}">GU</a>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </aside>
+    <!-- Mobile backdrop for sidebar -->
+    <div class="sidebar-backdrop d-md-none"></div>
+    <div class="app-main">
+      <!-- Mobile topbar with sidebar toggle -->
+  <div class="mobile-topbar d-md-none d-flex align-items-center justify-content-between px-3 py-2" style="background: var(--nav-bg); color: var(--nav-fg);">
+  <button class="btn btn-outline-light btn-sm" id="sidebarToggle"><i class="bi bi-list"></i> Menu</button>
+  <div class="d-flex align-items-center gap-2">
+    <button class="btn btn-outline-light btn-sm" onclick="history.back()" title="Back"><i class="bi bi-arrow-left"></i></button>
+    <span class="small fw-semibold" style="color: var(--nav-fg);">
+      {% if current_user.is_authenticated %}
+        Hello {{ (current_user.role|capitalize) }}({{ current_user.username }})
+      {% else %}
+        Hello Guest
+      {% endif %}
+    </span>
+    <div class="btn-group">
+      <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.set_lang', code='en') }}">EN</a>
+      <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.set_lang', code='gu') }}">GU</a>
+    </div>
+  </div>
+</div>
+
+      <!-- Enhanced Navigation Bar for all pages -->
+      <nav class="enhanced-nav d-none d-md-flex align-items-center justify-content-between px-3 py-2 border-bottom">
+        <div class="nav-breadcrumb">
+          <a href="{{ url_for('main.dashboard') }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-house"></i> {{ t('Dashboard') }}</a>
+          {% block breadcrumb %}{% endblock %}
+        </div>
+        <div class="nav-controls d-flex align-items-center gap-3">
+          <span class="small fw-semibold" style="color: var(--nav-fg);">
+            {% if current_user.is_authenticated %}
+              Hello {{ (current_user.role|capitalize) }}({{ current_user.username }})
+            {% else %}
+              Hello Guest
+            {% endif %}
+          </span>
+          <button class="btn btn-sm btn-outline-secondary" id="scrollToTop" title="Scroll to Top"><i class="bi bi-arrow-up"></i></button>
+          <button class="btn btn-sm btn-outline-secondary" id="scrollToBottom" title="Scroll to Bottom"><i class="bi bi-arrow-down"></i></button>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.dashboard') }}" title="Back to Dashboard"><i class="bi bi-speedometer"></i></a>
+          <div class="btn-group">
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.set_lang', code='en') }}">EN</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.set_lang', code='gu') }}">GU</a>
+          </div>
+        </div>
+      </nav>
+
+      <main class="container my-4 px-2 px-md-3">
+        {% with messages = get_flashed_messages(with_categories=True) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              {% set cat = (category or 'info') %}
+          {% if cat not in ['primary','secondary','success','danger','warning','info','light','dark'] %}
+            {% set cat = 'info' %}
+          {% endif %}
+          <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+            {{ t(message) }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+      </main>
+      <footer class="app-footer">
+        <div class="container py-3">
+          <div class="row align-items-center justify-content-center gy-2 text-center">
+            <div class="col-12 col-md-3">
+              <img src="{{ url_for('static', filename='CODEP-LOGO-6.png') }}" alt="CODEP Company Logo" class="footer-logo" />
+            </div>
+            <div class="col-12 col-md-6">
+              <div class="footer-sponsor d-flex flex-column align-items-center">
+                <div class="small fw-semibold">Supported By PIL</div>
+                <img src="{{ url_for('static', filename='Pidilite-logo.jpg') }}" alt="Pidilite Logo" class="footer-logo" />
+              </div>
+            </div>
+            <div class="col-12 col-md-3">
+              <div class="footer-brand">
+                <div class="small fw-semibold">The Group of Parekh Colleges - Mahuva</div>
+                <div class="small">Managed by Shri Balvant Parekh Education Trust (SBPET)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Shared initializer: apply background images from data-bg-url across pages
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('[data-bg-url]').forEach(function(el) {
+        var url = el.getAttribute('data-bg-url');
+        if (url) {
+          el.style.backgroundImage = "url('" + url + "')";
+          el.style.backgroundSize = 'cover';
+          el.style.backgroundPosition = 'center';
+        }
+      });
+
+      // Initialize Bootstrap tooltips for richer styling
+      var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+      tooltipTriggerList.forEach(function(el) {
+        try { new bootstrap.Tooltip(el); } catch (e) {}
+      });
+
+      // Mobile sidebar toggle
+      var shell = document.querySelector('.app-shell');
+      var toggleBtn = document.getElementById('sidebarToggle');
+      var backdrop = document.querySelector('.sidebar-backdrop');
+      function toggleSidebar(open) {
+        if (!shell) return;
+        if (open === true) { shell.classList.add('sidebar-open'); }
+        else if (open === false) { shell.classList.remove('sidebar-open'); }
+        else { shell.classList.toggle('sidebar-open'); }
+      }
+      if (toggleBtn) { toggleBtn.addEventListener('click', function() { toggleSidebar(); }); }
+      if (backdrop) { backdrop.addEventListener('click', function() { toggleSidebar(false); }); }
+
+      // Enhanced Navigation: Scroll controls (desktop only)
+      var scrollToTopBtns = document.querySelectorAll('#scrollToTop');
+      var scrollToBottomBtns = document.querySelectorAll('#scrollToBottom');
+      
+      function setButtonsVisible(topVisible, bottomVisible) {
+        scrollToTopBtns.forEach(function(btn) { btn.style.display = topVisible ? 'inline-block' : 'none'; });
+        scrollToBottomBtns.forEach(function(btn) { btn.style.display = bottomVisible ? 'inline-block' : 'none'; });
+      }
+      
+      // Default hidden until scroll interaction
+      setButtonsVisible(false, false);
+      
+      scrollToTopBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+      });
+      
+      scrollToBottomBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        });
+      });
+
+      // Auto-close mobile sidebar on navigation
+      var navLinks = document.querySelectorAll('.sidebar a[href]');
+      navLinks.forEach(function(link) {
+        link.addEventListener('click', function() {
+          if (window.innerWidth < 768) {
+            toggleSidebar(false);
+          }
+        });
+      });
+
+      // Show Top/Bottom buttons based on scroll direction and position
+      var lastScrollTop = window.pageYOffset || document.documentElement.scrollTop || 0;
+      var scrollTimeout;
+      window.addEventListener('scroll', function() {
+        var scrollTop = window.pageYOffset || document.documentElement.scrollTop || 0;
+        var maxScroll = (document.documentElement.scrollHeight || document.body.scrollHeight) - window.innerHeight;
+        var scrollingDown = scrollTop > lastScrollTop;
+        var scrollingUp = scrollTop < lastScrollTop;
+
+        // Only show relevant button while actively scrolling
+        if (scrollingDown && scrollTop < maxScroll - 50) {
+          setButtonsVisible(false, true);
+        } else if (scrollingUp && scrollTop > 50) {
+          setButtonsVisible(true, false);
+        } else {
+          setButtonsVisible(false, false);
+        }
+
+        lastScrollTop = scrollTop;
+
+        // Hide after a short idle period
+        if (scrollTimeout) clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(function() { setButtonsVisible(false, false); }, 1200);
+      });
+    });
+  </script>
+</body>
+</html>

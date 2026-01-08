@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: cmsv5
+    env: python
+    buildCommand: pip install -r requirements.txt && chmod +x render_start.sh
+    startCommand: ./render_start.sh
+    autoDeploy: true
+    disk:
+      name: cms-db
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:////var/data/cms.db
+      - key: SECRET_KEY
+        generateValue: true
+      - key: INFO_HINTS_ENABLED
+        value: "false"
+      - key: MAX_CONTENT_LENGTH
+        value: "33554432"
+      - key: CSRF_TOKEN_TTL
+        value: "7200"

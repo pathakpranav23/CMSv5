@@ -1,0 +1,90 @@
+{% extends "layout.html" %}
+
+{% block title %}Student Import Result{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+  <div class="d-flex align-items-center mb-3">
+    <i class="bi bi-upload me-2 text-primary" style="font-size: 1.5rem;"></i>
+    <h2 class="m-0">Student Import Result</h2>
+  </div>
+
+<div class="row g-3">
+    {% if report.dry_run %}
+    <div class="col-12">
+      <div class="alert alert-warning d-flex align-items-center" role="alert">
+        <i class="bi bi-shield-check me-2"></i>
+        <div>Validation only — no changes saved.</div>
+      </div>
+    </div>
+    {% endif %}
+    <div class="col-12 col-md-6 col-lg-4">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h5 class="card-title">Summary</h5>
+          <div class="d-flex flex-wrap gap-2 mt-2">
+            <span class="badge bg-success">Created: {{ report.created or 0 }}</span>
+            <span class="badge bg-info text-dark">Updated: {{ report.updated or 0 }}</span>
+            <span class="badge bg-secondary">Skipped: {{ report.skipped or 0 }}</span>
+            <span class="badge bg-warning text-dark">Divisions Created: {{ report.divisions_created or 0 }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6 col-lg-4">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h5 class="card-title">Import Context</h5>
+          <ul class="list-unstyled mb-0">
+            <li><strong>Program</strong>: {{ report.program_name or "-" }}</li>
+            <li><strong>Semester</strong>: {{ report.semester if report.semester is not none else "-" }}</li>
+            <li><strong>File</strong>: {{ report.path or "-" }}</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-4">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h5 class="card-title">Actions</h5>
+          <div class="d-flex flex-wrap gap-2">
+            {% if report.program_id %}
+            <a class="btn btn-primary" href="{{ url_for('main.students', program_id=report.program_id) }}">
+              <i class="bi bi-people me-1"></i> View Students in Program
+            </a>
+            {% endif %}
+            <a class="btn btn-outline-secondary" href="{{ url_for('main.students_import') }}">
+              <i class="bi bi-file-earmark-arrow-up me-1"></i> Import Another File
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mt-1">
+    <div class="col-12">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title">Errors ({{ report.errors_count or 0 }})</h5>
+          {% if report.errors_count %}
+          <ul class="mb-0">
+            {% for err in report.errors %}
+            <li class="text-danger">{{ err }}</li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="text-muted mb-0">No errors encountered.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-3">
+    <small class="text-muted">Report generated at {{ (now() if false else '') }}.</small>
+  </div>
+</div>
+{% endblock %}

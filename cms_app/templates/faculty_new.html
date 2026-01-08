@@ -1,0 +1,157 @@
+{% extends 'layout.html' %}
+{% import '_macros.html' as ui %}
+{% block content %}
+<div class="section-header">
+  <h2 class="mb-0">Add Staff</h2>
+  <div class="d-flex align-items-center gap-2">
+    {{ ui.back_link(url_for('main.faculty_list'), 'Back to Staff') }}
+  </div>
+</div>
+{{ ui.breadcrumbs([
+  ('Dashboard', url_for('main.dashboard')),
+  ('Staff', url_for('main.faculty_list')),
+  ('New', '')
+]) }}
+
+{% if errors and errors|length > 0 %}
+<div class="alert alert-danger" role="alert">
+  <strong>Please fix the following:</strong>
+  <ul class="mb-0">
+    {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('main.faculty_new') }}" class="row g-3" enctype="multipart/form-data">
+  <div class="col-md-6">
+    <label for="full_name" class="form-label">Full Name</label>
+    <input type="text" id="full_name" name="full_name" class="form-control" value="{{ form_data.get('full_name','') }}" required />
+  </div>
+  <div class="col-md-6">
+    <label for="program_id_fk" class="form-label">Program</label>
+    <select id="program_id_fk" name="program_id_fk" class="form-select" required>
+      <option value="">-- Select Program --</option>
+      {% for p in programs %}
+        <option value="{{ p.program_id }}" {{ 'selected' if form_data.get('program_id_fk') == p.program_id|string else '' }}>{{ p.program_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="col-md-6">
+    <label for="email" class="form-label">Email</label>
+    <input type="email" id="email" name="email" class="form-control" value="{{ form_data.get('email','') }}" />
+  </div>
+  <div class="col-md-6">
+    <label for="mobile" class="form-label">Mobile</label>
+    <input type="text" id="mobile" name="mobile" class="form-control" value="{{ form_data.get('mobile','') }}" />
+  </div>
+
+  <div class="col-md-6">
+    <label for="designation" class="form-label">Designation</label>
+    <input type="text" id="designation" name="designation" class="form-control" value="{{ form_data.get('designation','') }}" />
+  </div>
+  <div class="col-md-6">
+    <label for="department" class="form-label">Department</label>
+    <input type="text" id="department" name="department" class="form-control" value="{{ form_data.get('department','') }}" />
+  </div>
+
+  <div class="col-md-6">
+    <label for="medium_expertise" class="form-label">Medium Expertise</label>
+    <select id="medium_expertise" name="medium_expertise" class="form-select">
+      <option value="">-- Select Medium --</option>
+      <option value="English" {{ 'selected' if (form_data.get('medium_expertise','')|lower) == 'english' else '' }}>English</option>
+      <option value="Gujarati" {{ 'selected' if (form_data.get('medium_expertise','')|lower) == 'gujarati' else '' }}>Gujarati</option>
+    </select>
+  </div>
+
+  <div class="col-md-4">
+    <label for="emp_id" class="form-label">Emp ID</label>
+    <input type="text" id="emp_id" name="emp_id" class="form-control" value="{{ form_data.get('emp_id','') }}" required />
+    </div>
+  <div class="col-md-4">
+    <label for="date_of_joining" class="form-label">Date of Joining</label>
+    <input type="date" id="date_of_joining" name="date_of_joining" class="form-control" value="{{ form_data.get('date_of_joining','') }}" />
+  </div>
+  <div class="col-md-4">
+    <label for="highest_qualification" class="form-label">Highest Qualification</label>
+    <input type="text" id="highest_qualification" name="highest_qualification" class="form-control" value="{{ form_data.get('highest_qualification','') }}" />
+  </div>
+  <div class="col-md-4">
+    <label for="experience_years" class="form-label">Experience (years)</label>
+    <input type="number" min="0" step="0.1" id="experience_years" name="experience_years" class="form-control" value="{{ form_data.get('experience_years','') }}" />
+  </div>
+  <div class="col-md-8">
+    <label for="notes" class="form-label">Notes (optional)</label>
+    <textarea id="notes" name="notes" class="form-control" rows="2">{{ form_data.get('notes','') }}</textarea>
+  </div>
+
+  <div class="col-md-6">
+    <label for="specialization" class="form-label">Specialization</label>
+    <input type="text" id="specialization" name="specialization" class="form-control" value="{{ form_data.get('specialization','') }}" />
+  </div>
+  <div class="col-md-6">
+    <label for="certifications" class="form-label">Certifications</label>
+    <input type="text" id="certifications" name="certifications" class="form-control" value="{{ form_data.get('certifications','') }}" />
+  </div>
+
+  <div class="col-md-6">
+    <label for="photo_file" class="form-label">Photo (optional)</label>
+    <input type="file" id="photo_file" name="photo_file" class="form-control" accept="image/*" />
+    <div class="form-text">Optional. PNG/JPG/GIF up to 5MB. Saved under static/faculty_photos.</div>
+  </div>
+
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <span>Create Login (optional)</span>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="create_user" name="create_user" {% if form_data.get('create_user') %}checked{% endif %}>
+          <label class="form-check-label" for="create_user">Enable</label>
+        </div>
+      </div>
+      <div class="card-body" id="createUserFields">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="user_username" class="form-label">Username (email recommended)</label>
+            <input type="text" id="user_username" name="user_username" class="form-control" value="{{ form_data.get('user_username', form_data.get('email','')) }}" placeholder="name@example.com" />
+            <div class="form-text">Defaults to Email if provided.</div>
+          </div>
+          <div class="col-md-6">
+            <label for="user_password" class="form-label">Password (optional)</label>
+            <input type="password" id="user_password" name="user_password" class="form-control" />
+            <div class="form-text">Leave blank to auto-generate a temporary password.</div>
+          </div>
+          
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12">
+    <button type="submit" class="btn btn-primary">Create Staff</button>
+    <a class="btn btn-outline-secondary ms-1" href="{{ url_for('main.faculty_list') }}">Cancel</a>
+  </div>
+</form>
+<script>
+  (function() {
+    const toggle = document.getElementById('create_user');
+    const fields = document.getElementById('createUserFields');
+    const email = document.getElementById('email');
+    const username = document.getElementById('user_username');
+    function updateVisibility() {
+      fields.style.display = toggle.checked ? 'block' : 'none';
+    }
+    if (toggle) {
+      toggle.addEventListener('change', updateVisibility);
+      updateVisibility();
+    }
+    if (email && username) {
+      email.addEventListener('blur', function() {
+        if (!username.value && email.value) {
+          username.value = email.value;
+        }
+      });
+    }
+  })();
+</script>
+{% endblock %}

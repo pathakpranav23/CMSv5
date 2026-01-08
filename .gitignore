@@ -1,0 +1,29 @@
+# Python / Flask
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Database (Keep cms.db if it's the seed, ignore test/temp dbs)
+*.db-journal
+test.db
+
+# Environment variables
+.env
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Large/Temporary files
+*.rar
+*.zip
+*.7z
+*.log
+DATA FOR IMPORT EXPORT/
+RESUME TIME/
+_docx_blueprint/

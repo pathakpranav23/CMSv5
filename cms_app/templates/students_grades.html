@@ -1,0 +1,70 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4 page-shell">
+  <div class="page-hero d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title">Grades — {{ student.enrollment_no }}</h2>
+    <div class="actions">
+      <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.students_show', enrollment_no=student.enrollment_no) }}">Back to Profile</a>
+      <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.students') }}">Students</a>
+      <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.students_grades_export', enrollment_no=student.enrollment_no, g_sem=g_filters.g_sem, subject_id=g_filters.subject_id) }}">Export CSV</a>
+    </div>
+  </div>
+
+  <form class="filter-toolbar row g-2 align-items-end" method="get" action="">
+    <div class="col-6 col-md-4">
+      <label class="form-label">Semester</label>
+      <input type="number" min="1" max="12" name="g_sem" class="form-control" value="{{ g_filters.g_sem }}" />
+    </div>
+    <div class="col-6 col-md-4">
+      <label class="form-label">Subject ID</label>
+      <input type="number" name="subject_id" class="form-control" value="{{ g_filters.subject_id }}" />
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Per Page</label>
+      <input type="number" min="5" max="100" name="g_per" class="form-control" value="{{ g_filters.g_per }}" />
+    </div>
+    <div class="col-6 col-md-2">
+      <button type="submit" class="btn btn-primary w-100">Apply</button>
+    </div>
+  </form>
+
+  <div class="card">
+    <div class="card-header card-header-standard"><div class="card-title">Grades List</div></div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-modern table-striped table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Subject</th>
+              <th>Theory</th>
+              <th>Practical</th>
+              <th>GPA</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+            <tr>
+              <td>{{ subject_map.get(r.subject_id_fk) or (r.subject_id_fk or '-') }}</td>
+              <td>{{ r.theory_marks }}</td>
+              <td>{{ r.practical_marks }}</td>
+              <td>{{ r.gpa_for_subject }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex justify-content-between align-items-center mt-2">
+    <div class="text-muted">Total records: {{ total }}</div>
+    <div>
+      {% set page = g_filters.g_page %}
+      {% set per = g_filters.g_per %}
+      <a class="btn btn-sm btn-outline-secondary {% if page <= 1 %}disabled{% endif %}" href="?g_sem={{ g_filters.g_sem }}&subject_id={{ g_filters.subject_id }}&g_page={{ (page - 1 if page > 1 else 1) }}&g_per={{ per }}">Prev</a>
+      <a class="btn btn-sm btn-outline-secondary" href="?g_sem={{ g_filters.g_sem }}&subject_id={{ g_filters.subject_id }}&g_page={{ page + 1 }}&g_per={{ per }}">Next</a>
+    </div>
+    <div>Page {{ page }}</div>
+  </div>
+</div>
+{% endblock %}

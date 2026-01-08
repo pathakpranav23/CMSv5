@@ -1,0 +1,95 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+  @page { size: A4; margin: 12mm; }
+  @media screen {
+    /* Show only one copy on screen; print will still render two */
+    .print-two-copies .receipt-copy:nth-of-type(2) { display: none; }
+  }
+  @media print {
+    .no-print { display: none !important; }
+    /* Hide app chrome during print */
+    .sidebar, .app-sidebar, .sidebar-backdrop, .app-header, .app-footer,
+    .enhanced-nav, .mobile-topbar, nav, aside, .page-header { display: none !important; }
+    .app-main main, main.container, .container, .content { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+    .print-two-copies { margin: 0; padding: 0; }
+    .receipt-copy { page-break-inside: avoid; margin-bottom: 12mm; page-break-after: always; }
+    .receipt-copy:last-child { page-break-after: auto; }
+    .receipt-header img { height: 72px; width: auto; }
+    .brand-title-main { font-weight: 600; }
+    .brand-title-sub { font-size: 0.9rem; color: #6c757d; }
+  }
+  .receipt-header img { height: 72px; width: auto; }
+  .brand-title-main { font-weight: 600; }
+  .brand-title-sub { font-size: 0.9rem; color: #6c757d; }
+  .receipt-card-total { font-size: 2rem; }
+</style>
+
+<div class="container py-4">
+  <div class="no-print d-flex justify-content-end gap-2 mb-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.fees_entry', program_id=program.program_id, semester=semester) }}">Back to Entry</a>
+    <button class="btn btn-primary" onclick="window.print()">Print Receipt</button>
+  </div>
+
+  <div class="print-two-copies">
+    {% for copy_label in ["Office Copy", "Student Copy"] %}
+    <div class="receipt-copy">
+      <div class="text-center mb-3 receipt-header">
+        <img src="{{ url_for('static', filename='logo.png') }}" alt="Parekh Colleges Logo" />
+        <div class="brand-title-main">The Group of Parekh Colleges - Mahuva</div>
+        <div class="brand-title-sub">Managed by Shri Balvant Parekh Education Trust (SBPET)</div>
+      </div>
+      <div class="text-center mb-2">
+        <h3 class="mb-0">Fees Receipt</h3>
+        <div class="text-muted">{{ program.program_name }} · Semester {{ semester }}</div>
+        <div class="text-muted">Issued {{ issued_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        <div class="badge text-bg-secondary mt-1">{{ copy_label }}</div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-body d-flex align-items-center justify-content-between">
+          <div>
+            <div class="text-muted">Total fees to be paid</div>
+            <div class="receipt-card-total">₹ {{ (total_amount or 0)|round(2) }}</div>
+          </div>
+          <div>
+            <a class="btn btn-link no-print" href="{{ url_for('main.fees_structure_view', program_id=program.program_id) }}">Fees detail</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-bordered">
+          <thead>
+            <tr>
+              <th>Component</th>
+              <th class="text-end">Amount (INR)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+              <tr>
+                <td>{{ item.component }}</td>
+                <td class="text-end">{{ (item.amount or 0)|round(2) }}</td>
+              </tr>
+            {% endfor %}
+            <tr>
+              <th class="text-end">Total</th>
+              <th class="text-end">{{ (total_amount or 0)|round(2) }}</th>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if request.args.get('auto') %}
+  <script>
+    // Auto print when ?auto=1 is present; useful with kiosk printing
+    window.addEventListener('load', function(){
+      setTimeout(function(){ try { window.print(); } catch(e) {} }, 200);
+    });
+  </script>
+  {% endif %}
+</div>
+{% endblock %}
