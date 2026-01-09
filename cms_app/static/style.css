@@ -433,7 +433,7 @@ body > main { flex: 1 0 auto; }
 .dashboard-linear .btn-outline-primary:hover { background-color: #4f46e5; color: #fff; border-color: #4f46e5; }
 
 /* Mobile dashboard improvements */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   .dashboard-linear .card-header {
     padding: 0.75rem 1rem;
     display: flex;
@@ -632,7 +632,7 @@ body > main { flex: 1 0 auto; }
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,0.35);
-    z-index: 1030;
+    z-index: 1035;
   }
 
   .app-main { position: relative; z-index: 1; margin-left: 0; }
@@ -679,7 +679,7 @@ html, body { width: 100%; overflow-x: hidden; }
   .kpi-hero .kpi { display: flex; flex-direction: column; align-items: flex-start; width: 100%; padding: 0.5rem 0.75rem; background-color: var(--card-header-bg); border: 1px solid var(--card-border); border-radius: 8px; }
 }
 /* KPI hero: two-column layout on small phones (sm range) */
-@media (min-width: 576px) and (max-width: 768px) {
+@media (min-width: 576px) and (max-width: 767.98px) {
   .kpi-hero .card-body { flex-direction: column; align-items: stretch; }
   .kpi-hero .card-body > .d-flex { flex-wrap: wrap; }
   .kpi-hero .kpi { flex: 1 1 calc(50% - 0.75rem); min-width: 0; }
