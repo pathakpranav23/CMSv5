@@ -4999,7 +4999,12 @@ def api_students_search():
     if semester_raw:
         try:
             sem = int(semester_raw)
-            query = query.filter(Student.current_semester == sem)
+            # RELAXED SEMESTER FILTER: 
+            # If a search query 'q' is present, we IGNORE the semester filter.
+            # This allows searching for a student in ANY semester (e.g., searching for a Sem 5 student while viewing Sem 1 page).
+            # The context (semester_raw) is only respected if the user is NOT typing a specific search query.
+            if not q:
+                query = query.filter(Student.current_semester == sem)
         except ValueError:
             pass
     # Optional medium filter (accepts English/Gujarati/General case-insensitively)
@@ -7263,17 +7268,25 @@ def attendance_mark():
     # Determine role and program scope (for principal/admin fallback)
     role = (getattr(current_user, "role", "") or "").strip().lower()
     selected_program_id = None
-    if role == "principal":
+    
+    # Read selection
+    selected_program_id_raw = request.values.get("program_id")
+    try:
+        selected_program_id = int(selected_program_id_raw) if selected_program_id_raw else None
+    except Exception:
+        pass
+
+    if role == "principal" and not selected_program_id:
         try:
             pid_val = getattr(current_user, "program_id_fk", None)
             selected_program_id = int(pid_val) if pid_val else None
         except Exception:
-            selected_program_id = None
+            pass
 
     # Resolve current faculty (by user) and their active assignments
     faculty = Faculty.query.filter_by(user_id_fk=current_user.user_id).first()
     assignments = []
-    if faculty:
+    if faculty and role == 'faculty': # Strict check: admins/principals shouldn't see assignments unless they act as faculty
         assignments = (
             CourseAssignment.query
             .filter_by(faculty_id_fk=current_user.user_id, is_active=True)
@@ -7285,6 +7298,12 @@ def attendance_mark():
     subj_map = {s.subject_id: s for s in Subject.query.all()}
     div_map = {d.division_id: d for d in Division.query.all()}
     options = []
+    
+    # Pre-fetch programs for admin selector
+    programs = []
+    if role in ["admin", "principal"]:
+        programs = Program.query.order_by(Program.program_name).all()
+
     for a in assignments:
         s = subj_map.get(a.subject_id_fk)
         d = div_map.get(a.division_id_fk) if a.division_id_fk else None
@@ -7309,6 +7328,10 @@ def attendance_mark():
         subjects_all = subj_q.order_by(Subject.semester.asc(), Subject.subject_name.asc()).all()
         existing_subject_ids = {opt.get("subject_id") for opt in options if opt.get("subject_id")}
         for s in subjects_all:
+            # Only add if not already in options (though for admin we might want to clear options if program changed)
+            if role in ["admin", "principal"] and selected_program_id and s.program_id_fk != selected_program_id:
+                continue
+                
             if s.subject_id not in existing_subject_ids:
                 options.append({
                     "subject_id": s.subject_id,

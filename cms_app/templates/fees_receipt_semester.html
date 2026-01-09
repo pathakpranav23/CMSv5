@@ -45,46 +45,77 @@
   {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
   <div class="section-header d-flex justify-content-between align-items-center mb-3 no-print">
     <h2 class="mb-0 title d-flex align-items-center">Semester Fees Receipt <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
-    <div class="actions"></div>
+    <div class="actions">
+       <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#batchOps" aria-expanded="false" aria-controls="batchOps">
+         <i class="bi bi-gear-wide-connected me-1"></i> Batch Operations
+       </button>
+    </div>
   </div>
 
-  <form method="get" class="row g-3 mb-3 no-print">
-    {% if (current_user.role|lower) == 'admin' %}
-    <div class="col-md-6">
-      <label for="program_id" class="form-label">Program</label>
-      <select class="form-select" id="program_id" name="program_id" required>
-        <option value="">Select Program</option>
-        {% for p in programs %}
-          <option value="{{ p.program_id }}" {% if filters.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
-        {% endfor %}
-      </select>
+  <!-- Primary Action: Global Search -->
+  <div class="card mb-3 no-print quick-pay-card shadow-sm border-primary">
+    <div class="card-body p-4">
+      <form id="quickPayForm" method="get" action="">
+        <div class="row g-2 align-items-center">
+          <div class="col-12">
+            <label class="form-label fw-bold text-primary mb-2"><i class="bi bi-search me-1"></i> Search Student for Payment</label>
+            <div class="position-relative">
+              <div class="input-group input-group-lg">
+                <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+                <input type="text" id="qpSearch" class="form-control border-start-0 ps-0 form-control-lg" placeholder="Start typing Name, Surname, or Enrollment No..." autocomplete="off" autofocus />
+              </div>
+              <div id="qpSuggestions" class="list-group position-absolute w-100 shadow-lg" style="z-index: 1000; max-height: 400px; overflow-y:auto; display:none; top: 100%;"></div>
+            </div>
+            <div class="form-text mt-2"><i class="bi bi-info-circle me-1"></i> Works across all semesters. Click a student to load their fee receipt.</div>
+          </div>
+        </div>
+      </form>
     </div>
-    {% endif %}
-    <div class="col-md-3">
-      <label for="semester" class="form-label">Semester</label>
-      <input class="form-control" type="number" min="1" id="semester" name="semester" value="{{ filters.semester or '' }}" required />
+  </div>
+
+  <!-- Secondary: Batch Operations (Hidden by Default) -->
+  <div class="collapse no-print mb-3" id="batchOps">
+    <div class="card card-body bg-light border-0">
+      <h6 class="card-title text-muted mb-3">Batch Context / View Totals</h6>
+      <form method="get" class="row g-3">
+        {% if (current_user.role|lower) == 'admin' %}
+        <div class="col-md-6">
+          <label for="program_id" class="form-label">Program</label>
+          <select class="form-select" id="program_id" name="program_id">
+            <option value="">Select Program</option>
+            {% for p in programs %}
+              <option value="{{ p.program_id }}" {% if filters.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        <div class="col-md-3">
+          <label for="semester" class="form-label">Semester</label>
+          <input class="form-control" type="number" min="1" id="semester" name="semester" value="{{ filters.semester or '' }}" placeholder="Enter Sem" />
+        </div>
+        {% if show_medium %}
+        <div class="col-md-3">
+          <label for="medium" class="form-label">Medium</label>
+          <select class="form-select" id="medium" name="medium">
+            <option value="" {% if not filters.medium %}selected{% endif %}>Common</option>
+            <option value="English" {% if (filters.medium or '')|lower == 'english' %}selected{% endif %}>English</option>
+            <option value="Gujarati" {% if (filters.medium or '')|lower == 'gujarati' %}selected{% endif %}>Gujarati</option>
+          </select>
+        </div>
+        {% endif %}
+        <div class="col-md-3">
+          <label for="mode" class="form-label">Mode</label>
+          <select class="form-select" id="mode" name="mode">
+            <option value="frozen" {% if filters.mode == 'frozen' %}selected{% endif %}>Finalized only (frozen)</option>
+            <option value="preview" {% if filters.mode == 'preview' %}selected{% endif %}>Preview current amounts</option>
+          </select>
+        </div>
+        <div class="col-12">
+          <button type="submit" class="btn btn-secondary">Load Context</button>
+        </div>
+      </form>
     </div>
-    {% if show_medium %}
-    <div class="col-md-3">
-      <label for="medium" class="form-label">Medium</label>
-      <select class="form-select" id="medium" name="medium">
-        <option value="" {% if not filters.medium %}selected{% endif %}>Common</option>
-        <option value="English" {% if (filters.medium or '')|lower == 'english' %}selected{% endif %}>English</option>
-        <option value="Gujarati" {% if (filters.medium or '')|lower == 'gujarati' %}selected{% endif %}>Gujarati</option>
-      </select>
-    </div>
-    {% endif %}
-    <div class="col-md-3">
-      <label for="mode" class="form-label">Mode</label>
-      <select class="form-select" id="mode" name="mode">
-        <option value="frozen" {% if filters.mode == 'frozen' %}selected{% endif %}>Finalized only (frozen)</option>
-        <option value="preview" {% if filters.mode == 'preview' %}selected{% endif %}>Preview current amounts</option>
-      </select>
-    </div>
-    <div class="col-12">
-      <button type="submit" class="btn btn-primary">Generate</button>
-    </div>
-  </form>
+  </div>
 
   {% if selected_program and semester %}
     <div class="text-center mb-3 receipt-header no-print">
@@ -167,14 +198,9 @@
         const mediumVal = (cfgEl && cfgEl.dataset && cfgEl.dataset.medium) || '';
         const hasContext = Boolean(programId) && Boolean(semesterVal);
 
-        // Gate search until program & semester are set
-        if (!hasContext) {
-          if (searchInput) {
-            searchInput.disabled = true;
-            searchInput.placeholder = 'Select program & semester above to enable search';
-          }
-        }
-
+        // Gate search only if we wanted to enforce context, but now it's global.
+        // However, we still need to handle the payment URL construction dynamically.
+        
         function clearSuggestions(){ suggBox.innerHTML = ''; suggBox.style.display = 'none'; }
         
         function showSuggestions(items){
@@ -200,10 +226,20 @@
             const enrollment = it.enrollment_no || 'N/A';
             const programInfo = it.program_name ? `${it.program_name} Sem ${it.semester}` : '';
             
-            // Construct Payment URL
-            const paymentUrl = feesPaymentUrlTemplate.replace('__ENR__', encodeURIComponent(enrollment)) + 
-                              (semesterVal ? `?semester=${semesterVal}` : '') +
-                              (mediumVal ? `&medium=${mediumVal}` : '');
+            // AUTO-CONTEXT SWITCHING URL
+            // We use the student's actual semester and program_id from the search result
+            // instead of the currently loaded page context.
+            // This ensures clicking a Sem 5 student loads the Sem 5 receipt page.
+            let paymentUrl = feesPaymentUrlTemplate.replace('__ENR__', encodeURIComponent(enrollment));
+            
+            // Append the student's actual semester to the URL parameters
+            const params = new URLSearchParams();
+            if (it.semester) params.set('semester', it.semester);
+            if (it.program_id) params.set('program_id', it.program_id);
+            // We don't know medium from search result yet (API update needed ideally), but common usually works.
+            // If medium is needed, the next page load will handle it or default it.
+            
+            paymentUrl += '?' + params.toString();
 
             item.innerHTML = `
               <div class="row align-items-center">
@@ -234,15 +270,13 @@
           const q = (searchInput.value || '').trim();
           if (debounceTimer) { clearTimeout(debounceTimer); }
           if (q.length < 2) { clearSuggestions(); return; }
-          if (!hasContext) { return; }
           
           debounceTimer = setTimeout(function(){
+            // For global search, we don't strictly limit by current page context anymore
             const params = new URLSearchParams({ q: q });
+            // We can optionally pass current context as hint, but backend now handles global search if 'q' is present.
             if (programId) params.set('program_id', String(programId));
-            if (semesterVal) params.set('semester', String(semesterVal));
-            if (mediumVal) params.set('medium', mediumVal);
             
-            // Use existing search API but handle response on frontend
             fetch(`${window.location.origin}/api/students/search?` + params.toString())
               .then(r => r.ok ? r.json() : Promise.reject())
               .then(data => showSuggestions((data && data.items) || []))
