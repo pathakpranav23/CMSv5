@@ -618,11 +618,11 @@ body > main { flex: 1 0 auto; }
     left: 0;
     bottom: 0;
     z-index: 1040;
-    width: 85%;
-    max-width: 320px;
+    width: 250px;
+    max-width: 80%;
     box-shadow: var(--shadow-strong);
-    /* Subtle gradient for visual appeal on mobile */
     background-image: linear-gradient(135deg, var(--nav-bg), rgba(255,255,255,0.06));
+    transition: transform 0.3s ease-in-out;
   }
   .app-shell.sidebar-open .sidebar { transform: translateX(0); }
 
@@ -631,11 +631,18 @@ body > main { flex: 1 0 auto; }
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.35);
+    background: rgba(0,0,0,0.5);
     z-index: 1035;
+    backdrop-filter: blur(2px);
   }
 
-  .app-main { position: relative; z-index: 1; margin-left: 0; }
+  .app-main { 
+    position: relative; 
+    z-index: 1; 
+    margin-left: 0; 
+    width: 100%;
+    overflow-x: hidden;
+  }
   .sidebar .nav a { padding: 0.5rem; }
 }
 
