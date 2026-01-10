@@ -115,7 +115,45 @@
             </div>
         </div>
 
-        <!-- 3. Growth & Operations -->
+        <!-- 3. Program Performance Matrix (The World Class View) -->
+        <h5 class="fw-bold text-uppercase text-secondary mb-3"><i class="bi bi-trophy-fill me-2"></i>360° Program Performance Matrix</h5>
+        <div class="card border-0 mb-5">
+            <div class="table-responsive">
+                <table class="table table-bordered align-middle mb-0 text-center">
+                    <thead class="bg-light">
+                        <tr>
+                            <th class="text-start">Program</th>
+                            <th>Fees Collected</th>
+                            <th>Faculty Strength</th>
+                            <th>Engagement (Mat.)</th>
+                            <th>Avg. Attendance</th>
+                            <th>Performance Badge</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for prog in program_matrix %}
+                        <tr>
+                            <td class="text-start fw-bold">{{ prog.name }}</td>
+                            <td class="text-muted">₹ {{ "{:,.0f}".format(prog.fees) }}</td>
+                            <td>{{ prog.faculty }}</td>
+                            <td>{{ prog.materials }}</td>
+                            <td>
+                                <div class="progress" style="height: 6px; width: 80px; margin: 0 auto 5px;">
+                                    <div class="progress-bar bg-info" role="progressbar" style="width: {{ prog.attendance }}%"></div>
+                                </div>
+                                <span class="small fw-bold">{{ "{:.1f}".format(prog.attendance) }}%</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-{{ prog.badge_color }} text-uppercase">{{ prog.badge }}</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 4. Growth & Operations -->
         <h5 class="fw-bold text-uppercase text-secondary mb-3"><i class="bi bi-graph-up-arrow me-2"></i>Growth & Operations</h5>
         <table class="table table-bordered mb-0">
             <tbody>

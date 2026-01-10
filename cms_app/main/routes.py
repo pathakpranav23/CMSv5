@@ -12353,9 +12353,9 @@ def module_analytics_impl():
 @login_required
 @role_required("admin")
 def analytics_report_monthly():
-    from ..models import FeePayment, Attendance, ImportLog, SubjectMaterial, Program, Announcement, Faculty, CourseAssignment
+    from ..models import FeePayment, Attendance, ImportLog, SubjectMaterial, Program, Announcement, Faculty, Division, Subject, CourseAssignment
     from datetime import datetime, date, timedelta
-    from sqlalchemy import func, and_
+    from sqlalchemy import func, and_, case
     
     # 1. Parse Parameters
     report_type = request.args.get("report_type", "monthly") # monthly, semester, yearly
@@ -12450,7 +12450,144 @@ def analytics_report_monthly():
         .filter(Announcement.created_at >= start_date)\
         .filter(Announcement.created_at <= end_date).scalar() or 0
 
-    # 6. Render Report
+    # 6. Gather Data (Program Breakdown & Scoring)
+    # We need a unified list of programs with their metrics
+    programs = Program.query.all()
+    program_matrix = []
+    
+    # Pre-fetch metrics mapped by program_id
+    # A. Fees
+    fees_map = {}
+    q_fees = db.session.query(FeePayment.program_id_fk, func.sum(FeePayment.amount))\
+        .filter(FeePayment.status == 'verified')\
+        .filter(FeePayment.verified_at >= start_date)\
+        .filter(FeePayment.verified_at <= end_date)\
+        .group_by(FeePayment.program_id_fk).all()
+    for pid, amt in q_fees:
+        fees_map[pid] = amt
+
+    # B. Lectures & Attendance
+    lectures_map = {}
+    attendance_map = {} # sum of presence / sum of total
+    q_att = db.session.query(
+        Division.program_id_fk, 
+        func.count(Attendance.attendance_id),
+        func.sum(case((Attendance.status == 'P', 1), else_=0)), # Present count
+        func.count(Attendance.attendance_id) # Total students marked (denominator)
+    ).join(Division, Attendance.division_id_fk == Division.division_id)\
+     .filter(Attendance.date_marked >= start_date)\
+     .filter(Attendance.date_marked <= end_date)\
+     .group_by(Division.program_id_fk).all()
+     
+    for pid, lec_count, pres_sum, total_sum in q_att:
+        lectures_map[pid] = lec_count / 30.0 # Approximate "Lectures" (assuming avg class size 30 for normalization, or just raw count of student-records)
+        # Note: 'Attendance' table stores one row per student per lecture. 
+        # So lec_count is actually "Student-Lectures". 
+        # To get actual "Lectures Delivered", we need distinct(subject, division, date, period).
+        # Let's refine this for accuracy.
+        
+    # B2. Refined Lecture Count (Distinct Sessions)
+    real_lec_map = {}
+    q_real_lec = db.session.query(
+        Division.program_id_fk,
+        func.count(func.distinct(Attendance.subject_id_fk)) # Approximate distinct sessions via subject-grouping per day? 
+        # Complex to do distinct on multi-columns in simple group_by. 
+        # Simplified approach: Count unique (date, period, division) tuples
+    ).join(Division, Attendance.division_id_fk == Division.division_id)\
+     .filter(Attendance.date_marked >= start_date)\
+     .filter(Attendance.date_marked <= end_date)\
+     .group_by(Division.program_id_fk).all()
+     # This query is tricky in ORM. Let's use a simpler heuristic or the raw student-record count normalized.
+     # Let's stick to the Attendance % which is accurate: pres_sum / total_sum
+    
+    att_pct_map = {}
+    for pid, _, pres_sum, total_sum in q_att:
+        if total_sum > 0:
+            att_pct_map[pid] = (pres_sum / total_sum) * 100
+        else:
+            att_pct_map[pid] = 0
+
+    # C. Active Faculty
+    fac_map = {}
+    q_fac = db.session.query(
+        Faculty.program_id_fk, 
+        func.count(Faculty.faculty_id)
+    ).group_by(Faculty.program_id_fk).all()
+    for pid, count in q_fac:
+        fac_map[pid] = count
+
+    # D. Resources / Intellectual Capital
+    mat_map = {}
+    q_mat = db.session.query(
+        Subject.program_id_fk,
+        func.count(SubjectMaterial.material_id)
+    ).join(Subject, SubjectMaterial.subject_id_fk == Subject.subject_id)\
+     .filter(SubjectMaterial.created_at >= start_date)\
+     .filter(SubjectMaterial.created_at <= end_date)\
+     .group_by(Subject.program_id_fk).all()
+    for pid, count in q_mat:
+        mat_map[pid] = count
+
+    # Build Matrix & Score
+    for p in programs:
+        pid = p.program_id
+        
+        # Metrics
+        m_fees = fees_map.get(pid, 0)
+        m_att_pct = att_pct_map.get(pid, 0)
+        m_fac = fac_map.get(pid, 0)
+        m_mat = mat_map.get(pid, 0)
+        
+        # Normalize for Scoring (0-100 scale logic)
+        # 1. Financial (25%): Target 1 Lakh? Arbitrary for now, relative scoring better?
+        # Let's use simple thresholds for "Good"
+        s_fees = min(m_fees / 50000 * 25, 25) # Max 25 pts if > 50k collected
+        
+        # 2. Academic (25%): Attendance % is key quality indicator
+        s_acad = (m_att_pct / 100) * 25 # Max 25 pts if 100% attendance
+        
+        # 3. Engagement (20%): Materials shared (Proxy for activity)
+        # Target: 5 materials per month = full score?
+        s_eng = min(m_mat / 5 * 20, 20) 
+        
+        # 4. Intellectual (15%): Faculty strength
+        # Target: 5 faculty = full score?
+        s_int = min(m_fac / 5 * 15, 15)
+        
+        # 5. Outcome (15%): Default neutral 10pts for now
+        s_out = 10 
+        
+        total_score = s_fees + s_acad + s_eng + s_int + s_out
+        
+        # Determine Badge
+        if total_score >= 80:
+            badge = "Elite"
+            badge_color = "success" # Green
+        elif total_score >= 60:
+            badge = "High Performing"
+            badge_color = "primary" # Blue
+        elif total_score >= 40:
+            badge = "Stable"
+            badge_color = "warning" # Yellow
+        else:
+            badge = "Needs Improvement"
+            badge_color = "danger" # Red
+            
+        program_matrix.append({
+            "name": p.program_name,
+            "fees": m_fees,
+            "attendance": m_att_pct,
+            "faculty": m_fac,
+            "materials": m_mat,
+            "score": int(total_score),
+            "badge": badge,
+            "badge_color": badge_color
+        })
+        
+    # Sort by Score High -> Low
+    program_matrix.sort(key=lambda x: x['score'], reverse=True)
+
+    # 7. Render Report
     return render_template("analytics_report_print.html",
                            report_title=report_title,
                            start_date=start_date,
@@ -12462,7 +12599,8 @@ def analytics_report_monthly():
                            new_admissions=new_admissions,
                            materials_count=materials_count,
                            announcements_count=announcements_count,
-                           generated_at=datetime.now())
+                           generated_at=datetime.now(),
+                           program_matrix=program_matrix)
 
 
 @main_bp.route("/analytics/notify", methods=["POST"])
