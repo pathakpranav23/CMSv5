@@ -12145,7 +12145,7 @@ def admin_seed_attendance_mock():
 @login_required
 @role_required("admin", "principal")
 def module_analytics():
-    from ..models import Faculty, AttendanceMaster, Subject, Class, Program
+    from ..models import Faculty, Attendance, Subject, Division, Program
     from datetime import datetime, date, timedelta
     from collections import defaultdict
     
@@ -12155,20 +12155,20 @@ def module_analytics():
     # 1. Daily Logs (Today)
     today = date.today()
     q_daily = db.session.query(
-        AttendanceMaster, 
+        Attendance, 
         Faculty.faculty_name, 
         Faculty.role, 
         Subject.subject_name,
-        Class.division,
-        Class.semester,
+        Division.division_code,
+        Division.semester,
         Program.program_name,
         Program.program_id
-    ).join(Faculty, AttendanceMaster.faculty_id == Faculty.faculty_id)\
-     .join(Subject, AttendanceMaster.subject_id == Subject.subject_id)\
-     .join(Class, AttendanceMaster.class_id == Class.class_id)\
-     .join(Program, Class.program_id == Program.program_id)\
-     .filter(AttendanceMaster.date == today)\
-     .order_by(AttendanceMaster.start_time.asc())
+    ).join(Faculty, Attendance.faculty_id_fk == Faculty.faculty_id)\
+     .join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
+     .join(Division, Attendance.division_id_fk == Division.division_id)\
+     .join(Program, Division.program_id_fk == Program.program_id)\
+     .filter(Attendance.date_marked == today)\
+     .order_by(Attendance.period_no.asc())
      
     if role == "principal" and user_pid:
         q_daily = q_daily.filter(Program.program_id == user_pid)
@@ -12176,23 +12176,36 @@ def module_analytics():
     daily_rows = q_daily.all()
     
     daily_logs = []
-    for am, fname, frole, sname, div, sem, pname, pid in daily_rows:
-        daily_logs.append({
-            "start_time": am.start_time.strftime("%I:%M %p"),
-            "end_time": am.end_time.strftime("%I:%M %p"),
-            "period_no": am.period_no,
-            "faculty_name": fname,
-            "faculty_role": frole,
-            "faculty_id": am.faculty_id,
-            "subject_name": sname,
-            "division": div,
-            "semester": sem,
-            "program_name": pname,
-            "topic": am.topic_covered,
-            "status": "Conducted", # Currently we only store conducted ones
-            "present_count": am.present_count,
-            "total_students": am.total_students
-        })
+    # Since we are fetching individual attendance records (one per student),
+    # we need to group them by (faculty, subject, division, period) to simulate a "lecture" log
+    lecture_map = {}
+
+    for att, fname, frole, sname, div_code, sem, pname, pid in daily_rows:
+        key = (att.period_no, fname, sname, div_code, sem)
+        if key not in lecture_map:
+            lecture_map[key] = {
+                "start_time": f"Period {att.period_no}", # We don't have exact time in Attendance model
+                "end_time": "",
+                "period_no": att.period_no,
+                "faculty_name": fname,
+                "faculty_role": frole,
+                "faculty_id": att.faculty_id_fk, # Using correct FK
+                "subject_name": sname,
+                "division": div_code,
+                "semester": sem,
+                "program_name": pname,
+                "topic": "-", # Not stored in Attendance model
+                "status": "Conducted",
+                "present_count": 0,
+                "total_students": 0
+            }
+        
+        lecture_map[key]["total_students"] += 1
+        if att.status == 'P':
+            lecture_map[key]["present_count"] += 1
+
+    daily_logs = list(lecture_map.values())
+    daily_logs.sort(key=lambda x: (x["period_no"] or 0))
         
     # 2. Weekly Grid (Pivot)
     start_week = today - timedelta(days=today.weekday()) # Monday
@@ -12200,21 +12213,51 @@ def module_analytics():
     
     q_week = db.session.query(
         Faculty.faculty_name,
-        AttendanceMaster.date
-    ).join(Faculty, AttendanceMaster.faculty_id == Faculty.faculty_id)\
-     .filter(AttendanceMaster.date >= start_week)\
-     .filter(AttendanceMaster.date <= end_week)
+        Attendance.date_marked
+    ).join(Faculty, Attendance.faculty_id_fk == Faculty.faculty_id)\
+     .filter(Attendance.date_marked >= start_week)\
+     .filter(Attendance.date_marked <= end_week)
      
     if role == "principal" and user_pid:
-        q_week = q_week.join(Class, AttendanceMaster.class_id == Class.class_id)\
-                       .filter(Class.program_id == user_pid)
+        q_week = q_week.join(Division, Attendance.division_id_fk == Division.division_id)\
+                       .filter(Division.program_id_fk == user_pid)
                        
     week_rows = q_week.all()
     
-    # Process into pivot structure
+    # Process into pivot structure (deduplicating by period/lecture, not student count)
+    # We need to count unique lectures, not unique student attendance records
+    # A lecture is unique by (faculty, date, period, division, subject)
+    # However, the simple query above returns one row per student.
+    # We need a more aggregated query or post-process.
+    
+    # Improved Weekly Query: Group by Lecture Unique Keys
+    q_week_agg = db.session.query(
+        Faculty.faculty_name,
+        Attendance.date_marked,
+        Attendance.period_no,
+        Attendance.division_id_fk,
+        Attendance.subject_id_fk
+    ).join(Faculty, Attendance.faculty_id_fk == Faculty.faculty_id)\
+     .filter(Attendance.date_marked >= start_week)\
+     .filter(Attendance.date_marked <= end_week)
+
+    if role == "principal" and user_pid:
+        q_week_agg = q_week_agg.join(Division, Attendance.division_id_fk == Division.division_id)\
+                               .filter(Division.program_id_fk == user_pid)
+
+    q_week_agg = q_week_agg.group_by(
+        Faculty.faculty_name,
+        Attendance.date_marked,
+        Attendance.period_no,
+        Attendance.division_id_fk,
+        Attendance.subject_id_fk
+    )
+    
+    week_lectures = q_week_agg.all()
+
     faculty_map = defaultdict(lambda: {"total": 0, "days": defaultdict(int)})
     
-    for fname, log_date in week_rows:
+    for fname, log_date, _, _, _ in week_lectures:
         day_str = log_date.strftime("%a") # Mon, Tue...
         faculty_map[fname]["days"][day_str] += 1
         faculty_map[fname]["total"] += 1
@@ -12228,24 +12271,22 @@ def module_analytics():
         })
     weekly_grid.sort(key=lambda x: x["total"], reverse=True)
 
-    # 3. Performance Alerts (For Actions)
-    # Simple logic: High > 15 lectures/week, Low < 5 lectures/week (Example threshold)
+    # 3. Performance Alerts
     performance_alerts = {"high": [], "low": []}
     
-    # We need faculty IDs for the action buttons
     fac_ids = db.session.query(Faculty.faculty_id, Faculty.faculty_name).all()
     fac_lookup = {f.faculty_name: f.faculty_id for f in fac_ids}
 
     for item in weekly_grid:
         fid = fac_lookup.get(item["faculty_name"])
-        if item["total"] >= 12: # High performer threshold
+        if item["total"] >= 12:
              performance_alerts["high"].append({
                  "id": fid,
                  "name": item["faculty_name"],
                  "lectures_taken": item["total"],
-                 "avg_attendance": 85 # Placeholder, would need complex query
+                 "avg_attendance": 85 
              })
-        elif item["total"] < 5: # Low performer threshold
+        elif item["total"] < 5:
              performance_alerts["low"].append({
                  "id": fid,
                  "name": item["faculty_name"],
