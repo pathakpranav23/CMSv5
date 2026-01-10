@@ -12145,6 +12145,13 @@ def admin_seed_attendance_mock():
 @login_required
 @role_required("admin", "principal")
 def module_analytics():
+    try:
+        return module_analytics_impl()
+    except Exception as e:
+        import traceback
+        return f"<h1>Analytics Error</h1><pre>{traceback.format_exc()}</pre>"
+
+def module_analytics_impl():
     from ..models import Faculty, Attendance, Subject, Division, Program, CourseAssignment
     from datetime import datetime, date, timedelta
     from collections import defaultdict
