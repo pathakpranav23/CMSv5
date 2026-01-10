@@ -22,8 +22,8 @@
             }
             .no-print { display: none !important; }
             .card { border: 1px solid #ddd !important; box-shadow: none !important; }
-            .bg-light { background-color: #f8f9fa !important; -webkit-print-color-adjust: exact; }
-            .text-primary { color: #0d6efd !important; -webkit-print-color-adjust: exact; }
+            .bg-light { background-color: #f8f9fa !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .text-primary { color: #0d6efd !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
         
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f3f4f6; }
@@ -51,7 +51,7 @@
                 <!-- SBPET Logo -->
                 <img src="{{ url_for('static', filename='logo.png') }}" alt="SBPET Logo" style="height: 80px; width: auto;" class="me-3">
                 <div>
-                    <h1 class="h4 fw-bold text-uppercase mb-0 text-dark">Shree Bhartimaiya Institute</h1>
+                    <h1 class="h4 fw-bold text-uppercase mb-0 text-dark">Shree Balvant Parekh Education Trust - Mahuva</h1>
                     <div class="text-muted small">Managed by SBPET</div>
                 </div>
             </div>
@@ -143,7 +143,13 @@
                             <td>{{ prog.materials }}</td>
                             <td>
                                 <div class="progress" style="height: 6px; width: 80px; margin: 0 auto 5px;">
-                                    <div class="progress-bar bg-info" role="progressbar" style="width: {{ prog.attendance }}%"></div>
+                                    <div class="progress-bar bg-info" role="progressbar" style="width: 0%" data-width="{{ prog.attendance }}"></div>
+<script>
+    document.querySelectorAll('.progress-bar').forEach(bar => {
+        const width = bar.getAttribute('data-width');
+        if(width) bar.style.width = width + '%';
+    });
+</script>
                                 </div>
                                 <span class="small fw-bold">{{ "{:.1f}".format(prog.attendance) }}%</span>
                             </td>
@@ -187,8 +193,8 @@
                     <div class="small fw-bold text-dark">Powered by</div>
                     <div class="text-muted" style="font-size: 0.75rem;">CodeP Technologies</div>
                 </div>
-                <!-- CodeP Logo Placeholder (You can add actual logo later) -->
-                <div class="bg-dark text-white rounded-circle d-flex align-items-center justify-content-center fw-bold" style="width: 32px; height: 32px; font-size: 10px;">CP</div>
+                <!-- CodeP Logo -->
+                <img src="{{ url_for('static', filename='CODEP-LOGO-6.png') }}" alt="CodeP" style="height: 32px; width: auto;" class="ms-2">
             </div>
         </div>
 
