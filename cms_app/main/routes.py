@@ -12353,9 +12353,9 @@ def module_analytics_impl():
 @login_required
 @role_required("admin")
 def analytics_report_monthly():
-    from ..models import FeePayment, Attendance, ImportLog, SubjectMaterial, Program, Announcement, Faculty
+    from ..models import FeePayment, Attendance, ImportLog, SubjectMaterial, Program, Announcement, Faculty, CourseAssignment
     from datetime import datetime, date, timedelta
-    from sqlalchemy import func
+    from sqlalchemy import func, and_
     
     # 1. Parse Parameters
     report_type = request.args.get("report_type", "monthly") # monthly, semester, yearly
