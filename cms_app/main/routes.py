@@ -7493,6 +7493,8 @@ def attendance_mark():
             # Persist attendance for each student
             today = selected_date
             semester_val = subject.semester if subject else None
+            topic_val = request.form.get("topic") # NEW: Read topic input
+            
             statuses = {}
             for key, val in request.form.items():
                 if key.startswith("status_"):
@@ -7509,6 +7511,7 @@ def attendance_mark():
                     status=st,
                     semester=semester_val,
                     period_no=selected_period,
+                    topic=topic_val, # NEW: Save topic
                 )
                 db.session.add(att)
                 created += 1

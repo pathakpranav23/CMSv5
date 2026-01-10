@@ -152,10 +152,15 @@
     </div>
     <div class="col-lg-8">
       <form method="post" action="" class="card" id="rosterForm">
-        <div class="card-header d-flex align-items-center justify-content-between sticky-top bg-white z-2 border-bottom">
+        <div class="card-header d-flex flex-wrap align-items-center justify-content-between sticky-top bg-white z-2 border-bottom gap-2">
           <div class="d-none d-md-block">
             <span>Roster{% if subject %}: {{ subject.subject_name }}{% endif %}{% if division %} — {{ division.division_code }}{% endif %}</span>
           </div>
+
+          <div class="flex-grow-1" style="min-width: 200px;">
+            <input type="text" name="topic" class="form-control form-control-sm border-primary" placeholder="Enter Topic / Unit Covered (e.g., Unit 1: Intro)" required>
+          </div>
+
           <div class="d-flex align-items-center gap-2 w-100 w-md-auto justify-content-between justify-content-md-end">
             <select name="period_no" class="form-select form-select-sm" style="max-width: 140px;" required>
               <option value="">Select lecture…</option>
