@@ -31,7 +31,59 @@
          <div class="small text-muted mt-1 text-nowrap">Lectures Today</div>
        </div>
     </div>
+    
+    <!-- Report Generation Button -->
+    <button type="button" class="btn btn-outline-dark shadow-sm border d-flex align-items-center gap-2" style="background: white;" data-bs-toggle="modal" data-bs-target="#reportModal">
+        <i class="bi bi-file-earmark-pdf-fill text-danger fs-5"></i>
+        <div class="text-start lh-1 d-none d-sm-block">
+            <div class="fw-bold" style="font-size: 0.85rem;">Generate</div>
+            <div class="text-muted" style="font-size: 0.7rem;">Monthly Report</div>
+        </div>
+    </button>
   </div> 
+</div>
+
+<!-- Report Generation Modal -->
+<div class="modal fade" id="reportModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header border-bottom-0 pb-0">
+        <h5 class="modal-title fw-bold"><i class="bi bi-file-earmark-bar-graph me-2 text-primary"></i>Generate Performance Report</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body pt-2">
+        <p class="text-muted small mb-4">Select a reporting period to generate a comprehensive analysis of fees, academics, and campus growth.</p>
+        
+        <form action="{{ url_for('main.analytics_report_monthly') }}" method="GET" target="_blank">
+            <div class="mb-3">
+                <label class="form-label fw-bold small text-uppercase text-muted">Report Type</label>
+                <div class="btn-group w-100" role="group">
+                    <input type="radio" class="btn-check" name="report_type" id="type_monthly" value="monthly" checked>
+                    <label class="btn btn-outline-primary" for="type_monthly">Monthly</label>
+                    
+                    <input type="radio" class="btn-check" name="report_type" id="type_semester" value="semester">
+                    <label class="btn btn-outline-primary" for="type_semester">Semester</label>
+                    
+                    <input type="radio" class="btn-check" name="report_type" id="type_yearly" value="yearly">
+                    <label class="btn btn-outline-primary" for="type_yearly">Yearly</label>
+                </div>
+            </div>
+            
+            <div class="mb-4">
+                <label class="form-label fw-bold small text-uppercase text-muted">Select Date</label>
+                <input type="month" name="month" class="form-control" value="{{ today_date_iso|default('2025-01') }}" required>
+                <div class="form-text small"><i class="bi bi-info-circle me-1"></i>For semester/yearly reports, the selected month determines the academic term/year.</div>
+            </div>
+            
+            <div class="d-grid">
+                <button type="submit" class="btn btn-primary py-2 fw-bold shadow-sm">
+                    <i class="bi bi-printer-fill me-2"></i>Generate Report
+                </button>
+            </div>
+        </form>
+      </div>
+    </div>
+  </div>
 </div>
 
 {% if program_stats %}

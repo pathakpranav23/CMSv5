@@ -12346,7 +12346,123 @@ def module_analytics_impl():
                            lecture_stats={"total_today": len(daily_logs)},
                            all_programs=all_programs,
                            selected_pid=selected_pid,
-                           program_stats=program_stats)
+                           program_stats=program_stats,
+                           today_date_iso=today.strftime("%Y-%m"))
+
+@main_bp.route("/analytics/report/monthly")
+@login_required
+@role_required("admin")
+def analytics_report_monthly():
+    from ..models import FeePayment, Attendance, ImportLog, SubjectMaterial, Program, Announcement, Faculty
+    from datetime import datetime, date, timedelta
+    from sqlalchemy import func
+    
+    # 1. Parse Parameters
+    report_type = request.args.get("report_type", "monthly") # monthly, semester, yearly
+    month_str = request.args.get("month") # YYYY-MM
+    
+    try:
+        ref_date = datetime.strptime(month_str, "%Y-%m").date()
+    except:
+        ref_date = date.today()
+        
+    # 2. Determine Date Range
+    start_date = None
+    end_date = None
+    report_title = ""
+    
+    if report_type == "monthly":
+        start_date = ref_date.replace(day=1)
+        # Last day of month
+        next_month = start_date.replace(day=28) + timedelta(days=4)
+        end_date = next_month - timedelta(days=next_month.day)
+        report_title = f"Monthly Performance Report - {start_date.strftime('%B %Y')}"
+        
+    elif report_type == "yearly":
+        start_date = ref_date.replace(month=1, day=1)
+        end_date = ref_date.replace(month=12, day=31)
+        report_title = f"Annual Performance Report - {start_date.year}"
+        
+    elif report_type == "semester":
+        # Rough academic semesters: June-Nov (Odd), Dec-May (Even)
+        if ref_date.month >= 6 and ref_date.month <= 11:
+            start_date = ref_date.replace(month=6, day=1)
+            end_date = ref_date.replace(month=11, day=30)
+            term = "Odd Semester (Jun-Nov)"
+        else:
+            # Handle Jan-May part of Even sem
+            year_adj = 0 if ref_date.month <= 5 else 1
+            start_date = date(ref_date.year + year_adj, 12, 1) if ref_date.month > 5 else date(ref_date.year - 1, 12, 1)
+            # End is May 31st of the academic year end
+            end_year = start_date.year + 1
+            end_date = date(end_year, 5, 31)
+            term = "Even Semester (Dec-May)"
+            
+        report_title = f"Semester Performance Report - {term} {start_date.year}-{end_date.year}"
+
+    # 3. Gather Data (Financial)
+    # Total Fees Collected (Verified only)
+    fees_total = db.session.query(func.sum(FeePayment.amount))\
+        .filter(FeePayment.status == 'verified')\
+        .filter(FeePayment.verified_at >= start_date)\
+        .filter(FeePayment.verified_at <= end_date).scalar() or 0.0
+        
+    # Fees by Program
+    fees_by_program = db.session.query(
+        Program.program_name, 
+        func.sum(FeePayment.amount)
+    ).join(Program, FeePayment.program_id_fk == Program.program_id)\
+     .filter(FeePayment.status == 'verified')\
+     .filter(FeePayment.verified_at >= start_date)\
+     .filter(FeePayment.verified_at <= end_date)\
+     .group_by(Program.program_name).all()
+
+    # 4. Gather Data (Academic)
+    # Lectures Delivered
+    lectures_count = db.session.query(func.count(Attendance.attendance_id))\
+        .filter(Attendance.date_marked >= start_date)\
+        .filter(Attendance.date_marked <= end_date).scalar() or 0
+        
+    # Unique Faculty Active
+    # Note: This query might be slow on large datasets, optimize if needed
+    active_faculty = db.session.query(func.count(func.distinct(CourseAssignment.faculty_id_fk)))\
+        .join(Attendance, and_(
+            Attendance.subject_id_fk == CourseAssignment.subject_id_fk,
+            Attendance.division_id_fk == CourseAssignment.division_id_fk
+        ))\
+        .filter(Attendance.date_marked >= start_date)\
+        .filter(Attendance.date_marked <= end_date).scalar() or 0
+
+    # 5. Gather Data (Growth & Ops)
+    # New Admissions (via Import Logs as proxy)
+    new_admissions = db.session.query(func.sum(ImportLog.created_count))\
+        .filter(ImportLog.kind == 'students')\
+        .filter(ImportLog.created_at >= start_date)\
+        .filter(ImportLog.created_at <= end_date).scalar() or 0
+        
+    # Materials Uploaded
+    materials_count = db.session.query(func.count(SubjectMaterial.material_id))\
+        .filter(SubjectMaterial.created_at >= start_date)\
+        .filter(SubjectMaterial.created_at <= end_date).scalar() or 0
+        
+    # Announcements
+    announcements_count = db.session.query(func.count(Announcement.announcement_id))\
+        .filter(Announcement.created_at >= start_date)\
+        .filter(Announcement.created_at <= end_date).scalar() or 0
+
+    # 6. Render Report
+    return render_template("analytics_report_print.html",
+                           report_title=report_title,
+                           start_date=start_date,
+                           end_date=end_date,
+                           fees_total=fees_total,
+                           fees_by_program=fees_by_program,
+                           lectures_count=lectures_count,
+                           active_faculty=active_faculty,
+                           new_admissions=new_admissions,
+                           materials_count=materials_count,
+                           announcements_count=announcements_count,
+                           generated_at=datetime.now())
 
 
 @main_bp.route("/analytics/notify", methods=["POST"])
