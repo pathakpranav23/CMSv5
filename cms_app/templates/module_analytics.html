@@ -28,6 +28,24 @@
     </div>
   </div>
 
+  <!-- Custom Styles for Principal Theme -->
+  <style>
+    /* Principal Theme Overrides */
+    .nav-pills .nav-link.active {
+      background-color: #d97706 !important; /* Principal Orange */
+      color: #fff !important;
+    }
+    .nav-pills .nav-link {
+      color: #4b5563;
+    }
+    .text-principal { color: #d97706 !important; }
+    .bg-principal { background-color: #d97706 !important; }
+    .btn-principal { background-color: #d97706; border-color: #d97706; color: white; }
+    .btn-principal:hover { background-color: #b45309; border-color: #b45309; color: white; }
+    .btn-outline-principal { color: #d97706; border-color: #d97706; }
+    .btn-outline-principal:hover { background-color: #d97706; color: white; }
+  </style>
+
   <!-- Navigation Tabs -->
   <div class="col-12">
     <ul class="nav nav-pills nav-fill bg-white p-2 rounded shadow-sm gap-2" id="analyticsTabs" role="tablist">
@@ -159,32 +177,33 @@
         <div class="row g-3">
           <!-- Low Performance List -->
           <div class="col-md-6">
-            <div class="card border-danger shadow-sm h-100">
-              <div class="card-header bg-danger text-white">
-                <h5 class="mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i>Needs Attention (Low Output)</h5>
+            <div class="card border-0 shadow-sm h-100">
+              <div class="card-header bg-white border-bottom-0 pt-4 pb-2">
+                <h5 class="mb-0 text-principal"><i class="bi bi-exclamation-circle me-2"></i>Needs Attention</h5>
+                <div class="small text-muted">Faculty with lower than expected lecture output</div>
               </div>
               <div class="card-body p-0">
                 <div class="list-group list-group-flush">
                   {% for fac in performance_alerts.low %}
-                  <div class="list-group-item p-3">
+                  <div class="list-group-item p-3 border-0">
                     <div class="d-flex justify-content-between align-items-center">
                       <div>
-                        <h6 class="mb-1 fw-bold text-danger">{{ fac.name }}</h6>
+                        <h6 class="mb-1 fw-bold text-dark">{{ fac.name }}</h6>
                         <div class="small text-muted">{{ fac.lectures_taken }} lectures this month (Target: {{ fac.target }})</div>
                       </div>
                       <form action="{{ url_for('main.analytics_notify') }}" method="POST" onsubmit="return confirm('Send warning notification to {{ fac.name }}?');">
                         <input type="hidden" name="faculty_id" value="{{ fac.id }}">
                         <input type="hidden" name="type" value="warning">
-                        <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill px-3">
-                          <i class="bi bi-envelope-exclamation me-1"></i> Send Warning
+                        <button type="submit" class="btn btn-sm btn-outline-principal rounded-pill px-3">
+                          <i class="bi bi-envelope-exclamation me-1"></i> Send Alert
                         </button>
                       </form>
                     </div>
                   </div>
                   {% else %}
                   <div class="text-center p-4 text-muted">
-                    <i class="bi bi-check-circle-fill fs-1 text-success mb-2"></i><br>
-                    No faculty flagged for low performance.
+                    <i class="bi bi-check-circle-fill fs-1 text-success mb-2 opacity-50"></i><br>
+                    No faculty flagged for attention.
                   </div>
                   {% endfor %}
                 </div>
@@ -194,23 +213,24 @@
 
           <!-- High Performance List -->
           <div class="col-md-6">
-            <div class="card border-success shadow-sm h-100">
-              <div class="card-header bg-success text-white">
-                <h5 class="mb-0"><i class="bi bi-star-fill me-2"></i>Star Performers (High Output)</h5>
+            <div class="card border-0 shadow-sm h-100">
+              <div class="card-header bg-white border-bottom-0 pt-4 pb-2">
+                <h5 class="mb-0 text-primary"><i class="bi bi-star-fill me-2"></i>Top Performers</h5>
+                <div class="small text-muted">Faculty exceeding delivery and engagement targets</div>
               </div>
               <div class="card-body p-0">
                 <div class="list-group list-group-flush">
                   {% for fac in performance_alerts.high %}
-                  <div class="list-group-item p-3">
+                  <div class="list-group-item p-3 border-0">
                     <div class="d-flex justify-content-between align-items-center">
                       <div>
-                        <h6 class="mb-1 fw-bold text-success">{{ fac.name }}</h6>
+                        <h6 class="mb-1 fw-bold text-dark">{{ fac.name }}</h6>
                         <div class="small text-muted">{{ fac.lectures_taken }} lectures (Avg Attendance: {{ fac.avg_attendance }}%)</div>
                       </div>
                       <form action="{{ url_for('main.analytics_notify') }}" method="POST" onsubmit="return confirm('Send appreciation to {{ fac.name }}?');">
                         <input type="hidden" name="faculty_id" value="{{ fac.id }}">
                         <input type="hidden" name="type" value="appreciation">
-                        <button type="submit" class="btn btn-sm btn-outline-success rounded-pill px-3">
+                        <button type="submit" class="btn btn-sm btn-outline-primary rounded-pill px-3">
                           <i class="bi bi-hand-thumbs-up-fill me-1"></i> Appreciate
                         </button>
                       </form>
