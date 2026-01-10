@@ -12160,17 +12160,17 @@ def module_analytics_impl():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     user_pid = int(getattr(current_user, "program_id_fk", 0) or 0)
     
-    # 1. Daily Logs (Today)
-    today = date.today()
-    q_daily = db.session.query(
-        Attendance, 
-        Faculty.faculty_name, 
-        Faculty.designation, 
-        Subject.subject_name,
-        Division.division_code,
-        Division.semester,
-        Program.program_name,
-        Program.program_id
+        # 1. Daily Logs (Today)
+        today = date.today()
+        q_daily = db.session.query(
+            Attendance, 
+            Faculty.full_name, 
+            Faculty.designation, 
+            Subject.subject_name,
+            Division.division_code,
+            Division.semester,
+            Program.program_name,
+            Program.program_id
     ).join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
      .join(Division, Attendance.division_id_fk == Division.division_id)\
      .join(Program, Division.program_id_fk == Program.program_id)\
@@ -12237,7 +12237,7 @@ def module_analytics_impl():
     
     # Improved Weekly Query: Group by Lecture Unique Keys
     q_week_agg = db.session.query(
-        Faculty.faculty_name,
+        Faculty.full_name,
         Attendance.date_marked,
         Attendance.period_no,
         Attendance.division_id_fk,
@@ -12257,7 +12257,7 @@ def module_analytics_impl():
         q_week_agg = q_week_agg.filter(Division.program_id_fk == user_pid)
 
     q_week_agg = q_week_agg.group_by(
-        Faculty.faculty_name,
+        Faculty.full_name,
         Attendance.date_marked,
         Attendance.period_no,
         Attendance.division_id_fk,
@@ -12285,8 +12285,8 @@ def module_analytics_impl():
     # 3. Performance Alerts
     performance_alerts = {"high": [], "low": []}
     
-    fac_ids = db.session.query(Faculty.faculty_id, Faculty.faculty_name).all()
-    fac_lookup = {f.faculty_name: f.faculty_id for f in fac_ids}
+    fac_ids = db.session.query(Faculty.faculty_id, Faculty.full_name).all()
+    fac_lookup = {f.full_name: f.faculty_id for f in fac_ids}
 
     for item in weekly_grid:
         fid = fac_lookup.get(item["faculty_name"])
