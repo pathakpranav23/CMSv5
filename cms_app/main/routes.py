@@ -12145,9 +12145,10 @@ def admin_seed_attendance_mock():
 @login_required
 @role_required("admin", "principal")
 def module_analytics():
-    from ..models import Faculty, Attendance, Subject, Division, Program
+    from ..models import Faculty, Attendance, Subject, Division, Program, CourseAssignment
     from datetime import datetime, date, timedelta
     from collections import defaultdict
+    from sqlalchemy import and_
     
     role = (getattr(current_user, "role", "") or "").strip().lower()
     user_pid = int(getattr(current_user, "program_id_fk", 0) or 0)
@@ -12157,16 +12158,21 @@ def module_analytics():
     q_daily = db.session.query(
         Attendance, 
         Faculty.faculty_name, 
-        Faculty.role, 
+        Faculty.designation, 
         Subject.subject_name,
         Division.division_code,
         Division.semester,
         Program.program_name,
         Program.program_id
-    ).join(Faculty, Attendance.faculty_id_fk == Faculty.faculty_id)\
-     .join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
+    ).join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
      .join(Division, Attendance.division_id_fk == Division.division_id)\
      .join(Program, Division.program_id_fk == Program.program_id)\
+     .outerjoin(CourseAssignment, and_(
+         CourseAssignment.subject_id_fk == Subject.subject_id,
+         CourseAssignment.division_id_fk == Division.division_id,
+         CourseAssignment.is_active == True
+     ))\
+     .outerjoin(Faculty, Faculty.user_id_fk == CourseAssignment.faculty_id_fk)\
      .filter(Attendance.date_marked == today)\
      .order_by(Attendance.period_no.asc())
      
@@ -12180,7 +12186,10 @@ def module_analytics():
     # we need to group them by (faculty, subject, division, period) to simulate a "lecture" log
     lecture_map = {}
 
-    for att, fname, frole, sname, div_code, sem, pname, pid in daily_rows:
+    for att, fname, fdesig, sname, div_code, sem, pname, pid in daily_rows:
+        fname = fname or "Unknown/Unassigned"
+        fdesig = fdesig or "Faculty"
+        
         key = (att.period_no, fname, sname, div_code, sem)
         if key not in lecture_map:
             lecture_map[key] = {
@@ -12188,8 +12197,8 @@ def module_analytics():
                 "end_time": "",
                 "period_no": att.period_no,
                 "faculty_name": fname,
-                "faculty_role": frole,
-                "faculty_id": att.faculty_id_fk, # Using correct FK
+                "faculty_role": fdesig,
+                "faculty_id": att.subject_id_fk, # Placeholder ID for link since we don't have faculty_id on attendance
                 "subject_name": sname,
                 "division": div_code,
                 "semester": sem,
@@ -12211,18 +12220,7 @@ def module_analytics():
     start_week = today - timedelta(days=today.weekday()) # Monday
     end_week = start_week + timedelta(days=6) # Sunday
     
-    q_week = db.session.query(
-        Faculty.faculty_name,
-        Attendance.date_marked
-    ).join(Faculty, Attendance.faculty_id_fk == Faculty.faculty_id)\
-     .filter(Attendance.date_marked >= start_week)\
-     .filter(Attendance.date_marked <= end_week)
-     
-    if role == "principal" and user_pid:
-        q_week = q_week.join(Division, Attendance.division_id_fk == Division.division_id)\
-                       .filter(Division.program_id_fk == user_pid)
-                       
-    week_rows = q_week.all()
+
     
     # Process into pivot structure (deduplicating by period/lecture, not student count)
     # We need to count unique lectures, not unique student attendance records
@@ -12237,13 +12235,19 @@ def module_analytics():
         Attendance.period_no,
         Attendance.division_id_fk,
         Attendance.subject_id_fk
-    ).join(Faculty, Attendance.faculty_id_fk == Faculty.faculty_id)\
+    ).join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
+     .join(Division, Attendance.division_id_fk == Division.division_id)\
+     .outerjoin(CourseAssignment, and_(
+         CourseAssignment.subject_id_fk == Subject.subject_id,
+         CourseAssignment.division_id_fk == Division.division_id,
+         CourseAssignment.is_active == True
+     ))\
+     .outerjoin(Faculty, Faculty.user_id_fk == CourseAssignment.faculty_id_fk)\
      .filter(Attendance.date_marked >= start_week)\
      .filter(Attendance.date_marked <= end_week)
-
+     
     if role == "principal" and user_pid:
-        q_week_agg = q_week_agg.join(Division, Attendance.division_id_fk == Division.division_id)\
-                               .filter(Division.program_id_fk == user_pid)
+        q_week_agg = q_week_agg.filter(Division.program_id_fk == user_pid)
 
     q_week_agg = q_week_agg.group_by(
         Faculty.faculty_name,
