@@ -78,7 +78,7 @@
       <div class="user-tools">
         <ul class="nav">
           {% if current_user.is_authenticated %}
-            <li><a href="{{ url_for('main.account_settings') }}"><span class="module-icon"><i class="bi bi-person-circle"></i></span><span class="label">{{ t('Manage Accounts') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.account_settings') }}"><span class="module-icon"><i class="bi bi-person-circle"></i></span><span class="label">{{ t('My Profile') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.logout') }}"><span class="module-icon"><i class="bi bi-box-arrow-right"></i></span><span class="label">{{ t('Logout') }}</span></a><br class="nav-break"></li>
           {% else %}
             <li><a href="{{ url_for('main.login') }}"><span class="module-icon"><i class="bi bi-box-arrow-in-right"></i></span><span class="label">{{ t('Login') }}</span></a><br class="nav-break"></li>
