@@ -41,53 +41,31 @@
         </div>
       </div>
     </div>
-    <div class="col-md-12">
-      <div class="card mod-card mod-card--search">
-        <div class="card-header">Search Students</div>
-        <div class="card-body">
-          <div class="card-icon" aria-hidden="true"><i class="bi bi-search"></i></div>
-          <form class="row g-2" onsubmit="return false;">
-            <div class="col-md-4">
-              <label class="form-label">Program</label>
-              <select id="smProgram" class="form-select">
-                <option value="">Select Program</option>
-                {% for p in (programs or []) %}
-                  <option value="{{ p.program_id }}">{{ p.program_name }}</option>
-                {% endfor %}
-              </select>
+    <!-- Primary Action: Hybrid Global Search (Omni-Search) -->
+  <div class="card mod-card mod-card--search">
+    <div class="card-header">Search Students</div>
+    <div class="card-body">
+      <div class="card-icon" aria-hidden="true"><i class="bi bi-search"></i></div>
+      <div class="row g-2 align-items-center">
+        <div class="col-12">
+          <label class="form-label">Search Student (Instant)</label>
+          <div class="position-relative">
+            <div class="input-group input-group-lg">
+              <input type="text" id="smSearch" class="form-control" placeholder="Loading directory..." disabled autocomplete="off" />
+              <button class="btn btn-outline-secondary" type="button" id="forceSearchBtn" title="Force Server Search"><i class="bi bi-cloud-download"></i></button>
             </div>
-            <div class="col-md-3" id="smMediumWrap" style="display:none;">
-              <label class="form-label">Medium</label>
-              <select id="smMedium" class="form-select">
-                <option value="all">All</option>
-                <option value="english">English</option>
-                <option value="gujarati">Gujarati</option>
-                <option value="general">General</option>
-              </select>
-            </div>
-            <div class="col-md-3">
-              <label class="form-label">Semester</label>
-              <select id="smSemester" class="form-select">
-                <option value="">Select Semester</option>
-                {% for s in range(1,9) %}
-                  <option value="{{ s }}">Semester {{ s }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-5">
-              <label class="form-label">Search by Name or Enrollment No.</label>
-              <div class="position-relative">
-                <input type="text" id="smSearch" class="form-control" placeholder="Type 2+ letters or digits" autocomplete="off" />
-                <div id="smSuggestions" class="list-group position-absolute w-100" style="z-index:1000; max-height:240px; overflow:auto; display:none;"></div>
-              </div>
-            </div>
-          </form>
-          <p class="text-muted small mb-0">Select Program and Semester, then start typing a name or enrollment number. Click a suggestion to open the student's profile page. Use the "View all matches" row to open the Students list with the same filters.</p>
-          <script id="studentsConfig" type="application/json">{{ {'medium_program_ids': (medium_program_ids or []), 'default_medium_map': (default_medium_map or {}) } | tojson }}</script>
+            <div id="smSuggestions" class="list-group position-absolute w-100 shadow-lg" style="z-index:1000; max-height:400px; overflow:auto; display:none;"></div>
+          </div>
+          <div class="d-flex justify-content-between mt-2">
+             <div class="form-text"><i class="bi bi-info-circle me-1"></i> Instant search. If not found, press Enter to search server.</div>
+             <div class="small text-muted" id="cacheStatus">Initializing...</div>
+          </div>
         </div>
       </div>
+      <script id="studentsConfig" type="application/json">{{ {'medium_program_ids': (medium_program_ids or []), 'default_medium_map': (default_medium_map or {}) } | tojson }}</script>
     </div>
   </div>
+
   <div class="mt-3">
     <button class="btn btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#studentsPower">Power Actions</button>
     <div id="studentsPower" class="collapse mt-2">
@@ -108,132 +86,157 @@
 </div>
 <script>
   (function(){
-    const programSel = document.getElementById('smProgram');
-    const semesterSel = document.getElementById('smSemester');
-    const mediumWrap = document.getElementById('smMediumWrap');
-    const mediumSel = document.getElementById('smMedium');
+    // -----------------------------------------------------------------------
+    // Hybrid Search Engine (Local Cache + API Fallback) for Student Module
+    // -----------------------------------------------------------------------
     const searchInput = document.getElementById('smSearch');
     const suggBox = document.getElementById('smSuggestions');
-    const CONFIG = (function(){
-      try { return JSON.parse(document.getElementById('studentsConfig')?.textContent || '{}') || {}; } catch(e) { return {}; }
-    })();
-    const MEDIUM_IDS = Array.isArray(CONFIG.medium_program_ids) ? CONFIG.medium_program_ids.map(Number) : [];
-    const DEFAULT_MEDIUM_MAP = CONFIG.default_medium_map || {};
-    let debounceTimer = null;
+    const cacheStatus = document.getElementById('cacheStatus');
+    const forceBtn = document.getElementById('forceSearchBtn');
+    const studentsShowUrlTemplate = "{{ url_for('main.students_show', enrollment_no='__ENR__') }}";
 
-    function gateSearch() {
-      const pid = programSel.value || '';
-      const sem = semesterSel.value || '';
-      const hasContext = pid && sem;
-      searchInput.disabled = !hasContext;
-      if (!hasContext) {
-        suggBox.style.display = 'none';
-        suggBox.innerHTML = '';
-      }
-    }
-    programSel.addEventListener('change', gateSearch);
-    semesterSel.addEventListener('change', gateSearch);
-    gateSearch();
-
-    function isMediumProgram(pid) {
-      const n = Number(pid || 0);
-      return !!(n && MEDIUM_IDS.includes(n));
-    }
-    function loadSavedMedium(pid) {
+    let allStudents = [];
+    let isLoaded = false;
+    let debounceTimer;
+    
+    // 1. Initial Load (Tier 1)
+    async function loadStudents() {
       try {
-        const key = `students_medium_${pid}`;
-        const val = localStorage.getItem(key);
-        if (val) mediumSel.value = val;
-      } catch(e) {}
-    }
-    function saveMedium(pid, val) {
-      try { localStorage.setItem(`students_medium_${pid}`, val || 'all'); } catch(e) {}
-    }
-    function toggleMedium() {
-      const pid = programSel.value || '';
-      const show = isMediumProgram(pid);
-      mediumWrap.style.display = show ? '' : 'none';
-      if (!show) {
-        mediumSel.value = 'all';
-      } else {
-        loadSavedMedium(pid);
-        const d = DEFAULT_MEDIUM_MAP[String(Number(pid))] || '';
-        if (d && (!mediumSel.value || mediumSel.value === 'all')) mediumSel.value = d;
+        cacheStatus.innerText = "Downloading directory...";
+        const resp = await fetch("{{ url_for('main.api_students_search') }}?limit=2000"); 
+        const jsonResp = await resp.json();
+        // API returns {success: true, data: {items: [...]}}
+        const items = (jsonResp.data && jsonResp.data.items) || (jsonResp.items) || [];
+        allStudents = items;
+        isLoaded = true;
+        
+        searchInput.disabled = false;
+        searchInput.placeholder = "Start typing Name or Enrollment No...";
+        cacheStatus.innerText = `${allStudents.length} students loaded locally.`;
+      } catch(e) {
+        console.error("Failed to load students", e);
+        cacheStatus.innerText = "Offline mode or server error.";
+        searchInput.disabled = false;
+        searchInput.placeholder = "Search server directly...";
       }
     }
-    programSel.addEventListener('change', toggleMedium);
-    mediumSel.addEventListener('change', function(){
-      const pid = programSel.value || '';
-      if (isMediumProgram(pid)) saveMedium(pid, mediumSel.value || 'all');
-    });
-    toggleMedium();
+    loadStudents();
 
-    function renderSuggestions(items, query, pid, sem, med) {
-      if (!Array.isArray(items)) items = [];
-      const rows = items.map(st => {
-        const enr = st.enrollment_no;
-        const name = (st.name || '').trim();
-        const semDisp = st.semester ? `Sem ${st.semester}` : '';
-        const href = `${(window.APP_BASE || '')}{{ url_for('main.students_show', enrollment_no='__ENR__') }}`.replace('__ENR__', encodeURIComponent(enr));
-        return `
-          <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="${href}">
-            <span>
-              <strong>${name || enr}</strong>
-              <span class="text-muted">&nbsp;• ENR ${enr}</span>
-            </span>
-            <span class="badge bg-primary">${semDisp}</span>
-          </a>
-        `;
+    // 2. Hybrid Search Logic
+    function performSearch(query, forceServer = false) {
+      if (!query) {
+         suggBox.style.display = 'none';
+         return;
+      }
+      
+      const q = query.toLowerCase();
+      let matches = allStudents.filter(s => {
+        if (s.enrollment_no && s.enrollment_no.toLowerCase().includes(q)) return true;
+        const full = (s.name || '').toLowerCase();
+        return full.includes(q);
+      }).slice(0, 15);
+
+      if (matches.length > 0 && !forceServer) {
+        showSuggestions(matches, false);
+      } else {
+        fetchServerSearch(query);
+      }
+    }
+
+    async function fetchServerSearch(query) {
+      suggBox.innerHTML = '<div class="list-group-item text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Searching server archive...</div>';
+      suggBox.style.display = 'block';
+      
+      try {
+        const url = new URL("{{ url_for('main.api_students_search') }}", window.location.origin);
+        url.searchParams.set('q', query);
+        url.searchParams.set('limit', 50);
+        
+        const resp = await fetch(url.toString());
+        const jsonResp = await resp.json();
+        const items = (jsonResp.data && jsonResp.data.items) || (jsonResp.items) || [];
+        
+        if (items.length === 0) {
+           suggBox.innerHTML = '<div class="list-group-item text-center text-muted py-3">No matching students found on server.</div>';
+        } else {
+           showSuggestions(items, true);
+        }
+      } catch(e) {
+        suggBox.innerHTML = '<div class="list-group-item text-danger">Server search failed. Check connection.</div>';
+      }
+    }
+
+    // 3. Render
+    function showSuggestions(items, isServerResult) {
+      suggBox.innerHTML = '';
+      
+      const header = document.createElement('div');
+      header.className = 'list-group-item bg-light fw-bold text-muted small py-2 d-flex justify-content-between';
+      header.innerHTML = `<span>${isServerResult ? 'Server Results' : 'Instant Results'}</span><span class="badge bg-secondary">${items.length}</span>`;
+      suggBox.appendChild(header);
+
+      items.forEach(it => {
+         const item = document.createElement('div');
+         item.className = 'list-group-item list-group-item-action py-2';
+         
+         const href = studentsShowUrlTemplate.replace('__ENR__', encodeURIComponent(it.enrollment_no));
+
+         item.innerHTML = `
+            <div class="row align-items-center">
+              <div class="col-8">
+                <div class="fw-bold text-dark small">${it.name}</div>
+                <div class="small text-muted" style="font-size:0.75rem;">${it.enrollment_no} • ${it.program_name || ''} Sem ${it.semester}</div>
+              </div>
+              <div class="col-4 text-end">
+                <a href="${href}" class="btn btn-xs btn-primary rounded-pill px-3 py-1" style="font-size:0.8rem;">
+                  View Profile
+                </a>
+              </div>
+            </div>
+         `;
+         suggBox.appendChild(item);
       });
-      const qEnc = encodeURIComponent(query || '');
-      const pidEnc = encodeURIComponent(pid || '');
-      const semEnc = encodeURIComponent(sem || '');
-      const medEnc = encodeURIComponent(med || '');
-      const viewAll = `
-        <a class=\"list-group-item list-group-item-action text-center\" href=\"{{ url_for('main.students') }}?program_id=${pidEnc}&semester=${semEnc}&name=${qEnc}${med ? `&medium=${medEnc}` : ''}\">\n          View all matches in Students list\n        </a>\n      `;
-      suggBox.innerHTML = rows.join('') + viewAll;
+      
+      if (!isServerResult) {
+          const footer = document.createElement('div');
+          footer.className = 'list-group-item list-group-item-action text-center text-primary small py-2';
+          footer.style.cursor = 'pointer';
+          footer.innerHTML = '<i class="bi bi-cloud-download me-1"></i> Not here? Search entire server';
+          footer.onclick = () => fetchServerSearch(searchInput.value);
+          suggBox.appendChild(footer);
+      }
+      
       suggBox.style.display = 'block';
     }
 
-    searchInput.addEventListener('input', function(){
-      const q = (searchInput.value || '').trim();
-      const pid = programSel.value || '';
-      const sem = semesterSel.value || '';
-      const med = mediumSel ? (mediumSel.value || '') : '';
-      if (!pid || !sem) {
-        gateSearch();
-        return;
-      }
+    // 4. Event Listeners
+    searchInput.addEventListener('input', function() {
+      const q = (this.value || '').trim();
       if (debounceTimer) clearTimeout(debounceTimer);
+      
       if (q.length < 2) {
         suggBox.style.display = 'none';
-        suggBox.innerHTML = '';
         return;
       }
-      // Show loading state while fetching
-      suggBox.innerHTML = '<div class="list-group-item text-muted">Loading…</div>';
-      suggBox.style.display = 'block';
-      debounceTimer = setTimeout(async () => {
-        try {
-          const url = new URL("{{ url_for('main.api_students_search') }}", window.location.origin);
-          url.searchParams.set('q', q);
-          url.searchParams.set('program_id', pid);
-          url.searchParams.set('semester', sem);
-          if (isMediumProgram(pid) && med && med !== 'all') { url.searchParams.set('medium', med); }
-          const resp = await fetch(url.toString());
-          const data = await resp.json();
-          renderSuggestions((data && data.items) || [], q, pid, sem, (isMediumProgram(pid) ? med : ''));
-        } catch (e) {
-          suggBox.style.display = 'none';
-          suggBox.innerHTML = '';
-        }
-      }, 250);
+      
+      debounceTimer = setTimeout(() => performSearch(q), 300);
     });
-    document.addEventListener('click', function(evt){
-      if (!suggBox.contains(evt.target) && evt.target !== searchInput) {
+    
+    searchInput.addEventListener('keydown', function(e) {
+       if (e.key === 'Enter') {
+           e.preventDefault();
+           performSearch(this.value, true);
+       }
+    });
+    
+    forceBtn.addEventListener('click', () => performSearch(searchInput.value, true));
+
+    document.addEventListener('click', function(ev){
+      if (!suggBox.contains(ev.target) && ev.target !== searchInput && ev.target !== forceBtn) {
         suggBox.style.display = 'none';
       }
     });
+
   })();
 </script>
 {% endblock %}

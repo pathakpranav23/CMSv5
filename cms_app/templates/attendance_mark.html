@@ -48,7 +48,7 @@
         <label class="form-label">Subject</label>
         <select name="subject_id" class="form-select" id="markSubject" required>
           <option value="">Select subject…</option>
-          {% for opt in options %}
+          {% for opt in unique_subjects %}
             <option value="{{ opt.subject_id }}" data-semester="{{ opt.semester }}" {% if selected.subject_id == opt.subject_id %}selected{% endif %}>{{ opt.subject_name }} (Sem {{ opt.semester }})</option>
           {% endfor %}
         </select>

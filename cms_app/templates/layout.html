@@ -48,6 +48,7 @@
           {% endif %}
           {% if (current_user.role|lower) in ['admin','principal'] %}
             <li><a href="{{ url_for('main.programs_list') }}"><span class="module-icon"><i class="bi bi-collection"></i></span><span class="label">{{ t('Programs') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.module_analytics') }}"><span class="module-icon"><i class="bi bi-bar-chart-line-fill text-warning"></i></span><span class="label">{{ t('Analytics') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.module_admin') }}"><span class="module-icon"><i class="bi bi-sliders"></i></span><span class="label">{{ t('Admin Module') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.reports_hub') }}"><span class="module-icon"><i class="bi bi-graph-up"></i></span><span class="label">{{ t('Reports') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.documents_index') }}"><span class="module-icon"><i class="bi bi-file-earmark-text"></i></span><span class="label">{{ t('Documents') }}</span></a><br class="nav-break"></li>
