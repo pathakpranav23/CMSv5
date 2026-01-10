@@ -12143,7 +12143,7 @@ def admin_seed_attendance_mock():
 
 @main_bp.route("/analytics")
 @login_required
-@role_required("admin", "principal")
+@role_required("admin")
 def module_analytics():
     try:
         return module_analytics_impl()
@@ -12155,11 +12155,12 @@ def module_analytics_impl():
     from ..models import Faculty, Attendance, Subject, Division, Program, CourseAssignment
     from datetime import datetime, date, timedelta
     from collections import defaultdict
-    from sqlalchemy import and_
+    from sqlalchemy import and_, func
     
-    role = (getattr(current_user, "role", "") or "").strip().lower()
-    user_pid = int(getattr(current_user, "program_id_fk", 0) or 0)
-    
+    # 0. Global Filters
+    selected_pid = request.args.get("program_id", type=int)
+    all_programs = Program.query.order_by(Program.program_name).all()
+
     # 1. Daily Logs (Today)
     today = date.today()
     q_daily = db.session.query(
@@ -12183,8 +12184,8 @@ def module_analytics_impl():
      .filter(Attendance.date_marked == today)\
      .order_by(Attendance.period_no.asc())
      
-    if role == "principal" and user_pid:
-        q_daily = q_daily.filter(Program.program_id == user_pid)
+    if selected_pid:
+        q_daily = q_daily.filter(Program.program_id == selected_pid)
         
     daily_rows = q_daily.all()
     
@@ -12253,8 +12254,8 @@ def module_analytics_impl():
      .filter(Attendance.date_marked >= start_week)\
      .filter(Attendance.date_marked <= end_week)
      
-    if role == "principal" and user_pid:
-        q_week_agg = q_week_agg.filter(Division.program_id_fk == user_pid)
+    if selected_pid:
+        q_week_agg = q_week_agg.filter(Division.program_id_fk == selected_pid)
 
     q_week_agg = q_week_agg.group_by(
         Faculty.full_name,
@@ -12265,6 +12266,38 @@ def module_analytics_impl():
     )
     
     week_lectures = q_week_agg.all()
+
+    # World Class: Program Breakdown Stats (Admin Only)
+    program_stats = []
+    if not selected_pid:
+        # Calculate lectures today per program
+        prog_counts = db.session.query(
+            Program.program_name, 
+            func.count(Attendance.attendance_id)
+        ).join(Division, Attendance.division_id_fk == Division.division_id)\
+         .join(Program, Division.program_id_fk == Program.program_id)\
+         .filter(Attendance.date_marked == today)\
+         .group_by(Program.program_name).all()
+        
+        # Convert to list of dicts
+        # Note: This counts student attendance records. To count *lectures*, we need distinct (subject, division, period)
+        # For simplicity in this "pulse" view, let's count unique lectures
+        
+        q_prog_lectures = db.session.query(
+            Program.program_name,
+            func.count(func.distinct(Attendance.subject_id_fk)) # Approximate unique lectures
+        ).join(Division, Attendance.division_id_fk == Division.division_id)\
+         .join(Program, Division.program_id_fk == Program.program_id)\
+         .filter(Attendance.date_marked == today)\
+         .group_by(Program.program_name).all()
+         
+        # Better: Reuse the daily_rows logic to count
+        prog_map = defaultdict(int)
+        for log in daily_logs:
+            prog_map[log["program_name"]] += 1
+            
+        program_stats = [{"name": k, "count": v} for k, v in prog_map.items()]
+        program_stats.sort(key=lambda x: x["count"], reverse=True)
 
     faculty_map = defaultdict(lambda: {"total": 0, "days": defaultdict(int)})
     
@@ -12310,7 +12343,10 @@ def module_analytics_impl():
                            weekly_grid=weekly_grid,
                            performance_alerts=performance_alerts,
                            today_date=today.strftime("%d %b %Y"),
-                           lecture_stats={"total_today": len(daily_logs)})
+                           lecture_stats={"total_today": len(daily_logs)},
+                           all_programs=all_programs,
+                           selected_pid=selected_pid,
+                           program_stats=program_stats)
 
 
 @main_bp.route("/analytics/notify", methods=["POST"])
