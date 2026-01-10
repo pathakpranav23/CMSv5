@@ -31,29 +31,45 @@
           {% endif %}
         </a>
       </div>
-      <ul class="nav">
+      <ul class="nav d-block">
         {% if current_user.is_authenticated %}
-          <li><a href="{{ url_for('main.dashboard') }}"><span class="module-icon"><i class="bi bi-speedometer text-primary"></i></span><span class="label">{{ t('Dashboard') }}</span></a><br class="nav-break"></li>
-          <li><a href="{{ url_for('main.module_announcements') }}"><span class="module-icon"><i class="bi bi-megaphone text-info"></i></span><span class="label">{{ t('Announcements') }}</span></a><br class="nav-break"></li>
-          <li><a href="{{ url_for('main.module_attendance') }}"><span class="module-icon"><i class="bi bi-calendar-check text-success"></i></span><span class="label">{{ t('Attendance') }}</span></a><br class="nav-break"></li>
-          <li><a href="{{ url_for('main.module_students') }}"><span class="module-icon"><i class="bi bi-people text-success"></i></span><span class="label">{{ t('Students') }}</span></a><br class="nav-break"></li>
-          <li><a href="{{ url_for('main.module_subjects') }}"><span class="module-icon"><i class="bi bi-journal-bookmark text-success"></i></span><span class="label">{{ t('Subjects') }}</span></a><br class="nav-break"></li>
-          <li><a href="{{ url_for('main.materials_hub') }}"><span class="module-icon"><i class="bi bi-folder2 text-info"></i></span><span class="label">{{ t('Materials') }}</span></a><br class="nav-break"></li>
-          <li><a href="{{ url_for('main.module_faculty') }}"><span class="module-icon"><i class="bi bi-person-badge text-success"></i></span><span class="label">{{ t('Staff') }}</span></a><br class="nav-break"></li>
+          
+          <!-- Group 1: Core & Academics -->
+          <div class="nav-group mb-2 pb-2 border-bottom border-secondary border-opacity-10">
+            <div class="small fw-bold text-uppercase text-muted px-3 mb-1" style="font-size: 0.7rem; letter-spacing: 0.5px;">Academics</div>
+            <li><a href="{{ url_for('main.dashboard') }}"><span class="module-icon"><i class="bi bi-speedometer text-primary"></i></span><span class="label">{{ t('Dashboard') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.module_announcements') }}"><span class="module-icon"><i class="bi bi-megaphone text-info"></i></span><span class="label">{{ t('Announcements') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.module_attendance') }}"><span class="module-icon"><i class="bi bi-calendar-check text-success"></i></span><span class="label">{{ t('Attendance') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.module_students') }}"><span class="module-icon"><i class="bi bi-people text-success"></i></span><span class="label">{{ t('Students') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.module_subjects') }}"><span class="module-icon"><i class="bi bi-journal-bookmark text-success"></i></span><span class="label">{{ t('Subjects') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.materials_hub') }}"><span class="module-icon"><i class="bi bi-folder2 text-info"></i></span><span class="label">{{ t('Materials') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.module_faculty') }}"><span class="module-icon"><i class="bi bi-person-badge text-success"></i></span><span class="label">{{ t('Staff') }}</span></a><br class="nav-break"></li>
+          </div>
+
+          <!-- Group 2: Administration -->
           {% if (current_user.role|lower) in ['admin','principal','clerk'] %}
+          <div class="nav-group mb-2 pb-2 border-bottom border-secondary border-opacity-10">
+            <div class="small fw-bold text-uppercase text-muted px-3 mb-1" style="font-size: 0.7rem; letter-spacing: 0.5px;">Administration</div>
             <li><a href="{{ url_for('main.module_divisions') }}"><span class="module-icon"><i class="bi bi-diagram-3 text-secondary"></i></span><span class="label">{{ t('Divisions') }}</span></a><br class="nav-break"></li>
-          {% endif %}
-          {% if (current_user.role|lower) in ['admin','principal','clerk'] %}
             {% if not fees_disabled %}<li><a href="{{ url_for('main.module_fees') }}"><span class="module-icon"><i class="bi bi-cash-coin text-warning"></i></span><span class="label">{{ t('Fees Module') }}</span></a><br class="nav-break"></li>{% endif %}
+            {% if (current_user.role|lower) in ['admin','principal'] %}
+              <li><a href="{{ url_for('main.programs_list') }}"><span class="module-icon"><i class="bi bi-collection text-primary"></i></span><span class="label">{{ t('Programs') }}</span></a><br class="nav-break"></li>
+              <li><a href="{{ url_for('main.module_analytics') }}"><span class="module-icon"><i class="bi bi-bar-chart-line-fill text-warning"></i></span><span class="label">{{ t('Analytics') }}</span></a><br class="nav-break"></li>
+              <li><a href="{{ url_for('main.reports_hub') }}"><span class="module-icon"><i class="bi bi-graph-up text-primary"></i></span><span class="label">{{ t('Reports') }}</span></a><br class="nav-break"></li>
+            {% endif %}
+          </div>
           {% endif %}
+
+          <!-- Group 3: System -->
           {% if (current_user.role|lower) in ['admin','principal'] %}
-            <li><a href="{{ url_for('main.programs_list') }}"><span class="module-icon"><i class="bi bi-collection text-primary"></i></span><span class="label">{{ t('Programs') }}</span></a><br class="nav-break"></li>
-            <li><a href="{{ url_for('main.module_analytics') }}"><span class="module-icon"><i class="bi bi-bar-chart-line-fill text-warning"></i></span><span class="label">{{ t('Analytics') }}</span></a><br class="nav-break"></li>
+          <div class="nav-group">
+            <div class="small fw-bold text-uppercase text-muted px-3 mb-1" style="font-size: 0.7rem; letter-spacing: 0.5px;">System</div>
             <li><a href="{{ url_for('main.module_admin') }}"><span class="module-icon"><i class="bi bi-sliders text-danger"></i></span><span class="label">{{ t('Admin Module') }}</span></a><br class="nav-break"></li>
-            <li><a href="{{ url_for('main.reports_hub') }}"><span class="module-icon"><i class="bi bi-graph-up text-primary"></i></span><span class="label">{{ t('Reports') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.documents_index') }}"><span class="module-icon"><i class="bi bi-file-earmark-text text-secondary"></i></span><span class="label">{{ t('Documents') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.users_list') }}"><span class="module-icon"><i class="bi bi-people text-danger"></i></span><span class="label">{{ t('Manage Accounts') }}</span></a><br class="nav-break"></li>
+          </div>
           {% endif %}
+
         {% else %}
           <li><a href="{{ url_for('main.notice_board') }}"><span class="module-icon"><i class="bi bi-bell"></i></span><span class="label">{{ t('Notice Board') }}</span></a><br class="nav-break"></li>
           <li><a href="{{ url_for('main.notice_archive') }}"><span class="module-icon"><i class="bi bi-archive"></i></span><span class="label">{{ t('Archive') }}</span></a><br class="nav-break"></li>
