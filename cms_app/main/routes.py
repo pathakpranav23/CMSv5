@@ -12160,17 +12160,17 @@ def module_analytics_impl():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     user_pid = int(getattr(current_user, "program_id_fk", 0) or 0)
     
-        # 1. Daily Logs (Today)
-        today = date.today()
-        q_daily = db.session.query(
-            Attendance, 
-            Faculty.full_name, 
-            Faculty.designation, 
-            Subject.subject_name,
-            Division.division_code,
-            Division.semester,
-            Program.program_name,
-            Program.program_id
+    # 1. Daily Logs (Today)
+    today = date.today()
+    q_daily = db.session.query(
+        Attendance, 
+        Faculty.full_name, 
+        Faculty.designation, 
+        Subject.subject_name,
+        Division.division_code,
+        Division.semester,
+        Program.program_name,
+        Program.program_id
     ).join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
      .join(Division, Attendance.division_id_fk == Division.division_id)\
      .join(Program, Division.program_id_fk == Program.program_id)\
@@ -12325,12 +12325,12 @@ def analytics_notify():
     faculty = Faculty.query.get_or_404(fid)
     
     if not faculty.email:
-        flash(f"Cannot send notification: {faculty.faculty_name} has no email address.", "danger")
+        flash(f"Cannot send notification: {faculty.full_name} has no email address.", "danger")
         return redirect(url_for("main.module_analytics"))
         
     if notif_type == "warning":
         subject = "Action Required: Academic Delivery Review"
-        body = f"""Dear Prof. {faculty.faculty_name},
+        body = f"""Dear Prof. {faculty.full_name},
 
 This is an automated alert regarding your lecture completion rate for this week.
 It appears to be below the expected target.
@@ -12340,18 +12340,18 @@ If you are facing any issues, please contact the Principal's office.
 
 Regards,
 Principal's Office"""
-        flash(f"Warning sent to {faculty.faculty_name}.", "warning")
+        flash(f"Warning sent to {faculty.full_name}.", "warning")
         
     elif notif_type == "appreciation":
         subject = "Appreciation: Excellent Academic Performance"
-        body = f"""Dear Prof. {faculty.faculty_name},
+        body = f"""Dear Prof. {faculty.full_name},
 
 We noticed your excellent lecture delivery and student engagement this week.
 Thank you for your dedication and hard work. Keep it up!
 
 Regards,
 Principal's Office"""
-        flash(f"Appreciation sent to {faculty.faculty_name}!", "success")
+        flash(f"Appreciation sent to {faculty.full_name}!", "success")
     
     # Fire and forget email
     try:
