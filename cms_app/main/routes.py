@@ -2738,6 +2738,65 @@ def dashboard():
             except Exception:
                 return {}
 
+        def _faculty_attendance_heatmap(faculty_user_id: int):
+            try:
+                if not faculty_user_id:
+                    return {}
+                cutoff_dt = now - timedelta(days=180)
+                cutoff = cutoff_dt.date() if hasattr(cutoff_dt, "date") else cutoff_dt
+
+                try:
+                    assignments = (
+                        CourseAssignment.query
+                        .with_entities(CourseAssignment.subject_id_fk, CourseAssignment.division_id_fk)
+                        .filter(CourseAssignment.faculty_id_fk == faculty_user_id)
+                        .filter(CourseAssignment.is_active == True)
+                        .all()
+                    )
+                except Exception:
+                    assignments = []
+
+                subject_ids = sorted({sid for (sid, _) in assignments if sid})
+                if not subject_ids:
+                    return {}
+                division_ids = sorted({did for (_, did) in assignments if did})
+
+                q = (
+                    db.session.query(
+                        Attendance.date_marked,
+                        Attendance.status,
+                        func.count(Attendance.attendance_id),
+                    )
+                    .filter(Attendance.subject_id_fk.in_(subject_ids))
+                    .filter(Attendance.date_marked >= cutoff)
+                    .group_by(Attendance.date_marked, Attendance.status)
+                )
+                if division_ids:
+                    q = q.filter(Attendance.division_id_fk.in_(division_ids))
+
+                rows = q.all()
+                by_date = {}
+                for dt, status, cnt in rows:
+                    if not dt:
+                        continue
+                    d = by_date.setdefault(dt, {"P": 0, "A": 0, "L": 0})
+                    s = (status or "").upper()
+                    if s in d:
+                        d[s] += int(cnt or 0)
+
+                data = {}
+                for dt, counts in by_date.items():
+                    total = int(counts.get("P", 0)) + int(counts.get("A", 0)) + int(counts.get("L", 0))
+                    if not total:
+                        continue
+                    absent = int(counts.get("A", 0))
+                    absent_pct = int(round((absent * 100.0) / total))
+                    ts = int(time.mktime(dt.timetuple()))
+                    data[str(ts)] = max(0, min(100, absent_pct))
+                return data
+            except Exception:
+                return {}
+
         role_lower = (role or '').strip().lower()
         if role_lower == 'admin':
             # Build base program-level charts; if chart_program_id is selected, filter to that program
@@ -2804,6 +2863,12 @@ def dashboard():
             if role_lower == 'principal':
                 charts["subject_results"] = _subject_results_for_program(pid_scope, chart_semester, chart_subject_id) if pid_scope else {"labels": ["Sem 1: English","Sem 1: Maths"], "data": [7.8,6.9]}
                 charts["attendance_heatmap"] = _attendance_heatmap(pid_scope) if pid_scope else {}
+            elif role_lower == "faculty":
+                try:
+                    faculty_user_id = int(getattr(current_user, "user_id", None) or 0)
+                except Exception:
+                    faculty_user_id = 0
+                charts["faculty_attendance_heatmap"] = _faculty_attendance_heatmap(faculty_user_id)
     except Exception:
         # Fallback demo when any unexpected error occurs
         charts = {
@@ -2863,6 +2928,7 @@ def dashboard():
         selected_program=selected_program,
         is_admin=(role == "admin"),
         is_principal=(role == "principal"),
+        is_faculty=(role == "faculty"),
         program_list=program_list,
         subject_list=subject_list,
         division_list=division_list,

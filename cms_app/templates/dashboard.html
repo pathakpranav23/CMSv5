@@ -209,7 +209,22 @@
             </div>
             {% endif %}
           </div>
-        {% endif %}
+    {% elif (current_user.role|lower) == 'faculty' %}
+      <div class="row row-cols-1 row-cols-md-2 g-3">
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Low Attendance Heatmap (Last 6 Months)') }}</div></div>
+            <div class="card-body">
+              <div id="cal-heatmap-faculty" style="overflow-x: auto;"></div>
+              <div class="d-flex justify-content-between small text-muted mt-2">
+                <span>Less</span>
+                <span>More</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
 
     
   </div>
@@ -429,7 +444,7 @@
   <!-- Post-metrics cards removed to avoid duplication -->
   
 <script id="chartsData" type="application/json">{{ charts | tojson | safe }}</script>
-<script id="chartsConfig" type="application/json">{{ {"isAdmin": is_admin, "isPrincipal": is_principal} | tojson | safe }}</script>
+<script id="chartsConfig" type="application/json">{{ {"isAdmin": is_admin, "isPrincipal": is_principal, "isFaculty": is_faculty} | tojson | safe }}</script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://unpkg.com/cal-heatmap/dist/cal-heatmap.min.js"></script>
@@ -440,7 +455,8 @@
     const cfg = JSON.parse(document.getElementById('chartsConfig').textContent);
     const isAdmin = !!cfg.isAdmin;
     const isPrincipal = !!cfg.isPrincipal;
-    
+    const isFaculty = !!cfg.isFaculty;
+     
     // Render Heatmap for Principal
     if (isPrincipal && charts && charts.attendance_heatmap) {
         const cal = new CalHeatmap();
@@ -459,6 +475,27 @@
             range: 6,
             data: { source: data, x: 'date', y: 'value' },
             scale: { color: { type: 'linear', range: ['#e6f2ff', '#004085'], domain: [0, 100] } },
+            theme: "light"
+        });
+    }
+
+    // Render Heatmap for Faculty (absent % across assigned classes)
+    if (isFaculty && charts && charts.faculty_attendance_heatmap) {
+        const cal = new CalHeatmap();
+        const rawData = charts.faculty_attendance_heatmap;
+        const data = [];
+        for (const [ts, val] of Object.entries(rawData)) {
+            data.push({ date: parseInt(ts) * 1000, value: val });
+        }
+        
+        cal.paint({
+            itemSelector: "#cal-heatmap-faculty",
+            domain: { type: "month" },
+            subDomain: { type: "day" },
+            date: { start: new Date(new Date().setMonth(new Date().getMonth() - 5)) },
+            range: 6,
+            data: { source: data, x: 'date', y: 'value' },
+            scale: { color: { type: 'linear', range: ['#f8d7da', '#842029'], domain: [0, 100] } },
             theme: "light"
         });
     }
