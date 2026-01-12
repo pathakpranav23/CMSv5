@@ -210,9 +210,10 @@
             {% endif %}
           </div>
     {% elif (current_user.role|lower) == 'faculty' %}
-      <div class="row row-cols-1 row-cols-md-2 g-3">
-        <div class="col">
-          <div class="card">
+      <div class="row g-3 mb-4">
+        <!-- Low Attendance Heatmap -->
+        <div class="col-md-6">
+          <div class="card h-100">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Low Attendance Heatmap (Last 6 Months)') }}</div></div>
             <div class="card-body">
               <div id="cal-heatmap-faculty" style="overflow-x: auto;"></div>
@@ -220,6 +221,103 @@
                 <span>Less</span>
                 <span>More</span>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- My Active Subjects -->
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-header bg-primary text-white"><div class="card-title mb-0"><i class="bi bi-journal-text me-2"></i>{{ t('My Active Subjects') }}</div></div>
+            <div class="card-body p-0">
+              <ul class="list-group list-group-flush">
+                {% if charts.active_subjects %}
+                  {% for subj in charts.active_subjects %}
+                  <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                      <div class="fw-bold">{{ subj.subject }}</div>
+                      <small class="text-muted">{{ subj.division }}</small>
+                    </div>
+                    <a href="{{ subj.link }}" class="btn btn-sm btn-outline-primary">{{ t('Mark Attendance') }}</a>
+                  </li>
+                  {% endfor %}
+                {% else %}
+                  <li class="list-group-item text-muted text-center py-4">{{ t('No active subjects assigned.') }}</li>
+                {% endif %}
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-4">
+        <!-- At-Risk Students Spotlight -->
+        <div class="col-md-8">
+          <div class="card h-100 border-danger">
+            <div class="card-header bg-danger text-white d-flex justify-content-between align-items-center">
+              <div class="card-title mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i>{{ t('At-Risk Students Spotlight (<75% Attendance)') }}</div>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>{{ t('Student') }}</th>
+                      <th>{{ t('Subject') }}</th>
+                      <th>{{ t('Attendance') }}</th>
+                      <th>{{ t('Action') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% if charts.at_risk_students %}
+                      {% for st in charts.at_risk_students %}
+                      <tr>
+                        <td>
+                          <div class="fw-bold">{{ st.name }}</div>
+                          <small class="text-muted">{{ st.enrollment }}</small>
+                        </td>
+                        <td>{{ st.subject }}</td>
+                        <td>
+                          <div class="progress" style="height: 20px;">
+                            <div class="progress-bar bg-danger" role="progressbar" style="width: {{ st.attendance }}%;" aria-valuenow="{{ st.attendance }}" aria-valuemin="0" aria-valuemax="100">{{ st.attendance }}%</div>
+                          </div>
+                        </td>
+                        <td>
+                          <a href="{{ st.email_link }}" class="btn btn-sm btn-outline-danger"><i class="bi bi-envelope"></i> {{ t('Notify') }}</a>
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    {% else %}
+                      <tr>
+                        <td colspan="4" class="text-center py-4 text-muted">{{ t('No at-risk students found. Great job!') }}</td>
+                      </tr>
+                    {% endif %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Digital Notice Board -->
+        <div class="col-md-4">
+          <div class="card h-100 border-info">
+            <div class="card-header bg-info text-white"><div class="card-title mb-0"><i class="bi bi-broadcast me-2"></i>{{ t('Digital Notice Board') }}</div></div>
+            <div class="card-body p-0">
+              <ul class="list-group list-group-flush">
+                {% if charts.faculty_notices %}
+                  {% for notice in charts.faculty_notices %}
+                  <li class="list-group-item">
+                    <div class="d-flex w-100 justify-content-between">
+                      <h6 class="mb-1 fw-bold text-{{ notice.severity if notice.severity != 'info' else 'dark' }}">{{ notice.title }}</h6>
+                      <small class="text-muted">{{ notice.date }}</small>
+                    </div>
+                  </li>
+                  {% endfor %}
+                {% else %}
+                  <li class="list-group-item text-muted text-center py-4">{{ t('No new notices.') }}</li>
+                {% endif %}
+              </ul>
             </div>
           </div>
         </div>

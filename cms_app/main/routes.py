@@ -2901,6 +2901,129 @@ def dashboard():
                 except Exception:
                     faculty_user_id = 0
                 charts["faculty_attendance_heatmap"] = _faculty_attendance_heatmap(faculty_user_id)
+                
+                # --- Active Subjects (Today's Classes replacement) ---
+                try:
+                    active_assignments = (
+                        CourseAssignment.query
+                        .filter_by(faculty_id_fk=faculty_user_id, is_active=True)
+                        .join(Subject, Subject.subject_id == CourseAssignment.subject_id_fk)
+                        .join(Division, Division.division_id == CourseAssignment.division_id_fk)
+                        .join(Program, Program.program_id == Division.program_id_fk)
+                        .with_entities(
+                            Subject.subject_name,
+                            Division.division_code,
+                            Division.semester,
+                            Program.program_name,
+                            CourseAssignment.subject_id_fk,
+                            CourseAssignment.division_id_fk
+                        )
+                        .all()
+                    )
+                    charts["active_subjects"] = [
+                        {
+                            "subject": r[0],
+                            "division": f"{r[3]} Sem {r[2]} - {r[1]}",
+                            "link": url_for('main.attendance', subject_id=r[4], division_id=r[5])
+                        }
+                        for r in active_assignments
+                    ]
+                except Exception:
+                    charts["active_subjects"] = []
+
+                # --- At-Risk Students (<75% attendance in my subjects) ---
+                try:
+                    cutoff_risk = now - timedelta(days=90)
+                    cutoff_risk_date = cutoff_risk.date() if hasattr(cutoff_risk, 'date') else cutoff_risk
+                    
+                    risk_list = []
+                    # Get assigned subject/division pairs
+                    pairs = (
+                        CourseAssignment.query
+                        .filter_by(faculty_id_fk=faculty_user_id, is_active=True)
+                        .with_entities(CourseAssignment.subject_id_fk, CourseAssignment.division_id_fk)
+                        .all()
+                    )
+                    
+                    for sid, did in pairs:
+                        sub_name = Subject.query.with_entities(Subject.subject_name).filter_by(subject_id=sid).scalar() or "Unknown"
+                        
+                        st_enrollments = (
+                            Student.query
+                            .with_entities(Student.enrollment_no, Student.student_name, Student.surname)
+                            .filter_by(division_id_fk=did)
+                            .all()
+                        )
+                        
+                        att_counts = (
+                            db.session.query(
+                                Attendance.student_id_fk,
+                                Attendance.status,
+                                func.count(Attendance.attendance_id)
+                            )
+                            .filter(Attendance.subject_id_fk == sid)
+                            .filter(Attendance.division_id_fk == did)
+                            .filter(Attendance.date_marked >= cutoff_risk_date)
+                            .group_by(Attendance.student_id_fk, Attendance.status)
+                            .all()
+                        )
+                        
+                        st_stats = {}
+                        for enr, status, cnt in att_counts:
+                            d = st_stats.setdefault(enr, {"total": 0, "absent": 0})
+                            d["total"] += cnt
+                            if (status or "").upper() == "A":
+                                d["absent"] += cnt
+                        
+                        for enr, fname, lname in st_enrollments:
+                            stats = st_stats.get(enr, {"total": 0, "absent": 0})
+                            total = stats["total"]
+                            if total < 5: # Skip if too few classes
+                                continue
+                            
+                            absent_pct = (stats["absent"] / total) * 100
+                            if absent_pct > 25: # > 25% absent means < 75% attendance
+                                attendance_pct = 100 - absent_pct
+                                risk_list.append({
+                                    "name": f"{fname} {lname}",
+                                    "enrollment": enr,
+                                    "subject": sub_name,
+                                    "attendance": int(attendance_pct),
+                                    "email_link": f"mailto:?subject=Low Attendance Warning: {sub_name}&body=Dear Student, your attendance is {int(attendance_pct)}%."
+                                })
+                                if len(risk_list) >= 10: break
+                        if len(risk_list) >= 10: break
+                    
+                    charts["at_risk_students"] = risk_list
+                except Exception:
+                    charts["at_risk_students"] = []
+
+                # --- Faculty Notices ---
+                try:
+                    notices = (
+                        Announcement.query
+                        .filter_by(is_active=True)
+                        .filter(Announcement.start_at <= now)
+                        .filter((Announcement.end_at == None) | (Announcement.end_at >= now))
+                        .order_by(Announcement.start_at.desc())
+                        .limit(5)
+                        .all()
+                    )
+                    final_notices = []
+                    for n in notices:
+                        try:
+                            aud = [a.role for a in n.audiences]
+                        except Exception:
+                            aud = []
+                        if not aud or 'faculty' in aud:
+                            final_notices.append({
+                                "title": n.title,
+                                "date": n.start_at.strftime("%d %b"),
+                                "severity": n.severity
+                            })
+                    charts["faculty_notices"] = final_notices
+                except Exception:
+                    charts["faculty_notices"] = []
     except Exception:
         # Fallback demo when any unexpected error occurs
         charts = {
