@@ -2132,7 +2132,8 @@ def logout():
 @login_required
 def dashboard():
     # Role-aware, program-scoped dashboard (defaults to BCA for Principal)
-    from ..models import Student, Notification
+    from ..models import Student, Notification, CourseAssignment, Attendance
+    from sqlalchemy import func, case, and_
     role = (getattr(current_user, "role", None) or (request.args.get("role") or "principal")).strip().lower()
     user_id_raw = str(getattr(current_user, "user_id", "")) or (request.args.get("user_id") or "")
     program_id_raw = str(getattr(current_user, "program_id_fk", "")) or (request.args.get("program_id") or "")
@@ -2699,55 +2700,113 @@ def dashboard():
             return {"labels": labels, "data": data}
 
         role_lower = (role or '').strip().lower()
-        if role_lower == 'admin':
-            # Build base program-level charts; if chart_program_id is selected, filter to that program
-            def _students_for_program(program_id: int):
-                try:
-                    return Student.query.filter_by(program_id_fk=program_id).count()
-                except Exception:
-                    return 0
 
-            def _fees_for_program(program_id: int):
-                # Sum fees for students in selected program
-                try:
-                    st_rows = Student.query.with_entities(Student.enrollment_no).filter_by(program_id_fk=program_id).all()
-                except Exception:
-                    st_rows = []
-                enr_set = {enr for (enr,) in st_rows}
-                total = 0.0
-                try:
-                    fee_rows = FeesRecord.query.with_entities(FeesRecord.student_id_fk, FeesRecord.amount_paid).all()
-                except Exception:
-                    fee_rows = []
-                for enr, amt in fee_rows:
-                    if enr in enr_set:
-                        try:
-                            total += float(amt or 0.0)
-                        except Exception:
-                            pass
-                return round(total, 2)
+    # FACULTY PULSE (Classroom Pulse)
+    faculty_pulse = None
+    if role_lower == 'faculty':
+        faculty_pulse = {"progress": [], "risk": []}
+        try:
+            # 1. My Subjects & Syllabus Progress
+            my_assignments = CourseAssignment.query.filter_by(faculty_id_fk=current_user.user_id, is_active=True).all()
+            subject_ids = []
+            
+            for assign in my_assignments:
+                subject = assign.subject
+                division = assign.division
+                
+                # Get latest topic
+                last_lec = Attendance.query.filter_by(
+                    subject_id_fk=subject.subject_id,
+                    division_id_fk=division.division_id
+                ).filter(Attendance.topic != None).order_by(Attendance.date_marked.desc()).first()
+                
+                faculty_pulse["progress"].append({
+                    "subject": subject.subject_name,
+                    "division": division.division_code,
+                    "last_topic": last_lec.topic if last_lec else "Not Started",
+                    "last_date": last_lec.date_marked.strftime("%d %b") if last_lec else "-"
+                })
+                subject_ids.append(subject.subject_id)
+            
+            # 2. At-Risk Students in MY classes
+            if subject_ids:
+                q_my_risk = db.session.query(
+                    Student.enrollment_no,
+                    Student.full_name,
+                    Subject.subject_name,
+                    func.count(Attendance.attendance_id).label("total"),
+                    func.sum(case((Attendance.status == 'P', 1), else_=0)).label("present")
+                ).join(Student, Attendance.student_id_fk == Student.enrollment_no)\
+                 .join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
+                 .filter(Attendance.subject_id_fk.in_(subject_ids))\
+                 .group_by(Student.enrollment_no, Subject.subject_name)
+                 
+                rows = q_my_risk.all()
+                for enr, name, sub, total, present in rows:
+                    if total > 5:
+                        pct = (present or 0) / total
+                        if pct < 0.55:
+                            faculty_pulse["risk"].append({
+                                "name": name,
+                                "subject": sub,
+                                "pct": round(pct * 100, 1),
+                                "absent": total - (present or 0)
+                            })
+                
+                faculty_pulse["risk"].sort(key=lambda x: x["pct"])
+                faculty_pulse["risk"] = faculty_pulse["risk"][:20]
+        except Exception as e:
+            print(f"Faculty Pulse Error: {e}")
 
-            def _staff_for_program(program_id: int):
-                try:
-                    return Faculty.query.filter_by(program_id_fk=program_id).count()
-                except Exception:
-                    return 0
+    if role_lower == 'admin':
+        # Build base program-level charts; if chart_program_id is selected, filter to that program
+        def _students_for_program(program_id: int):
+            try:
+                return Student.query.filter_by(program_id_fk=program_id).count()
+            except Exception:
+                return 0
 
-            if chart_program_id:
-                charts = {
-                    "students_by_program": [{"label": prog_map.get(chart_program_id), "value": _students_for_program(chart_program_id)}],
-                    "fees_by_program": [{"label": prog_map.get(chart_program_id), "value": _fees_for_program(chart_program_id)}],
-                    "staff_by_program": [{"label": prog_map.get(chart_program_id), "value": _staff_for_program(chart_program_id)}],
-                    "income_vs_expenses": _income_vs_expenses_annual(),
-                }
-            else:
-                charts = {
-                    "students_by_program": _students_by_program(),
-                    "fees_by_program": _fees_by_program(),
-                    "staff_by_program": _staff_by_program(),
-                    "income_vs_expenses": _income_vs_expenses_annual(),
-                }
-            charts_semester_scope = None
+        def _fees_for_program(program_id: int):
+            # Sum fees for students in selected program
+            try:
+                st_rows = Student.query.with_entities(Student.enrollment_no).filter_by(program_id_fk=program_id).all()
+            except Exception:
+                st_rows = []
+            enr_set = {enr for (enr,) in st_rows}
+            total = 0.0
+            try:
+                fee_rows = FeesRecord.query.with_entities(FeesRecord.student_id_fk, FeesRecord.amount_paid).all()
+            except Exception:
+                fee_rows = []
+            for enr, amt in fee_rows:
+                if enr in enr_set:
+                    try:
+                        total += float(amt or 0.0)
+                    except Exception:
+                        pass
+            return round(total, 2)
+
+        def _staff_for_program(program_id: int):
+            try:
+                return Faculty.query.filter_by(program_id_fk=program_id).count()
+            except Exception:
+                return 0
+
+        if chart_program_id:
+            charts = {
+                "students_by_program": [{"label": prog_map.get(chart_program_id), "value": _students_for_program(chart_program_id)}],
+                "fees_by_program": [{"label": prog_map.get(chart_program_id), "value": _fees_for_program(chart_program_id)}],
+                "staff_by_program": [{"label": prog_map.get(chart_program_id), "value": _staff_for_program(chart_program_id)}],
+                "income_vs_expenses": _income_vs_expenses_annual(),
+            }
+        else:
+            charts = {
+                "students_by_program": _students_by_program(),
+                "fees_by_program": _fees_by_program(),
+                "staff_by_program": _staff_by_program(),
+                "income_vs_expenses": _income_vs_expenses_annual(),
+            }
+        charts_semester_scope = None
         else:
             pid_scope = selected_program.program_id if selected_program else None
             charts = {
@@ -2835,6 +2894,7 @@ def dashboard():
         notifications_vm=notifications_vm,
         charts=charts,
         charts_semester_scope=(charts_semester_scope if (role_lower == 'admin') else None),
+        faculty_pulse=faculty_pulse,
     )
 
 @main_bp.route("/announcements")
@@ -12155,10 +12215,10 @@ def module_analytics():
         return f"<h1>Analytics Error</h1><pre>{traceback.format_exc()}</pre>"
 
 def module_analytics_impl():
-    from ..models import Faculty, Attendance, Subject, Division, Program, CourseAssignment
+    from ..models import Faculty, Attendance, Subject, Division, Program, CourseAssignment, Student
     from datetime import datetime, date, timedelta
     from collections import defaultdict
-    from sqlalchemy import and_, func
+    from sqlalchemy import and_, func, case
     
     # 0. Global Filters
     selected_pid = request.args.get("program_id", type=int)
@@ -12341,6 +12401,81 @@ def module_analytics_impl():
                  "target": 12
              })
              
+    # 4. Course Coverage Heatmap (Principal)
+    # Get latest topic per subject/division
+    q_topics = db.session.query(
+        Subject.subject_name,
+        Division.division_code,
+        Faculty.full_name,
+        Attendance.topic,
+        Attendance.date_marked
+    ).join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
+     .join(Division, Attendance.division_id_fk == Division.division_id)\
+     .outerjoin(CourseAssignment, and_(
+         CourseAssignment.subject_id_fk == Subject.subject_id,
+         CourseAssignment.division_id_fk == Division.division_id,
+         CourseAssignment.is_active == True
+     ))\
+     .outerjoin(Faculty, Faculty.user_id_fk == CourseAssignment.faculty_id_fk)\
+     .filter(Attendance.topic != None)\
+     .filter(Attendance.topic != "")\
+     .order_by(Attendance.date_marked.desc())
+    
+    if selected_pid:
+        q_topics = q_topics.filter(Division.program_id_fk == selected_pid)
+
+    topics_raw = q_topics.limit(500).all() 
+    
+    coverage_data = {} 
+    for sub, div, fac, top, dt in topics_raw:
+        key = (sub, div)
+        if key not in coverage_data:
+            coverage_data[key] = {
+                "subject": sub,
+                "division": div,
+                "faculty": fac or "Unknown",
+                "last_topic": top,
+                "last_date": dt.strftime("%d %b")
+            }
+    syllabus_heatmap = list(coverage_data.values())
+
+    # 5. Student Risk Radar (Attendance < 55%)
+    q_risk = db.session.query(
+        Student.enrollment_no,
+        Student.full_name,
+        Student.roll_no,
+        Division.division_code,
+        func.count(Attendance.attendance_id).label("total"),
+        func.sum(case((Attendance.status == 'P', 1), else_=0)).label("present")
+    ).join(Student, Attendance.student_id_fk == Student.enrollment_no)\
+     .join(Division, Student.division_id_fk == Division.division_id)\
+     .group_by(Student.enrollment_no)
+    
+    if selected_pid:
+        q_risk = q_risk.filter(Division.program_id_fk == selected_pid)
+        
+    risk_students = []
+    try:
+        rows = q_risk.all()
+        for enr, name, roll, div, total, present in rows:
+            if total > 10: 
+                pct = (present or 0) / total
+                if pct < 0.55:
+                    risk_students.append({
+                        "name": name,
+                        "enrollment": enr,
+                        "roll": roll,
+                        "division": div,
+                        "attendance_pct": round(pct * 100, 1),
+                        "total_lectures": total,
+                        "absent_count": total - (present or 0)
+                    })
+    except Exception as e:
+        print(f"Risk Radar Error: {e}")
+        
+    risk_students.sort(key=lambda x: x["attendance_pct"])
+    risk_students = risk_students[:50] 
+
     return render_template("module_analytics.html", 
                            daily_logs=daily_logs, 
                            weekly_grid=weekly_grid,
@@ -12350,7 +12485,9 @@ def module_analytics_impl():
                            all_programs=all_programs,
                            selected_pid=selected_pid,
                            program_stats=program_stats,
-                           today_date_iso=today.strftime("%Y-%m"))
+                           today_date_iso=today.strftime("%Y-%m"),
+                           syllabus_heatmap=syllabus_heatmap,
+                           risk_students=risk_students)
 
 @main_bp.route("/analytics/report/monthly")
 @login_required
