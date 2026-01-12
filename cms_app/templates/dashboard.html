@@ -482,7 +482,16 @@
     // Render Heatmap for Faculty (absent % across assigned classes)
     if (isFaculty && charts && charts.faculty_attendance_heatmap) {
         const cal = new CalHeatmap();
-        const rawData = charts.faculty_attendance_heatmap;
+        // Backend now returns { heatmap: {...}, details: {...} }
+        // We need to handle both legacy format (direct dict) and new format
+        let rawData = charts.faculty_attendance_heatmap;
+        let details = {};
+        
+        if (rawData.heatmap) {
+            details = rawData.details || {};
+            rawData = rawData.heatmap;
+        }
+
         const data = [];
         for (const [ts, val] of Object.entries(rawData)) {
             data.push({ date: parseInt(ts) * 1000, value: val });
@@ -497,7 +506,19 @@
             data: { source: data, x: 'date', y: 'value' },
             scale: { color: { type: 'linear', range: ['#f8d7da', '#842029'], domain: [0, 100] } },
             theme: "light"
-        });
+        }, [
+            [
+                "Tooltip",
+                {
+                    text: function (date, value, dayRect) {
+                        if (value === null) return "";
+                        const ts = Math.floor(date.getTime() / 1000);
+                        const detailText = details[ts] ? `\n${details[ts]}` : "";
+                        return `${value}% Absent${detailText}`;
+                    },
+                },
+            ],
+        ]);
     }
 
     // Admin charts

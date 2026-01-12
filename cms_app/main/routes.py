@@ -2741,7 +2741,7 @@ def dashboard():
         def _faculty_attendance_heatmap(faculty_user_id: int):
             try:
                 if not faculty_user_id:
-                    return {}
+                    return {"heatmap": {}, "details": {}}
                 cutoff_dt = now - timedelta(days=180)
                 cutoff = cutoff_dt.date() if hasattr(cutoff_dt, "date") else cutoff_dt
 
@@ -2758,44 +2758,76 @@ def dashboard():
 
                 subject_ids = sorted({sid for (sid, _) in assignments if sid})
                 if not subject_ids:
-                    return {}
+                    return {"heatmap": {}, "details": {}}
                 division_ids = sorted({did for (_, did) in assignments if did})
 
+                # Group by Subject to find culprits
                 q = (
                     db.session.query(
                         Attendance.date_marked,
+                        Attendance.subject_id_fk,
                         Attendance.status,
                         func.count(Attendance.attendance_id),
                     )
                     .filter(Attendance.subject_id_fk.in_(subject_ids))
                     .filter(Attendance.date_marked >= cutoff)
-                    .group_by(Attendance.date_marked, Attendance.status)
+                    .group_by(Attendance.date_marked, Attendance.subject_id_fk, Attendance.status)
                 )
                 if division_ids:
                     q = q.filter(Attendance.division_id_fk.in_(division_ids))
 
                 rows = q.all()
-                by_date = {}
-                for dt, status, cnt in rows:
+                
+                try:
+                    sub_objs = Subject.query.with_entities(Subject.subject_id, Subject.subject_name).filter(Subject.subject_id.in_(subject_ids)).all()
+                    subject_names = {sid: name for (sid, name) in sub_objs}
+                except Exception:
+                    subject_names = {}
+
+                daily_stats = {}
+                for dt, sid, status, cnt in rows:
                     if not dt:
                         continue
-                    d = by_date.setdefault(dt, {"P": 0, "A": 0, "L": 0})
-                    s = (status or "").upper()
-                    if s in d:
-                        d[s] += int(cnt or 0)
+                    d_stat = daily_stats.setdefault(dt, {"total": 0, "absent": 0, "subjects": {}})
+                    cnt = int(cnt or 0)
+                    d_stat["total"] += cnt
+                    s_upper = (status or "").upper()
+                    
+                    sub_stat = d_stat["subjects"].setdefault(sid, {"total": 0, "absent": 0})
+                    sub_stat["total"] += cnt
+                    
+                    if s_upper == "A":
+                        d_stat["absent"] += cnt
+                        sub_stat["absent"] += cnt
 
-                data = {}
-                for dt, counts in by_date.items():
-                    total = int(counts.get("P", 0)) + int(counts.get("A", 0)) + int(counts.get("L", 0))
-                    if not total:
+                heatmap_data = {}
+                details_data = {}
+
+                for dt, stat in daily_stats.items():
+                    if stat["total"] == 0:
                         continue
-                    absent = int(counts.get("A", 0))
-                    absent_pct = int(round((absent * 100.0) / total))
+                    
+                    overall_pct = int(round((stat["absent"] * 100.0) / stat["total"]))
                     ts = int(time.mktime(dt.timetuple()))
-                    data[str(ts)] = max(0, min(100, absent_pct))
-                return data
+                    heatmap_data[str(ts)] = max(0, min(100, overall_pct))
+                    
+                    # Find worst subject
+                    worst_sid = None
+                    max_sub_pct = -1.0
+                    for sid, s_stat in stat["subjects"].items():
+                        if s_stat["total"] > 0:
+                            s_pct = (s_stat["absent"] * 100.0) / s_stat["total"]
+                            if s_pct > max_sub_pct:
+                                max_sub_pct = s_pct
+                                worst_sid = sid
+                    
+                    if worst_sid:
+                        s_name = subject_names.get(worst_sid, "Unknown")
+                        details_data[str(ts)] = f"{s_name} ({int(max_sub_pct)}% Absent)"
+
+                return {"heatmap": heatmap_data, "details": details_data}
             except Exception:
-                return {}
+                return {"heatmap": {}, "details": {}}
 
         role_lower = (role or '').strip().lower()
         if role_lower == 'admin':
