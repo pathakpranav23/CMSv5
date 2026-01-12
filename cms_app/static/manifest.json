@@ -1,20 +1,25 @@
 {
   "name": "Parekh Colleges CMS",
   "short_name": "SBPET CMS",
+  "description": "Student and Faculty Portal for Shri Balvant Parekh Education Trust",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#ffffff",
   "theme_color": "#0d6efd",
   "icons": [
     {
       "src": "/static/logo.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "/static/logo.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }
