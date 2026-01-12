@@ -1,29 +1,27 @@
-# Python / Flask
 venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.pytest_cache/
+.Python
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
 .coverage
-htmlcov/
-
-# Database (Keep cms.db if it's the seed, ignore test/temp dbs)
-*.db-journal
-test.db
-
-# Environment variables
-.env
-
-# Editor / IDE
-.vscode/
-.idea/
-
-# Large/Temporary files
-*.rar
-*.zip
-*.7z
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
 *.log
-DATA FOR IMPORT EXPORT/
-RESUME TIME/
-_docx_blueprint/
+.git
+.mypy_cache
+.pytest_cache
+.hypotheses
+*.db
+*.sqlite3
+instance/
+.webassets-cache
+.env
+.DS_Store
