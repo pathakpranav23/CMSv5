@@ -2924,7 +2924,7 @@ def dashboard():
                         {
                             "subject": r[0],
                             "division": f"{r[3]} Sem {r[2]} - {r[1]}",
-                            "link": url_for('main.attendance', subject_id=r[4], division_id=r[5])
+                            "link": url_for('main.attendance_mark', subject_id=r[4], division_id=r[5])
                         }
                         for r in active_assignments
                     ]
