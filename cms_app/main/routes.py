@@ -2701,62 +2701,62 @@ def dashboard():
 
         role_lower = (role or '').strip().lower()
 
-    # FACULTY PULSE (Classroom Pulse)
-    faculty_pulse = None
-    if role_lower == 'faculty':
-        faculty_pulse = {"progress": [], "risk": []}
-        try:
-            # 1. My Subjects & Syllabus Progress
-            my_assignments = CourseAssignment.query.filter_by(faculty_id_fk=current_user.user_id, is_active=True).all()
-            subject_ids = []
-            
-            for assign in my_assignments:
-                subject = assign.subject
-                division = assign.division
+        # FACULTY PULSE (Classroom Pulse)
+        faculty_pulse = None
+        if role_lower == 'faculty':
+            faculty_pulse = {"progress": [], "risk": []}
+            try:
+                # 1. My Subjects & Syllabus Progress
+                my_assignments = CourseAssignment.query.filter_by(faculty_id_fk=current_user.user_id, is_active=True).all()
+                subject_ids = []
                 
-                # Get latest topic
-                last_lec = Attendance.query.filter_by(
-                    subject_id_fk=subject.subject_id,
-                    division_id_fk=division.division_id
-                ).filter(Attendance.topic != None).order_by(Attendance.date_marked.desc()).first()
+                for assign in my_assignments:
+                    subject = assign.subject
+                    division = assign.division
+                    
+                    # Get latest topic
+                    last_lec = Attendance.query.filter_by(
+                        subject_id_fk=subject.subject_id,
+                        division_id_fk=division.division_id
+                    ).filter(Attendance.topic != None).order_by(Attendance.date_marked.desc()).first()
+                    
+                    faculty_pulse["progress"].append({
+                        "subject": subject.subject_name,
+                        "division": division.division_code,
+                        "last_topic": last_lec.topic if last_lec else "Not Started",
+                        "last_date": last_lec.date_marked.strftime("%d %b") if last_lec else "-"
+                    })
+                    subject_ids.append(subject.subject_id)
                 
-                faculty_pulse["progress"].append({
-                    "subject": subject.subject_name,
-                    "division": division.division_code,
-                    "last_topic": last_lec.topic if last_lec else "Not Started",
-                    "last_date": last_lec.date_marked.strftime("%d %b") if last_lec else "-"
-                })
-                subject_ids.append(subject.subject_id)
-            
-            # 2. At-Risk Students in MY classes
-            if subject_ids:
-                q_my_risk = db.session.query(
-                    Student.enrollment_no,
-                    Student.full_name,
-                    Subject.subject_name,
-                    func.count(Attendance.attendance_id).label("total"),
-                    func.sum(case((Attendance.status == 'P', 1), else_=0)).label("present")
-                ).join(Student, Attendance.student_id_fk == Student.enrollment_no)\
-                 .join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
-                 .filter(Attendance.subject_id_fk.in_(subject_ids))\
-                 .group_by(Student.enrollment_no, Subject.subject_name)
-                 
-                rows = q_my_risk.all()
-                for enr, name, sub, total, present in rows:
-                    if total > 5:
-                        pct = (present or 0) / total
-                        if pct < 0.55:
-                            faculty_pulse["risk"].append({
-                                "name": name,
-                                "subject": sub,
-                                "pct": round(pct * 100, 1),
-                                "absent": total - (present or 0)
-                            })
-                
-                faculty_pulse["risk"].sort(key=lambda x: x["pct"])
-                faculty_pulse["risk"] = faculty_pulse["risk"][:20]
-        except Exception as e:
-            print(f"Faculty Pulse Error: {e}")
+                # 2. At-Risk Students in MY classes
+                if subject_ids:
+                    q_my_risk = db.session.query(
+                        Student.enrollment_no,
+                        Student.full_name,
+                        Subject.subject_name,
+                        func.count(Attendance.attendance_id).label("total"),
+                        func.sum(case((Attendance.status == 'P', 1), else_=0)).label("present")
+                    ).join(Student, Attendance.student_id_fk == Student.enrollment_no)\
+                     .join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
+                     .filter(Attendance.subject_id_fk.in_(subject_ids))\
+                     .group_by(Student.enrollment_no, Subject.subject_name)
+                     
+                    rows = q_my_risk.all()
+                    for enr, name, sub, total, present in rows:
+                        if total > 5:
+                            pct = (present or 0) / total
+                            if pct < 0.55:
+                                faculty_pulse["risk"].append({
+                                    "name": name,
+                                    "subject": sub,
+                                    "pct": round(pct * 100, 1),
+                                    "absent": total - (present or 0)
+                                })
+                    
+                    faculty_pulse["risk"].sort(key=lambda x: x["pct"])
+                    faculty_pulse["risk"] = faculty_pulse["risk"][:20]
+            except Exception as e:
+                print(f"Faculty Pulse Error: {e}")
 
         if role_lower == 'admin':
             # Build base program-level charts; if chart_program_id is selected, filter to that program
