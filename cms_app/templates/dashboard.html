@@ -546,6 +546,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://unpkg.com/cal-heatmap/dist/cal-heatmap.min.js"></script>
+<script src="https://unpkg.com/@popperjs/core@2"></script>
+<script src="https://unpkg.com/cal-heatmap/dist/plugins/Tooltip.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/cal-heatmap/dist/cal-heatmap.css">
 <script>
   (function(){
@@ -606,7 +608,7 @@
             theme: "light"
         }, [
             [
-                "Tooltip",
+                Tooltip,
                 {
                     text: function (date, value, dayRect) {
                         if (value === null) return "";
