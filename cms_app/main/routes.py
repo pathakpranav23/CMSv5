@@ -2758,55 +2758,55 @@ def dashboard():
         except Exception as e:
             print(f"Faculty Pulse Error: {e}")
 
-    if role_lower == 'admin':
-        # Build base program-level charts; if chart_program_id is selected, filter to that program
-        def _students_for_program(program_id: int):
-            try:
-                return Student.query.filter_by(program_id_fk=program_id).count()
-            except Exception:
-                return 0
+        if role_lower == 'admin':
+            # Build base program-level charts; if chart_program_id is selected, filter to that program
+            def _students_for_program(program_id: int):
+                try:
+                    return Student.query.filter_by(program_id_fk=program_id).count()
+                except Exception:
+                    return 0
 
-        def _fees_for_program(program_id: int):
-            # Sum fees for students in selected program
-            try:
-                st_rows = Student.query.with_entities(Student.enrollment_no).filter_by(program_id_fk=program_id).all()
-            except Exception:
-                st_rows = []
-            enr_set = {enr for (enr,) in st_rows}
-            total = 0.0
-            try:
-                fee_rows = FeesRecord.query.with_entities(FeesRecord.student_id_fk, FeesRecord.amount_paid).all()
-            except Exception:
-                fee_rows = []
-            for enr, amt in fee_rows:
-                if enr in enr_set:
-                    try:
-                        total += float(amt or 0.0)
-                    except Exception:
-                        pass
-            return round(total, 2)
+            def _fees_for_program(program_id: int):
+                # Sum fees for students in selected program
+                try:
+                    st_rows = Student.query.with_entities(Student.enrollment_no).filter_by(program_id_fk=program_id).all()
+                except Exception:
+                    st_rows = []
+                enr_set = {enr for (enr,) in st_rows}
+                total = 0.0
+                try:
+                    fee_rows = FeesRecord.query.with_entities(FeesRecord.student_id_fk, FeesRecord.amount_paid).all()
+                except Exception:
+                    fee_rows = []
+                for enr, amt in fee_rows:
+                    if enr in enr_set:
+                        try:
+                            total += float(amt or 0.0)
+                        except Exception:
+                            pass
+                return round(total, 2)
 
-        def _staff_for_program(program_id: int):
-            try:
-                return Faculty.query.filter_by(program_id_fk=program_id).count()
-            except Exception:
-                return 0
+            def _staff_for_program(program_id: int):
+                try:
+                    return Faculty.query.filter_by(program_id_fk=program_id).count()
+                except Exception:
+                    return 0
 
-        if chart_program_id:
-            charts = {
-                "students_by_program": [{"label": prog_map.get(chart_program_id), "value": _students_for_program(chart_program_id)}],
-                "fees_by_program": [{"label": prog_map.get(chart_program_id), "value": _fees_for_program(chart_program_id)}],
-                "staff_by_program": [{"label": prog_map.get(chart_program_id), "value": _staff_for_program(chart_program_id)}],
-                "income_vs_expenses": _income_vs_expenses_annual(),
-            }
-        else:
-            charts = {
-                "students_by_program": _students_by_program(),
-                "fees_by_program": _fees_by_program(),
-                "staff_by_program": _staff_by_program(),
-                "income_vs_expenses": _income_vs_expenses_annual(),
-            }
-        charts_semester_scope = None
+            if chart_program_id:
+                charts = {
+                    "students_by_program": [{"label": prog_map.get(chart_program_id), "value": _students_for_program(chart_program_id)}],
+                    "fees_by_program": [{"label": prog_map.get(chart_program_id), "value": _fees_for_program(chart_program_id)}],
+                    "staff_by_program": [{"label": prog_map.get(chart_program_id), "value": _staff_for_program(chart_program_id)}],
+                    "income_vs_expenses": _income_vs_expenses_annual(),
+                }
+            else:
+                charts = {
+                    "students_by_program": _students_by_program(),
+                    "fees_by_program": _fees_by_program(),
+                    "staff_by_program": _staff_by_program(),
+                    "income_vs_expenses": _income_vs_expenses_annual(),
+                }
+            charts_semester_scope = None
         else:
             pid_scope = selected_program.program_id if selected_program else None
             charts = {
