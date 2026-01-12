@@ -93,84 +93,6 @@
 
   <!-- Role-Based Infographics placed right after hero and above modules grid -->
   <div class="mt-3">
-    
-    <!-- FACULTY PULSE SECTION -->
-    {% if (current_user.role|lower) == 'faculty' and faculty_pulse %}
-      <div class="row g-4 mb-4">
-        <!-- My Syllabus Progress -->
-        <div class="col-md-7">
-          <div class="card h-100 shadow-sm border-0">
-            <div class="card-header bg-white py-3 border-bottom-0">
-              <h5 class="mb-0 text-primary"><i class="bi bi-journal-richtext me-2"></i>My Syllabus Pulse</h5>
-              <div class="small text-muted">Track your teaching pace across subjects</div>
-            </div>
-            <div class="card-body p-0">
-              <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
-                  <thead class="table-light">
-                    <tr>
-                      <th>Subject</th>
-                      <th>Class</th>
-                      <th>Last Topic Covered</th>
-                      <th class="text-end">Last Lecture</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {% for p in faculty_pulse.progress %}
-                    <tr>
-                      <td class="fw-bold text-dark">{{ p.subject }}</td>
-                      <td><span class="badge bg-light text-dark border">{{ p.division }}</span></td>
-                      <td><span class="text-primary small fw-bold">{{ p.last_topic }}</span></td>
-                      <td class="text-end text-muted small">{{ p.last_date }}</td>
-                    </tr>
-                    {% else %}
-                    <tr><td colspan="4" class="text-center py-4 text-muted">No lectures recorded yet.</td></tr>
-                    {% endfor %}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- My At-Risk Students -->
-        <div class="col-md-5">
-          <div class="card h-100 shadow-sm border-0">
-            <div class="card-header bg-white py-3 border-bottom-0">
-              <h5 class="mb-0 text-danger"><i class="bi bi-exclamation-triangle me-2"></i>My At-Risk Students</h5>
-              <div class="small text-muted">Students in your classes with < 55% attendance</div>
-            </div>
-            <div class="card-body p-0">
-              <div class="list-group list-group-flush" style="max-height: 300px; overflow-y: auto;">
-                {% for r in faculty_pulse.risk %}
-                <div class="list-group-item px-3 py-2 border-0 border-bottom">
-                  <div class="d-flex justify-content-between align-items-center">
-                    <div>
-                      <div class="fw-bold text-dark">{{ r.name }}</div>
-                      <div class="small text-muted">{{ r.subject }}</div>
-                    </div>
-                    <div class="text-end">
-                      <div class="h5 mb-0 fw-bold text-danger">{{ r.pct }}%</div>
-                      <div class="small text-danger">{{ r.absent }} Absent</div>
-                    </div>
-                  </div>
-                  <div class="progress mt-2" style="height: 4px;">
-                    <div class="progress-bar bg-danger" role="progressbar" style="width: {{ r.pct }}%"></div>
-                  </div>
-                </div>
-                {% else %}
-                <div class="text-center p-5 text-muted">
-                  <i class="bi bi-check-circle fs-1 text-success mb-2"></i><br>
-                  All your students are attending well!
-                </div>
-                {% endfor %}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    {% endif %}
-
     <div class="d-flex justify-content-between align-items-center mb-2">
       <h5 class="mb-0">{{ t('Role-Based Infographics') }}</h5>
       <div class="d-flex align-items-center gap-3">
@@ -267,15 +189,27 @@
           </div>
         </div>
         {% if (current_user.role|lower) == 'principal' %}
-        <div class="col">
-          <div class="card">
-            <div class="card-header card-header-standard"><div class="card-title">{{ t('Semester Results by Subject (Avg GPA)') }}</div></div>
-            <div class="card-body"><canvas id="chartSubjectResults" height="140"></canvas></div>
+            <div class="col">
+              <div class="card">
+                <div class="card-header card-header-standard"><div class="card-title">{{ t('Semester Results by Subject (Avg GPA)') }}</div></div>
+                <div class="card-body"><canvas id="chartSubjectResults" height="140"></canvas></div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="card">
+                <div class="card-header card-header-standard"><div class="card-title">{{ t('Attendance Heatmap (Last 6 Months)') }}</div></div>
+                <div class="card-body">
+                  <div id="cal-heatmap" style="overflow-x: auto;"></div>
+                  <div class="d-flex justify-content-between small text-muted mt-2">
+                    <span>Less</span>
+                    <span>More</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% endif %}
           </div>
-        </div>
         {% endif %}
-      </div>
-    {% endif %}
 
     
   </div>
@@ -497,12 +431,38 @@
 <script id="chartsData" type="application/json">{{ charts | tojson | safe }}</script>
 <script id="chartsConfig" type="application/json">{{ {"isAdmin": is_admin, "isPrincipal": is_principal} | tojson | safe }}</script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://unpkg.com/cal-heatmap/dist/cal-heatmap.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/cal-heatmap/dist/cal-heatmap.css">
 <script>
   (function(){
     const charts = JSON.parse(document.getElementById('chartsData').textContent);
     const cfg = JSON.parse(document.getElementById('chartsConfig').textContent);
     const isAdmin = !!cfg.isAdmin;
     const isPrincipal = !!cfg.isPrincipal;
+    
+    // Render Heatmap for Principal
+    if (isPrincipal && charts && charts.attendance_heatmap) {
+        const cal = new CalHeatmap();
+        // Convert timestamp keys to numeric
+        const rawData = charts.attendance_heatmap;
+        const data = [];
+        for (const [ts, val] of Object.entries(rawData)) {
+            data.push({ date: parseInt(ts) * 1000, value: val });
+        }
+        
+        cal.paint({
+            itemSelector: "#cal-heatmap",
+            domain: { type: "month" },
+            subDomain: { type: "day" },
+            date: { start: new Date(new Date().setMonth(new Date().getMonth() - 5)) },
+            range: 6,
+            data: { source: data, x: 'date', y: 'value' },
+            scale: { color: { type: 'linear', range: ['#e6f2ff', '#004085'], domain: [0, 100] } },
+            theme: "light"
+        });
+    }
+
     // Admin charts
     if (isAdmin && charts) {
       // Students by Program (pie)

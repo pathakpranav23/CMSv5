@@ -13,7 +13,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from functools import wraps
 from ..email_utils import send_email
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
@@ -2132,8 +2132,7 @@ def logout():
 @login_required
 def dashboard():
     # Role-aware, program-scoped dashboard (defaults to BCA for Principal)
-    from ..models import Student, Notification, CourseAssignment, Attendance
-    from sqlalchemy import func, case, and_
+    from ..models import Student, Notification
     role = (getattr(current_user, "role", None) or (request.args.get("role") or "principal")).strip().lower()
     user_id_raw = str(getattr(current_user, "user_id", "")) or (request.args.get("user_id") or "")
     program_id_raw = str(getattr(current_user, "program_id_fk", "")) or (request.args.get("program_id") or "")
@@ -2699,65 +2698,47 @@ def dashboard():
                 data = [7.8, 6.9, 8.1, 7.2, 7.6, 8.3]
             return {"labels": labels, "data": data}
 
-        role_lower = (role or '').strip().lower()
-
-        # FACULTY PULSE (Classroom Pulse)
-        faculty_pulse = None
-        if role_lower == 'faculty':
-            faculty_pulse = {"progress": [], "risk": []}
+        def _attendance_heatmap(program_id: int):
+            # Heatmap data: date -> count of students present (status='P' or 'L')
+            # Limit to current academic year or last 6 months
             try:
-                # 1. My Subjects & Syllabus Progress
-                my_assignments = CourseAssignment.query.filter_by(faculty_id_fk=current_user.user_id, is_active=True).all()
-                subject_ids = []
+                # Get total active students in program to calculate percentage
+                total_students = Student.query.filter_by(program_id_fk=program_id).count()
+                if not total_students:
+                    total_students = 1  # avoid division by zero
                 
-                for assign in my_assignments:
-                    subject = assign.subject
-                    division = assign.division
-                    
-                    # Get latest topic
-                    last_lec = Attendance.query.filter_by(
-                        subject_id_fk=subject.subject_id,
-                        division_id_fk=division.division_id
-                    ).filter(Attendance.topic != None).order_by(Attendance.date_marked.desc()).first()
-                    
-                    faculty_pulse["progress"].append({
-                        "subject": subject.subject_name,
-                        "division": division.division_code,
-                        "last_topic": last_lec.topic if last_lec else "Not Started",
-                        "last_date": last_lec.date_marked.strftime("%d %b") if last_lec else "-"
-                    })
-                    subject_ids.append(subject.subject_id)
+                # Query attendance counts by date
+                cutoff_dt = now - timedelta(days=180)
+                # Ensure cutoff is date object if now is datetime
+                cutoff = cutoff_dt.date() if hasattr(cutoff_dt, 'date') else cutoff_dt
                 
-                # 2. At-Risk Students in MY classes
-                if subject_ids:
-                    q_my_risk = db.session.query(
-                        Student.enrollment_no,
-                        Student.full_name,
-                        Subject.subject_name,
-                        func.count(Attendance.attendance_id).label("total"),
-                        func.sum(case((Attendance.status == 'P', 1), else_=0)).label("present")
-                    ).join(Student, Attendance.student_id_fk == Student.enrollment_no)\
-                     .join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
-                     .filter(Attendance.subject_id_fk.in_(subject_ids))\
-                     .group_by(Student.enrollment_no, Subject.subject_name)
-                     
-                    rows = q_my_risk.all()
-                    for enr, name, sub, total, present in rows:
-                        if total > 5:
-                            pct = (present or 0) / total
-                            if pct < 0.55:
-                                faculty_pulse["risk"].append({
-                                    "name": name,
-                                    "subject": sub,
-                                    "pct": round(pct * 100, 1),
-                                    "absent": total - (present or 0)
-                                })
-                    
-                    faculty_pulse["risk"].sort(key=lambda x: x["pct"])
-                    faculty_pulse["risk"] = faculty_pulse["risk"][:20]
-            except Exception as e:
-                print(f"Faculty Pulse Error: {e}")
+                att_rows = (
+                    db.session.query(
+                        Attendance.date_marked,
+                        func.count(Attendance.attendance_id)
+                    )
+                    .join(Student, Student.enrollment_no == Attendance.student_id_fk)
+                    .filter(Student.program_id_fk == program_id)
+                    .filter(Attendance.date_marked >= cutoff)
+                    .filter(Attendance.status.in_(['P', 'L']))
+                    .group_by(Attendance.date_marked)
+                    .all()
+                )
+                
+                # Format for frontend: unix timestamp (seconds) -> value (0-100 scale or count)
+                # Cal-Heatmap often takes { timestamp: value }
+                data = {}
+                for dt, cnt in att_rows:
+                    if dt:
+                        ts = int(time.mktime(dt.timetuple()))
+                        # Calculate percentage intensity (0-100)
+                        pct = min(100, int((cnt / total_students) * 100))
+                        data[str(ts)] = pct
+                return data
+            except Exception:
+                return {}
 
+        role_lower = (role or '').strip().lower()
         if role_lower == 'admin':
             # Build base program-level charts; if chart_program_id is selected, filter to that program
             def _students_for_program(program_id: int):
@@ -2822,6 +2803,7 @@ def dashboard():
                 chart_subject_id = None
             if role_lower == 'principal':
                 charts["subject_results"] = _subject_results_for_program(pid_scope, chart_semester, chart_subject_id) if pid_scope else {"labels": ["Sem 1: English","Sem 1: Maths"], "data": [7.8,6.9]}
+                charts["attendance_heatmap"] = _attendance_heatmap(pid_scope) if pid_scope else {}
     except Exception:
         # Fallback demo when any unexpected error occurs
         charts = {
@@ -2894,7 +2876,6 @@ def dashboard():
         notifications_vm=notifications_vm,
         charts=charts,
         charts_semester_scope=(charts_semester_scope if (role_lower == 'admin') else None),
-        faculty_pulse=faculty_pulse,
     )
 
 @main_bp.route("/announcements")
@@ -7553,8 +7534,6 @@ def attendance_mark():
             # Persist attendance for each student
             today = selected_date
             semester_val = subject.semester if subject else None
-            topic_val = request.form.get("topic") # NEW: Read topic input
-            
             statuses = {}
             for key, val in request.form.items():
                 if key.startswith("status_"):
@@ -7571,7 +7550,6 @@ def attendance_mark():
                     status=st,
                     semester=semester_val,
                     period_no=selected_period,
-                    topic=topic_val, # NEW: Save topic
                 )
                 db.session.add(att)
                 created += 1
@@ -12206,29 +12184,21 @@ def admin_seed_attendance_mock():
 
 @main_bp.route("/analytics")
 @login_required
-@role_required("admin")
+@role_required("admin", "principal")
 def module_analytics():
-    try:
-        return module_analytics_impl()
-    except Exception as e:
-        import traceback
-        return f"<h1>Analytics Error</h1><pre>{traceback.format_exc()}</pre>"
-
-def module_analytics_impl():
-    from ..models import Faculty, Attendance, Subject, Division, Program, CourseAssignment, Student
+    from ..models import Faculty, Attendance, Subject, Division, Program, CourseAssignment
     from datetime import datetime, date, timedelta
     from collections import defaultdict
-    from sqlalchemy import and_, func, case
+    from sqlalchemy import and_
     
-    # 0. Global Filters
-    selected_pid = request.args.get("program_id", type=int)
-    all_programs = Program.query.order_by(Program.program_name).all()
-
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    user_pid = int(getattr(current_user, "program_id_fk", 0) or 0)
+    
     # 1. Daily Logs (Today)
     today = date.today()
     q_daily = db.session.query(
         Attendance, 
-        Faculty.full_name, 
+        Faculty.faculty_name, 
         Faculty.designation, 
         Subject.subject_name,
         Division.division_code,
@@ -12247,8 +12217,8 @@ def module_analytics_impl():
      .filter(Attendance.date_marked == today)\
      .order_by(Attendance.period_no.asc())
      
-    if selected_pid:
-        q_daily = q_daily.filter(Program.program_id == selected_pid)
+    if role == "principal" and user_pid:
+        q_daily = q_daily.filter(Program.program_id == user_pid)
         
     daily_rows = q_daily.all()
     
@@ -12301,7 +12271,7 @@ def module_analytics_impl():
     
     # Improved Weekly Query: Group by Lecture Unique Keys
     q_week_agg = db.session.query(
-        Faculty.full_name,
+        Faculty.faculty_name,
         Attendance.date_marked,
         Attendance.period_no,
         Attendance.division_id_fk,
@@ -12317,11 +12287,11 @@ def module_analytics_impl():
      .filter(Attendance.date_marked >= start_week)\
      .filter(Attendance.date_marked <= end_week)
      
-    if selected_pid:
-        q_week_agg = q_week_agg.filter(Division.program_id_fk == selected_pid)
+    if role == "principal" and user_pid:
+        q_week_agg = q_week_agg.filter(Division.program_id_fk == user_pid)
 
     q_week_agg = q_week_agg.group_by(
-        Faculty.full_name,
+        Faculty.faculty_name,
         Attendance.date_marked,
         Attendance.period_no,
         Attendance.division_id_fk,
@@ -12329,38 +12299,6 @@ def module_analytics_impl():
     )
     
     week_lectures = q_week_agg.all()
-
-    # World Class: Program Breakdown Stats (Admin Only)
-    program_stats = []
-    if not selected_pid:
-        # Calculate lectures today per program
-        prog_counts = db.session.query(
-            Program.program_name, 
-            func.count(Attendance.attendance_id)
-        ).join(Division, Attendance.division_id_fk == Division.division_id)\
-         .join(Program, Division.program_id_fk == Program.program_id)\
-         .filter(Attendance.date_marked == today)\
-         .group_by(Program.program_name).all()
-        
-        # Convert to list of dicts
-        # Note: This counts student attendance records. To count *lectures*, we need distinct (subject, division, period)
-        # For simplicity in this "pulse" view, let's count unique lectures
-        
-        q_prog_lectures = db.session.query(
-            Program.program_name,
-            func.count(func.distinct(Attendance.subject_id_fk)) # Approximate unique lectures
-        ).join(Division, Attendance.division_id_fk == Division.division_id)\
-         .join(Program, Division.program_id_fk == Program.program_id)\
-         .filter(Attendance.date_marked == today)\
-         .group_by(Program.program_name).all()
-         
-        # Better: Reuse the daily_rows logic to count
-        prog_map = defaultdict(int)
-        for log in daily_logs:
-            prog_map[log["program_name"]] += 1
-            
-        program_stats = [{"name": k, "count": v} for k, v in prog_map.items()]
-        program_stats.sort(key=lambda x: x["count"], reverse=True)
 
     faculty_map = defaultdict(lambda: {"total": 0, "days": defaultdict(int)})
     
@@ -12381,8 +12319,8 @@ def module_analytics_impl():
     # 3. Performance Alerts
     performance_alerts = {"high": [], "low": []}
     
-    fac_ids = db.session.query(Faculty.faculty_id, Faculty.full_name).all()
-    fac_lookup = {f.full_name: f.faculty_id for f in fac_ids}
+    fac_ids = db.session.query(Faculty.faculty_id, Faculty.faculty_name).all()
+    fac_lookup = {f.faculty_name: f.faculty_id for f in fac_ids}
 
     for item in weekly_grid:
         fid = fac_lookup.get(item["faculty_name"])
@@ -12401,346 +12339,12 @@ def module_analytics_impl():
                  "target": 12
              })
              
-    # 4. Course Coverage Heatmap (Principal)
-    # Get latest topic per subject/division
-    q_topics = db.session.query(
-        Subject.subject_name,
-        Division.division_code,
-        Faculty.full_name,
-        Attendance.topic,
-        Attendance.date_marked
-    ).join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
-     .join(Division, Attendance.division_id_fk == Division.division_id)\
-     .outerjoin(CourseAssignment, and_(
-         CourseAssignment.subject_id_fk == Subject.subject_id,
-         CourseAssignment.division_id_fk == Division.division_id,
-         CourseAssignment.is_active == True
-     ))\
-     .outerjoin(Faculty, Faculty.user_id_fk == CourseAssignment.faculty_id_fk)\
-     .filter(Attendance.topic != None)\
-     .filter(Attendance.topic != "")\
-     .order_by(Attendance.date_marked.desc())
-    
-    if selected_pid:
-        q_topics = q_topics.filter(Division.program_id_fk == selected_pid)
-
-    topics_raw = q_topics.limit(500).all() 
-    
-    coverage_data = {} 
-    for sub, div, fac, top, dt in topics_raw:
-        key = (sub, div)
-        if key not in coverage_data:
-            coverage_data[key] = {
-                "subject": sub,
-                "division": div,
-                "faculty": fac or "Unknown",
-                "last_topic": top,
-                "last_date": dt.strftime("%d %b")
-            }
-    syllabus_heatmap = list(coverage_data.values())
-
-    # 5. Student Risk Radar (Attendance < 55%)
-    q_risk = db.session.query(
-        Student.enrollment_no,
-        Student.full_name,
-        Student.roll_no,
-        Division.division_code,
-        func.count(Attendance.attendance_id).label("total"),
-        func.sum(case((Attendance.status == 'P', 1), else_=0)).label("present")
-    ).join(Student, Attendance.student_id_fk == Student.enrollment_no)\
-     .join(Division, Student.division_id_fk == Division.division_id)\
-     .group_by(Student.enrollment_no)
-    
-    if selected_pid:
-        q_risk = q_risk.filter(Division.program_id_fk == selected_pid)
-        
-    risk_students = []
-    try:
-        rows = q_risk.all()
-        for enr, name, roll, div, total, present in rows:
-            if total > 10: 
-                pct = (present or 0) / total
-                if pct < 0.55:
-                    risk_students.append({
-                        "name": name,
-                        "enrollment": enr,
-                        "roll": roll,
-                        "division": div,
-                        "attendance_pct": round(pct * 100, 1),
-                        "total_lectures": total,
-                        "absent_count": total - (present or 0)
-                    })
-    except Exception as e:
-        print(f"Risk Radar Error: {e}")
-        
-    risk_students.sort(key=lambda x: x["attendance_pct"])
-    risk_students = risk_students[:50] 
-
     return render_template("module_analytics.html", 
                            daily_logs=daily_logs, 
                            weekly_grid=weekly_grid,
                            performance_alerts=performance_alerts,
                            today_date=today.strftime("%d %b %Y"),
-                           lecture_stats={"total_today": len(daily_logs)},
-                           all_programs=all_programs,
-                           selected_pid=selected_pid,
-                           program_stats=program_stats,
-                           today_date_iso=today.strftime("%Y-%m"),
-                           syllabus_heatmap=syllabus_heatmap,
-                           risk_students=risk_students)
-
-@main_bp.route("/analytics/report/monthly")
-@login_required
-@role_required("admin")
-def analytics_report_monthly():
-    from ..models import FeePayment, Attendance, ImportLog, SubjectMaterial, Program, Announcement, Faculty, Division, Subject, CourseAssignment
-    from datetime import datetime, date, timedelta
-    from sqlalchemy import func, and_, case
-    
-    # 1. Parse Parameters
-    report_type = request.args.get("report_type", "monthly") # monthly, semester, yearly
-    month_str = request.args.get("month") # YYYY-MM
-    
-    try:
-        ref_date = datetime.strptime(month_str, "%Y-%m").date()
-    except:
-        ref_date = date.today()
-        
-    # 2. Determine Date Range
-    start_date = None
-    end_date = None
-    report_title = ""
-    
-    if report_type == "monthly":
-        start_date = ref_date.replace(day=1)
-        # Last day of month
-        next_month = start_date.replace(day=28) + timedelta(days=4)
-        end_date = next_month - timedelta(days=next_month.day)
-        report_title = f"Monthly Performance Report - {start_date.strftime('%B %Y')}"
-        
-    elif report_type == "yearly":
-        start_date = ref_date.replace(month=1, day=1)
-        end_date = ref_date.replace(month=12, day=31)
-        report_title = f"Annual Performance Report - {start_date.year}"
-        
-    elif report_type == "semester":
-        # Rough academic semesters: June-Nov (Odd), Dec-May (Even)
-        if ref_date.month >= 6 and ref_date.month <= 11:
-            start_date = ref_date.replace(month=6, day=1)
-            end_date = ref_date.replace(month=11, day=30)
-            term = "Odd Semester (Jun-Nov)"
-        else:
-            # Handle Jan-May part of Even sem
-            year_adj = 0 if ref_date.month <= 5 else 1
-            start_date = date(ref_date.year + year_adj, 12, 1) if ref_date.month > 5 else date(ref_date.year - 1, 12, 1)
-            # End is May 31st of the academic year end
-            end_year = start_date.year + 1
-            end_date = date(end_year, 5, 31)
-            term = "Even Semester (Dec-May)"
-            
-        report_title = f"Semester Performance Report - {term} {start_date.year}-{end_date.year}"
-
-    # 3. Gather Data (Financial)
-    # Total Fees Collected (Verified only)
-    fees_total = db.session.query(func.sum(FeePayment.amount))\
-        .filter(FeePayment.status == 'verified')\
-        .filter(FeePayment.verified_at >= start_date)\
-        .filter(FeePayment.verified_at <= end_date).scalar() or 0.0
-        
-    # Fees by Program
-    fees_by_program = db.session.query(
-        Program.program_name, 
-        func.sum(FeePayment.amount)
-    ).join(Program, FeePayment.program_id_fk == Program.program_id)\
-     .filter(FeePayment.status == 'verified')\
-     .filter(FeePayment.verified_at >= start_date)\
-     .filter(FeePayment.verified_at <= end_date)\
-     .group_by(Program.program_name).all()
-
-    # 4. Gather Data (Academic)
-    # Lectures Delivered
-    lectures_count = db.session.query(func.count(Attendance.attendance_id))\
-        .filter(Attendance.date_marked >= start_date)\
-        .filter(Attendance.date_marked <= end_date).scalar() or 0
-        
-    # Unique Faculty Active
-    # Note: This query might be slow on large datasets, optimize if needed
-    active_faculty = db.session.query(func.count(func.distinct(CourseAssignment.faculty_id_fk)))\
-        .join(Attendance, and_(
-            Attendance.subject_id_fk == CourseAssignment.subject_id_fk,
-            Attendance.division_id_fk == CourseAssignment.division_id_fk
-        ))\
-        .filter(Attendance.date_marked >= start_date)\
-        .filter(Attendance.date_marked <= end_date).scalar() or 0
-
-    # 5. Gather Data (Growth & Ops)
-    # New Admissions (via Import Logs as proxy)
-    new_admissions = db.session.query(func.sum(ImportLog.created_count))\
-        .filter(ImportLog.kind == 'students')\
-        .filter(ImportLog.created_at >= start_date)\
-        .filter(ImportLog.created_at <= end_date).scalar() or 0
-        
-    # Materials Uploaded
-    materials_count = db.session.query(func.count(SubjectMaterial.material_id))\
-        .filter(SubjectMaterial.created_at >= start_date)\
-        .filter(SubjectMaterial.created_at <= end_date).scalar() or 0
-        
-    # Announcements
-    announcements_count = db.session.query(func.count(Announcement.announcement_id))\
-        .filter(Announcement.created_at >= start_date)\
-        .filter(Announcement.created_at <= end_date).scalar() or 0
-
-    # 6. Gather Data (Program Breakdown & Scoring)
-    # We need a unified list of programs with their metrics
-    programs = Program.query.all()
-    program_matrix = []
-    
-    # Pre-fetch metrics mapped by program_id
-    # A. Fees
-    fees_map = {}
-    q_fees = db.session.query(FeePayment.program_id_fk, func.sum(FeePayment.amount))\
-        .filter(FeePayment.status == 'verified')\
-        .filter(FeePayment.verified_at >= start_date)\
-        .filter(FeePayment.verified_at <= end_date)\
-        .group_by(FeePayment.program_id_fk).all()
-    for pid, amt in q_fees:
-        fees_map[pid] = amt
-
-    # B. Lectures & Attendance
-    lectures_map = {}
-    attendance_map = {} # sum of presence / sum of total
-    q_att = db.session.query(
-        Division.program_id_fk, 
-        func.count(Attendance.attendance_id),
-        func.sum(case((Attendance.status == 'P', 1), else_=0)), # Present count
-        func.count(Attendance.attendance_id) # Total students marked (denominator)
-    ).join(Division, Attendance.division_id_fk == Division.division_id)\
-     .filter(Attendance.date_marked >= start_date)\
-     .filter(Attendance.date_marked <= end_date)\
-     .group_by(Division.program_id_fk).all()
-     
-    for pid, lec_count, pres_sum, total_sum in q_att:
-        lectures_map[pid] = lec_count / 30.0 # Approximate "Lectures" (assuming avg class size 30 for normalization, or just raw count of student-records)
-        # Note: 'Attendance' table stores one row per student per lecture. 
-        # So lec_count is actually "Student-Lectures". 
-        # To get actual "Lectures Delivered", we need distinct(subject, division, date, period).
-        # Let's refine this for accuracy.
-        
-    # B2. Refined Lecture Count (Distinct Sessions)
-    real_lec_map = {}
-    q_real_lec = db.session.query(
-        Division.program_id_fk,
-        func.count(func.distinct(Attendance.subject_id_fk)) # Approximate distinct sessions via subject-grouping per day? 
-        # Complex to do distinct on multi-columns in simple group_by. 
-        # Simplified approach: Count unique (date, period, division) tuples
-    ).join(Division, Attendance.division_id_fk == Division.division_id)\
-     .filter(Attendance.date_marked >= start_date)\
-     .filter(Attendance.date_marked <= end_date)\
-     .group_by(Division.program_id_fk).all()
-     # This query is tricky in ORM. Let's use a simpler heuristic or the raw student-record count normalized.
-     # Let's stick to the Attendance % which is accurate: pres_sum / total_sum
-    
-    att_pct_map = {}
-    for pid, _, pres_sum, total_sum in q_att:
-        if total_sum > 0:
-            att_pct_map[pid] = (pres_sum / total_sum) * 100
-        else:
-            att_pct_map[pid] = 0
-
-    # C. Active Faculty
-    fac_map = {}
-    q_fac = db.session.query(
-        Faculty.program_id_fk, 
-        func.count(Faculty.faculty_id)
-    ).group_by(Faculty.program_id_fk).all()
-    for pid, count in q_fac:
-        fac_map[pid] = count
-
-    # D. Resources / Intellectual Capital
-    mat_map = {}
-    q_mat = db.session.query(
-        Subject.program_id_fk,
-        func.count(SubjectMaterial.material_id)
-    ).join(Subject, SubjectMaterial.subject_id_fk == Subject.subject_id)\
-     .filter(SubjectMaterial.created_at >= start_date)\
-     .filter(SubjectMaterial.created_at <= end_date)\
-     .group_by(Subject.program_id_fk).all()
-    for pid, count in q_mat:
-        mat_map[pid] = count
-
-    # Build Matrix & Score
-    for p in programs:
-        pid = p.program_id
-        
-        # Metrics
-        m_fees = fees_map.get(pid, 0)
-        m_att_pct = att_pct_map.get(pid, 0)
-        m_fac = fac_map.get(pid, 0)
-        m_mat = mat_map.get(pid, 0)
-        
-        # Normalize for Scoring (0-100 scale logic)
-        # 1. Financial (25%): Target 1 Lakh? Arbitrary for now, relative scoring better?
-        # Let's use simple thresholds for "Good"
-        s_fees = min(m_fees / 50000 * 25, 25) # Max 25 pts if > 50k collected
-        
-        # 2. Academic (25%): Attendance % is key quality indicator
-        s_acad = (m_att_pct / 100) * 25 # Max 25 pts if 100% attendance
-        
-        # 3. Engagement (20%): Materials shared (Proxy for activity)
-        # Target: 5 materials per month = full score?
-        s_eng = min(m_mat / 5 * 20, 20) 
-        
-        # 4. Intellectual (15%): Faculty strength
-        # Target: 5 faculty = full score?
-        s_int = min(m_fac / 5 * 15, 15)
-        
-        # 5. Outcome (15%): Default neutral 10pts for now
-        s_out = 10 
-        
-        total_score = s_fees + s_acad + s_eng + s_int + s_out
-        
-        # Determine Badge
-        if total_score >= 80:
-            badge = "Elite"
-            badge_color = "success" # Green
-        elif total_score >= 60:
-            badge = "High Performing"
-            badge_color = "primary" # Blue
-        elif total_score >= 40:
-            badge = "Stable"
-            badge_color = "warning" # Yellow
-        else:
-            badge = "Needs Improvement"
-            badge_color = "danger" # Red
-            
-        program_matrix.append({
-            "name": p.program_name,
-            "fees": m_fees,
-            "attendance": m_att_pct,
-            "faculty": m_fac,
-            "materials": m_mat,
-            "score": int(total_score),
-            "badge": badge,
-            "badge_color": badge_color
-        })
-        
-    # Sort by Score High -> Low
-    program_matrix.sort(key=lambda x: x['score'], reverse=True)
-
-    # 7. Render Report
-    return render_template("analytics_report_print.html",
-                           report_title=report_title,
-                           start_date=start_date,
-                           end_date=end_date,
-                           fees_total=fees_total,
-                           fees_by_program=fees_by_program,
-                           lectures_count=lectures_count,
-                           active_faculty=active_faculty,
-                           new_admissions=new_admissions,
-                           materials_count=materials_count,
-                           announcements_count=announcements_count,
-                           generated_at=datetime.now(),
-                           program_matrix=program_matrix)
+                           lecture_stats={"total_today": len(daily_logs)})
 
 
 @main_bp.route("/analytics/notify", methods=["POST"])
@@ -12755,12 +12359,12 @@ def analytics_notify():
     faculty = Faculty.query.get_or_404(fid)
     
     if not faculty.email:
-        flash(f"Cannot send notification: {faculty.full_name} has no email address.", "danger")
+        flash(f"Cannot send notification: {faculty.faculty_name} has no email address.", "danger")
         return redirect(url_for("main.module_analytics"))
         
     if notif_type == "warning":
         subject = "Action Required: Academic Delivery Review"
-        body = f"""Dear Prof. {faculty.full_name},
+        body = f"""Dear Prof. {faculty.faculty_name},
 
 This is an automated alert regarding your lecture completion rate for this week.
 It appears to be below the expected target.
@@ -12770,18 +12374,18 @@ If you are facing any issues, please contact the Principal's office.
 
 Regards,
 Principal's Office"""
-        flash(f"Warning sent to {faculty.full_name}.", "warning")
+        flash(f"Warning sent to {faculty.faculty_name}.", "warning")
         
     elif notif_type == "appreciation":
         subject = "Appreciation: Excellent Academic Performance"
-        body = f"""Dear Prof. {faculty.full_name},
+        body = f"""Dear Prof. {faculty.faculty_name},
 
 We noticed your excellent lecture delivery and student engagement this week.
 Thank you for your dedication and hard work. Keep it up!
 
 Regards,
 Principal's Office"""
-        flash(f"Appreciation sent to {faculty.full_name}!", "success")
+        flash(f"Appreciation sent to {faculty.faculty_name}!", "success")
     
     # Fire and forget email
     try:
