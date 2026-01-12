@@ -2438,8 +2438,8 @@ def dashboard():
     announcements = []
     try:
         ann_q = Announcement.query.filter(Announcement.is_active == True)
-        ann_q = ann_q.filter(or_(Announcement.start_at == None, Announcement.start_at <= now))
-        ann_q = ann_q.filter(or_(Announcement.end_at == None, Announcement.end_at >= now))
+        ann_q = ann_q.filter(or_(Announcement.start_at == None, Announcement.start_at <= (now + timedelta(hours=12))))
+        ann_q = ann_q.filter(or_(Announcement.end_at == None, Announcement.end_at >= (now - timedelta(hours=12))))
         # Program scoping for non-admin/clerk: show global or same program
         try:
             if role not in ("admin", "clerk"):
@@ -2488,7 +2488,7 @@ def dashboard():
                 continue
             # Non-personal announcements fall back to role audience targeting
             try:
-                aud = [au.role for au in (a.audiences or [])]
+                aud = [str(au.role).lower() for au in (a.audiences or [])]
             except Exception:
                 aud = []
             if not aud or (user_role in aud):
@@ -3003,16 +3003,17 @@ def dashboard():
                     notices = (
                         Announcement.query
                         .filter_by(is_active=True)
-                        .filter(Announcement.start_at <= now)
-                        .filter((Announcement.end_at == None) | (Announcement.end_at >= now))
+                        # Relaxed time filter to account for timezone diffs (e.g. UTC server vs IST user)
+                        .filter(Announcement.start_at <= (now + timedelta(hours=12)))
+                        .filter((Announcement.end_at == None) | (Announcement.end_at >= (now - timedelta(hours=12))))
                         .order_by(Announcement.start_at.desc())
-                        .limit(5)
+                        .limit(10)
                         .all()
                     )
                     final_notices = []
                     for n in notices:
                         try:
-                            aud = [a.role for a in n.audiences]
+                            aud = [str(a.role).lower() for a in n.audiences]
                         except Exception:
                             aud = []
                         if not aud or 'faculty' in aud:
@@ -3127,8 +3128,8 @@ def announcements_list():
     if only_active:
         now = datetime.now()
         q = q.filter(Announcement.is_active == True)
-        q = q.filter(or_(Announcement.start_at == None, Announcement.start_at <= now))
-        q = q.filter(or_(Announcement.end_at == None, Announcement.end_at >= now))
+        q = q.filter(or_(Announcement.start_at == None, Announcement.start_at <= (now + timedelta(hours=12))))
+        q = q.filter(or_(Announcement.end_at == None, Announcement.end_at >= (now - timedelta(hours=12))))
     rows = q.order_by(Announcement.created_at.desc()).all()
     return render_template("announcements.html", rows=rows, programs=programs, selected_program_id=(int(program_id_raw) if program_id_raw else None), selected_severity=severity, only_active=only_active)
 
@@ -3702,8 +3703,8 @@ def notice_board():
 
     # Build base query: active and within time window
     ann_q = Announcement.query.filter(Announcement.is_active == True)
-    ann_q = ann_q.filter(or_(Announcement.start_at == None, Announcement.start_at <= now))
-    ann_q = ann_q.filter(or_(Announcement.end_at == None, Announcement.end_at >= now))
+    ann_q = ann_q.filter(or_(Announcement.start_at == None, Announcement.start_at <= (now + timedelta(hours=12))))
+    ann_q = ann_q.filter(or_(Announcement.end_at == None, Announcement.end_at >= (now - timedelta(hours=12))))
 
     # Date filters on created_at when show_all requested
     def _parse_date(s):
@@ -3924,7 +3925,7 @@ def notice_archive():
                 include = True
         if include:
             # Status label
-            is_window = ((a.start_at is None or a.start_at <= now) and (a.end_at is None or a.end_at >= now))
+            is_window = ((a.start_at is None or a.start_at <= (now + timedelta(hours=12))) and (a.end_at is None or a.end_at >= (now - timedelta(hours=12))))
             status_label = "Active" if (a.is_active and is_window) else "Inactive/Expired"
             try:
                 setattr(a, "_creator_name", users_map.get(getattr(a, "created_by", None)))
