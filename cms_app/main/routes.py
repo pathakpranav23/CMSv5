@@ -103,6 +103,7 @@ def _user_is_admin_or_clerk():
 
 @main_bp.route("/fees/bank-details", methods=["GET"])
 @login_required
+@cache.cached(timeout=300, key_prefix=lambda: f"fees_bank_details_{getattr(current_user, 'role', 'unknown')}")
 def fees_bank_details():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     # Allow view for admin/principal/clerk; restrict edit to admin/principal
@@ -216,6 +217,9 @@ def fees_bank_details_edit():
             db.session.add(existing)
         try:
             db.session.commit()
+            # Clear bank details cache for all relevant roles
+            for r in ["admin", "principal", "clerk"]:
+                cache.delete(f"fees_bank_details_{r}")
             try:
                 flash("Bank details saved.", "success")
             except Exception:
