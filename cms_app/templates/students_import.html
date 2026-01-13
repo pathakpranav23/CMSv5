@@ -34,6 +34,17 @@
       <label class="form-label">Excel File</label>
       <input type="file" name="file" class="form-control" accept=".xlsx,.xls" required>
       <div class="form-text">Download a sample: <a href="{{ url_for('main.students_import_template') }}">students_import_template.csv</a></div>
+      <div class="mt-2">
+        <small class="text-muted">Expected columns (order not strict, headers case-insensitive):</small>
+        <ul class="text-muted small mb-0">
+          <li><strong>enrollment_no</strong> (required)</li>
+          <li>surname, student_name, father_name</li>
+          <li>division_code (e.g. A), current_semester</li>
+          <li>mobile, date_of_birth (YYYY-MM-DD)</li>
+          <li>gender, photo_url, permanent_address</li>
+          <li>medium_tag (e.g. English/Gujarati)</li>
+        </ul>
+      </div>
     </div>
     <div class="form-check mb-3">
       <input class="form-check-input" type="checkbox" value="1" id="dryRun" name="dry_run" {% if form and form.dry_run %}checked{% endif %}>

@@ -113,8 +113,8 @@ def fees_bank_details():
         except Exception:
             pass
         return redirect(url_for("main.dashboard"))
-    programs = Program.query.order_by(Program.program_name.asc()).all()
-    details_map = { row.program_id_fk: row for row in ProgramBankDetails.query.all() }
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    details_map = { row.program_id_fk: row for row in db.session.execute(select(ProgramBankDetails)).scalars().all() }
     return render_template(
         "fees_bank_details.html",
         programs=programs,
@@ -149,7 +149,7 @@ def fees_bank_details_edit():
             pass
         return redirect(url_for("main.fees_bank_details"))
 
-    existing = ProgramBankDetails.query.filter_by(program_id_fk=program.program_id).first()
+    existing = db.session.execute(select(ProgramBankDetails).filter_by(program_id_fk=program.program_id)).scalars().first()
     if request.method == "POST":
         bank_name = (request.form.get("bank_name") or "").strip()
         account_name = (request.form.get("account_name") or "").strip()
@@ -246,15 +246,15 @@ def get_program_bank_details_resolved(program_id: int):
     if not program:
         return None
     name = (program.program_name or "").strip().upper()
-    row = ProgramBankDetails.query.filter_by(program_id_fk=program_id, active=True).first()
+    row = db.session.execute(select(ProgramBankDetails).filter_by(program_id_fk=program_id, active=True)).scalars().first()
     if row:
         return row
     if name == "MSC(IT)":
         return None
     if name == "MCOM":
-        bcom = Program.query.filter(Program.program_name.ilike("BCOM")).first()
+        bcom = db.session.execute(select(Program).filter(Program.program_name.ilike("BCOM"))).scalars().first()
         if bcom:
-            return ProgramBankDetails.query.filter_by(program_id_fk=bcom.program_id, active=True).first()
+            return db.session.execute(select(ProgramBankDetails).filter_by(program_id_fk=bcom.program_id, active=True)).scalars().first()
     return None
 
 def current_academic_year():
@@ -474,7 +474,7 @@ def fees_entry():
             except Exception:
                 pass
     else:
-        programs = Program.query.order_by(Program.program_name.asc()).all()
+        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     program_id_raw = (request.values.get("program_id") or "").strip()
     semester_raw = (request.values.get("semester") or "").strip()
     medium_raw = (request.values.get("medium") or "").strip()
@@ -739,7 +739,7 @@ def fees_receipt():
 
     # Only show frozen components
     # Fetch medium-specific rows plus Common for fallback
-    q = FeeStructure.query.filter_by(program_id_fk=selected_program.program_id, semester=semester, is_active=True)
+    q = db.session.execute(select(FeeStructure).filter_by(program_id_fk=selected_program.program_id, semester=semester, is_active=True)).scalars()
     rows = q.all()
     # Deduplicate by normalized slug; for finalized receipt choose the highest amount
     by_slug = {}
@@ -801,7 +801,7 @@ def fees_receipt_semester():
         flash("You are not authorized to access fees receipt.", "danger")
         return redirect(url_for("main.dashboard"))
 
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     # Optional student context for name display on receipt
     from ..models import Student
     enr_raw = (request.args.get("enrollment_no") or "").strip()
@@ -980,7 +980,7 @@ def fees_payment_status():
             medium = medium_raw.strip().capitalize()
 
     # Base student scope: program and semester
-    students_q = Student.query
+    students_q = select(Student)
     if selected_program:
         students_q = students_q.filter_by(program_id_fk=selected_program.program_id)
     if semester:
@@ -989,7 +989,7 @@ def fees_payment_status():
         # Proper column comparison for medium
         students_q = students_q.filter(Student.medium_tag == medium)
     students_q = students_q.order_by(Student.enrollment_no.asc())
-    students_all = students_q.all()
+    students_all = db.session.execute(students_q).scalars().all()
 
     # Compute required fee total for the selected scope (frozen rows, medium-aware)
     required_total = 0.0
