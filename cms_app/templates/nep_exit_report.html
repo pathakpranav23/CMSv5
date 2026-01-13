@@ -1,0 +1,116 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <h2 class="mb-4">
+        <i class="bi bi-award text-primary"></i> NEP 2020 Exit Eligibility Report
+        <small class="text-muted fs-6 ms-2">Tracking Certificate, Diploma, and Degree Eligibility</small>
+    </h2>
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <form method="GET" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Select Program</label>
+                    <select name="program_id" class="form-select" onchange="this.form.submit()">
+                        <option value="">-- Select Program --</option>
+                        {% for p in programs %}
+                        <option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>
+                            {{ p.program_name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100"><i class="bi bi-filter"></i> Filter</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if selected_program %}
+    <div class="card shadow-sm">
+        <div class="card-header bg-light">
+            <div class="d-flex justify-content-between align-items-center">
+                <span class="fw-bold">Eligibility Status for {{ selected_program.program_name }}</span>
+                <span class="badge bg-info text-dark">Total Students: {{ report_data|length }}</span>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped mb-0 align-middle">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Enrollment No</th>
+                            <th>Student Name</th>
+                            <th>Current Sem</th>
+                            <th class="text-center">Total Credits</th>
+                            <th class="text-center">Certificate (Sem 2)</th>
+                            <th class="text-center">Diploma (Sem 4)</th>
+                            <th class="text-center">Degree (Sem 6)</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in report_data %}
+                        <tr>
+                            <td class="fw-bold">{{ row.enrollment_no }}</td>
+                            <td>{{ row.name }}</td>
+                            <td>{{ row.current_semester }}</td>
+                            <td class="text-center fw-bold text-primary">{{ row.total_credits }}</td>
+                            
+                            <!-- Certificate Eligibility -->
+                            <td class="text-center">
+                                {% if row.eligible_certificate %}
+                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Eligible</span>
+                                {% else %}
+                                    <span class="text-muted small">-</span>
+                                {% endif %}
+                            </td>
+
+                            <!-- Diploma Eligibility -->
+                            <td class="text-center">
+                                {% if row.eligible_diploma %}
+                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Eligible</span>
+                                {% else %}
+                                    <span class="text-muted small">-</span>
+                                {% endif %}
+                            </td>
+
+                            <!-- Degree Eligibility -->
+                            <td class="text-center">
+                                {% if row.eligible_degree %}
+                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Eligible</span>
+                                {% else %}
+                                    <span class="text-muted small">-</span>
+                                {% endif %}
+                            </td>
+
+                            <td>
+                                {% if row.eligible_degree %}
+                                    <span class="badge bg-primary">Degree Ready</span>
+                                {% elif row.eligible_diploma %}
+                                    <span class="badge bg-info text-dark">Diploma Ready</span>
+                                {% elif row.eligible_certificate %}
+                                    <span class="badge bg-warning text-dark">Cert. Ready</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">In Progress</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="8" class="text-center py-4 text-muted">
+                                <i class="bi bi-info-circle display-6 d-block mb-2"></i>
+                                No student records found for this program.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

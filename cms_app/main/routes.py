@@ -141,7 +141,7 @@ def fees_bank_details_edit():
         except Exception:
             pass
         return redirect(url_for("main.fees_bank_details"))
-    program = Program.query.get(program_id)
+    program = db.session.get(Program, program_id)
     if not program:
         try:
             flash("Program not found.", "danger")
@@ -242,7 +242,7 @@ def get_program_bank_details_resolved(program_id: int):
     - If program name is 'MCOM' and missing, fallback to BCOM's details.
     - If program name is 'MSC(IT)', return None to hide bank block.
     """
-    program = Program.query.get(program_id)
+    program = db.session.get(Program, program_id)
     if not program:
         return None
     name = (program.program_name or "").strip().upper()
@@ -464,7 +464,7 @@ def fees_entry():
         # Restrict to the mapped program only for clerks/principals
         programs = []
         if pid_scope:
-            p_row = Program.query.get(pid_scope)
+            p_row = db.session.get(Program, pid_scope)
             if p_row:
                 programs = [p_row]
         else:
@@ -484,7 +484,7 @@ def fees_entry():
         if (program_id is None) or (program_id != pid_scope):
             program_id = pid_scope
     semester = int(semester_raw) if semester_raw.isdigit() else None
-    selected_program = Program.query.get(program_id) if program_id else None
+    selected_program = db.session.get(Program, program_id) if program_id else None
     # Normalize medium: treat Common/blank as None; capitalize specific mediums
     medium = None
     if medium_raw:
@@ -732,7 +732,7 @@ def fees_receipt():
             medium = medium_raw.strip().capitalize()
     program_id = int(program_id_raw) if program_id_raw.isdigit() else None
     semester = int(semester_raw) if semester_raw.isdigit() else None
-    selected_program = Program.query.get(program_id) if program_id else None
+    selected_program = db.session.get(Program, program_id) if program_id else None
     if not (selected_program and semester):
         flash("Select program and semester.", "warning")
         return redirect(url_for("main.fees_entry"))
@@ -805,7 +805,7 @@ def fees_receipt_semester():
     # Optional student context for name display on receipt
     from ..models import Student
     enr_raw = (request.args.get("enrollment_no") or "").strip()
-    student = Student.query.get(enr_raw) if enr_raw else None
+    student = db.session.get(Student, enr_raw) if enr_raw else None
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     mode = (request.args.get("mode") or "frozen").strip().lower()  # frozen | preview
@@ -819,7 +819,7 @@ def fees_receipt_semester():
     user_program = None
     try:
         user_program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
-        user_program = Program.query.get(user_program_id) if user_program_id else None
+        user_program = db.session.get(Program, user_program_id) if user_program_id else None
     except Exception:
         user_program = None
     if role in ("clerk", "principal") and user_program:
@@ -829,7 +829,7 @@ def fees_receipt_semester():
     else:
         program_id = int(program_id_raw) if program_id_raw.isdigit() else None
     semester = int(semester_raw) if semester_raw.isdigit() else None
-    selected_program = Program.query.get(program_id) if program_id else None
+    selected_program = db.session.get(Program, program_id) if program_id else None
 
     items = []
     total_amount = 0.0
@@ -968,7 +968,7 @@ def fees_payment_status():
     medium_raw = (request.args.get("medium") or "").strip()
 
     program_id = int(program_id_raw) if program_id_raw.isdigit() else None
-    selected_program = Program.query.get(program_id) if program_id else None
+    selected_program = db.session.get(Program, program_id) if program_id else None
     semester = int(semester_raw) if semester_raw.isdigit() else None
 
     # Determine if selected program is B.Com for medium-specific filter
@@ -1145,7 +1145,7 @@ def fees_payment(enrollment_no):
     # Roles: students can view their own page; admin/clerk can view any
     role = (getattr(current_user, "role", "") or "").strip().lower()
     from ..models import Student, Program, FeeStructure
-    s = Student.query.get(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
     if not s:
         flash("Student not found.", "danger")
         return redirect(url_for("main.students"))
@@ -1174,7 +1174,7 @@ def fees_payment(enrollment_no):
             flash("You are not authorized to view this payment page.", "danger")
             return redirect(url_for("main.dashboard"))
 
-    program = Program.query.get(s.program_id_fk) if s.program_id_fk else None
+    program = db.session.get(Program, s.program_id_fk) if s.program_id_fk else None
     # Semester from query or student's current
     sem_raw = (request.args.get("semester") or "").strip()
     try:
@@ -1309,7 +1309,7 @@ def fees_payment_mark_paid(enrollment_no):
         flash("Not authorized to submit payment.", "danger")
         return redirect(url_for("main.dashboard"))
     from ..models import Student, Program, FeePayment
-    s = Student.query.get(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
     if not s:
         flash("Student not found.", "danger")
         return redirect(url_for("main.students"))
@@ -1323,7 +1323,7 @@ def fees_payment_mark_paid(enrollment_no):
             flash("You can only submit your own payment.", "danger")
             return redirect(url_for("main.dashboard"))
 
-    program = Program.query.get(s.program_id_fk) if s.program_id_fk else None
+    program = db.session.get(Program, s.program_id_fk) if s.program_id_fk else None
     semester_raw = (request.form.get("semester") or "").strip()
     try:
         semester = int(semester_raw) if semester_raw else int(s.current_semester or 0)
@@ -1412,7 +1412,7 @@ def fees_payment_verify(payment_id):
         flash("Not authorized to verify payments.", "danger")
         return redirect(url_for("main.dashboard"))
     from ..models import FeePayment, Student, User
-    fp = FeePayment.query.get(payment_id)
+    fp = db.session.get(FeePayment, payment_id)
     if not fp:
         flash("Payment not found.", "danger")
         return redirect(url_for("main.fees_payments_queue"))
@@ -1456,7 +1456,7 @@ def fees_payment_verify(payment_id):
         # Dashboard notification (persistent)
         try:
             from ..models import Notification, Student
-            s = Student.query.get(fp.enrollment_no)
+            s = db.session.get(Student, fp.enrollment_no)
             if s:
                 import json as _json
                 payload = {
@@ -1481,8 +1481,8 @@ def fees_payment_verify(payment_id):
             pass
         # Email notification
         try:
-            s = Student.query.get(fp.enrollment_no)
-            user = User.query.get(getattr(s, "user_id_fk", None)) if s else None
+            s = db.session.get(Student, fp.enrollment_no)
+            user = db.session.get(User, getattr(s, "user_id_fk", None)) if s else None
             to = getattr(user, "username", None) or None
             if to:
                 subj = "Payment Verified"
@@ -1505,7 +1505,7 @@ def fees_payment_reject(payment_id):
         flash("Not authorized to reject payments.", "danger")
         return redirect(url_for("main.dashboard"))
     from ..models import FeePayment, Student, User
-    fp = FeePayment.query.get(payment_id)
+    fp = db.session.get(FeePayment, payment_id)
     if not fp:
         flash("Payment not found.", "danger")
         return redirect(url_for("main.fees_payments_queue"))
@@ -1519,7 +1519,7 @@ def fees_payment_reject(payment_id):
         # Dashboard notification (persistent)
         try:
             from ..models import Notification, Student
-            s = Student.query.get(fp.enrollment_no)
+            s = db.session.get(Student, fp.enrollment_no)
             if s:
                 import json as _json
                 payload = {
@@ -1544,8 +1544,8 @@ def fees_payment_reject(payment_id):
             pass
         # Email notification
         try:
-            s = Student.query.get(fp.enrollment_no)
-            user = User.query.get(getattr(s, "user_id_fk", None)) if s else None
+            s = db.session.get(Student, fp.enrollment_no)
+            user = db.session.get(User, getattr(s, "user_id_fk", None)) if s else None
             to = getattr(user, "username", None) or None
             if to:
                 subj = "Payment Rejected"
@@ -1874,7 +1874,7 @@ def subject_material_new(subject_id: int):
 @csrf_required
 def subject_material_edit(material_id: int):
     material = SubjectMaterial.query.get_or_404(material_id)
-    subject = Subject.query.get(material.subject_id_fk)
+    subject = db.session.get(Subject, material.subject_id_fk)
     role = (getattr(current_user, "role", "") or "").strip().lower()
     is_owner = (material.faculty_id_fk == current_user.user_id)
     if not (_user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(material.subject_id_fk) and is_owner)):
@@ -2149,16 +2149,16 @@ def dashboard():
         # Admin can optionally scope by program via query param
         if program_id_raw:
             try:
-                selected_program = Program.query.get(int(program_id_raw))
+                selected_program = db.session.get(Program, int(program_id_raw))
             except Exception:
                 selected_program = None
     else:
         # Principal scope: use user's program if provided, else default to BCA
         if user_id_raw:
             try:
-                u = User.query.get(int(user_id_raw))
+                u = db.session.get(User, int(user_id_raw))
                 if u and u.program_id_fk:
-                    selected_program = Program.query.get(u.program_id_fk)
+                    selected_program = db.session.get(Program, u.program_id_fk)
             except Exception:
                 selected_program = None
         if not selected_program:
@@ -3145,7 +3145,7 @@ def announcements_list():
 @csrf_required
 def notification_dismiss(notification_id):
     from ..models import Notification, Student
-    n = Notification.query.get(notification_id)
+    n = db.session.get(Notification, notification_id)
     if not n:
         return jsonify({"ok": False, "error": "not_found"}), 404
     try:
@@ -3378,7 +3378,7 @@ def announcement_new():
 @role_required("admin", "clerk", "principal", "faculty")
 @csrf_required
 def announcement_edit(announcement_id: int):
-    a = Announcement.query.get(announcement_id)
+    a = db.session.get(Announcement, announcement_id)
     if not a:
         flash("Announcement not found.", "danger")
         return redirect(url_for("main.announcements_list"))
@@ -3617,7 +3617,7 @@ def announcement_edit(announcement_id: int):
 @role_required("admin", "clerk", "principal", "faculty")
 @csrf_required
 def announcement_attachment_delete(announcement_id: int):
-    a = Announcement.query.get(announcement_id)
+    a = db.session.get(Announcement, announcement_id)
     if not a:
         flash("Announcement not found.", "danger")
         return redirect(url_for("main.announcements_list"))
@@ -3653,7 +3653,7 @@ def announcement_attachment_delete(announcement_id: int):
 @login_required
 @role_required("admin", "clerk", "principal", "faculty")
 def announcement_deactivate(announcement_id: int):
-    a = Announcement.query.get(announcement_id)
+    a = db.session.get(Announcement, announcement_id)
     if not a:
         flash("Announcement not found.", "danger")
         return redirect(url_for("main.announcements_list"))
@@ -3680,7 +3680,7 @@ def announcement_deactivate(announcement_id: int):
 @login_required
 def announcement_dismiss(announcement_id: int):
     # Per-user dismissal of dashboard banner
-    a = Announcement.query.get(announcement_id)
+    a = db.session.get(Announcement, announcement_id)
     if not a:
         flash("Announcement not found.", "danger")
         return redirect(url_for("main.dashboard"))
@@ -4060,7 +4060,7 @@ def reset_password(token):
         flash("Invalid reset link.", "danger")
         return redirect(url_for("main.forgot_password"))
 
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
     if not user:
         flash("Invalid reset link.", "danger")
         return redirect(url_for("main.forgot_password"))
@@ -4311,7 +4311,7 @@ def faculty_list():
     for u in users:
         # Resolve program name if available
         try:
-            program = Program.query.get(u.program_id_fk) if u.program_id_fk else None
+            program = db.session.get(Program, u.program_id_fk) if u.program_id_fk else None
             program_name = program.program_name if program else ""
         except Exception:
             program_name = ""
@@ -4346,7 +4346,7 @@ def faculty_profile(faculty_id):
     # Resolve program name if available
     try:
         from ..models import Program
-        program = Program.query.get(f.program_id_fk) if f.program_id_fk else None
+        program = db.session.get(Program, f.program_id_fk) if f.program_id_fk else None
         program_name = program.program_name if program else ""
     except Exception:
         program_name = ""
@@ -4913,7 +4913,7 @@ def faculty_edit(faculty_id: int):
             programs = Program.query.order_by(Program.program_name).all()
             # Determine current linked username for display
             try:
-                current_user_link = User.query.get(f.user_id_fk) if f.user_id_fk else None
+                current_user_link = db.session.get(User, f.user_id_fk) if f.user_id_fk else None
                 linked_username = current_user_link.username if current_user_link else ""
             except Exception:
                 linked_username = ""
@@ -4990,7 +4990,7 @@ def faculty_edit(faculty_id: int):
             errors.append("Failed to update faculty. Please try again.")
             programs = Program.query.order_by(Program.program_name).all()
             try:
-                current_user_link = User.query.get(f.user_id_fk) if f.user_id_fk else None
+                current_user_link = db.session.get(User, f.user_id_fk) if f.user_id_fk else None
                 linked_username = current_user_link.username if current_user_link else ""
             except Exception:
                 linked_username = ""
@@ -5046,7 +5046,7 @@ def faculty_edit(faculty_id: int):
     form_data["medium_expertise"] = f.medium_expertise or ""
     # Resolve current linked username for display
     try:
-        current_user_link = User.query.get(f.user_id_fk) if f.user_id_fk else None
+        current_user_link = db.session.get(User, f.user_id_fk) if f.user_id_fk else None
         linked_username = current_user_link.username if current_user_link else ""
     except Exception:
         linked_username = ""
@@ -5071,7 +5071,7 @@ def faculty_delete(faculty_id: int):
         elif role == 'principal' and pid and f.program_id_fk == pid:
             allowed = True
         if allowed and f.user_id_fk:
-            u = User.query.get(f.user_id_fk)
+            u = db.session.get(User, f.user_id_fk)
             if u and (u.role in ("Faculty", "Clerk")):
                 user_to_delete = u
     except Exception:
@@ -5169,7 +5169,7 @@ def students():
                     n = (row.get("program_name") or "").strip()
                     d = (row.get("default_medium") or "").strip().lower()
                     default_by_name[n] = d
-            prog = Program.query.get(selected_program_id)
+            prog = db.session.get(Program, selected_program_id)
             d = default_by_name.get(prog.program_name if prog else "")
             if d in ("english", "gujarati"):
                 selected_medium = d
@@ -5351,7 +5351,7 @@ def students_new():
             errors.append("Student Name is required.")
 
         # Validate uniqueness
-        if enrollment_no and Student.query.get(enrollment_no):
+        if enrollment_no and db.session.get(Student, enrollment_no):
             errors.append("Enrollment No already exists.")
 
         # Parse integers
@@ -5459,7 +5459,7 @@ def students_new():
 
         # If program is BCom and medium not provided, default to General
         try:
-            prog = Program.query.get(program_id_fk) if program_id_fk else None
+            prog = db.session.get(Program, program_id_fk) if program_id_fk else None
             if prog and ((prog.program_name or "").replace(".", "").replace(" ", "").upper() == "BCOM") and not medium_tag:
                 medium_tag = "General"
         except Exception:
@@ -5505,7 +5505,7 @@ def students_new():
 @login_required
 @role_required("admin", "principal", "clerk")
 def students_edit(enrollment_no):
-    s = Student.query.get(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
     if not s:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
@@ -5660,7 +5660,7 @@ def students_edit(enrollment_no):
 
         # If program is BCom and medium not provided, default to General
         try:
-            prog = Program.query.get(s.program_id_fk) if s.program_id_fk else None
+            prog = db.session.get(Program, s.program_id_fk) if s.program_id_fk else None
             if prog and ((prog.program_name or "").replace(".", "").replace(" ", "").upper() == "BCOM") and not (s.medium_tag or "").strip():
                 s.medium_tag = "General"
         except Exception:
@@ -5702,13 +5702,13 @@ def students_edit(enrollment_no):
 
 @main_bp.route("/students/<enrollment_no>")
 def students_show(enrollment_no):
-    s = Student.query.get(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
     if not s:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
 
-    program = Program.query.get(s.program_id_fk) if s.program_id_fk else None
-    division = Division.query.get(s.division_id_fk) if s.division_id_fk else None
+    program = db.session.get(Program, s.program_id_fk) if s.program_id_fk else None
+    division = db.session.get(Division, s.division_id_fk) if s.division_id_fk else None
 
     # Filters for attendance
     def _parse_date(val):
@@ -5919,7 +5919,7 @@ def students_show(enrollment_no):
 
 @main_bp.route("/students/<enrollment_no>/attendance")
 def students_attendance(enrollment_no):
-    s = Student.query.get(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
     if not s:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
@@ -5981,7 +5981,7 @@ def students_attendance(enrollment_no):
 
 @main_bp.route("/students/<enrollment_no>/attendance/export")
 def students_attendance_export(enrollment_no):
-    s = Student.query.get(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
     if not s:
         return Response("Student not found", status=404)
     a_start = request.args.get("a_start") or ""
@@ -6031,7 +6031,7 @@ def students_attendance_export(enrollment_no):
 
 @main_bp.route("/students/<enrollment_no>/grades")
 def students_grades(enrollment_no):
-    s = Student.query.get(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
     if not s:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
@@ -6082,7 +6082,7 @@ def students_grades(enrollment_no):
 
 @main_bp.route("/students/<enrollment_no>/grades/export")
 def students_grades_export(enrollment_no):
-    s = Student.query.get(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
     if not s:
         return Response("Student not found", status=404)
     g_sem_raw = request.args.get("g_sem") or ""
@@ -6123,7 +6123,7 @@ def students_grades_export(enrollment_no):
 @login_required
 @role_required("admin", "principal", "clerk")
 def students_delete(enrollment_no):
-    s = Student.query.get(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
     if not s:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
@@ -6223,7 +6223,7 @@ def subjects_list():
     selected_program = None
     if program_id_raw:
         try:
-            selected_program = Program.query.get(int(program_id_raw))
+            selected_program = db.session.get(Program, int(program_id_raw))
         except Exception:
             selected_program = None
     if not selected_program:
@@ -6374,7 +6374,7 @@ def offer_electives():
     selected_program = None
     if program_id_raw:
         try:
-            selected_program = Program.query.get(int(program_id_raw))
+            selected_program = db.session.get(Program, int(program_id_raw))
         except Exception:
             selected_program = None
     # Enforce program scoping for principal/clerk
@@ -6382,7 +6382,7 @@ def offer_electives():
         user_role = (getattr(current_user, "role", "") or "").strip().lower()
         user_program = getattr(current_user, "program_id_fk", None)
         if user_role in ["principal", "clerk"] and user_program:
-            selected_program = Program.query.get(user_program) or selected_program
+            selected_program = db.session.get(Program, user_program) or selected_program
     except Exception:
         pass
     if not selected_program:
@@ -6466,11 +6466,11 @@ def offer_electives():
         skipped = 0
         for sid in subject_ids:
             # Validate that subject belongs to selected program + semester and is elective
-            sub = Subject.query.get(sid)
+            sub = db.session.get(Subject, sid)
             if not sub or sub.program_id_fk != (selected_program.program_id if selected_program else None) or sub.semester != semester or not (sub.is_elective or False):
                 continue
             for enr in student_ids:
-                stu = Student.query.get(enr)
+                stu = db.session.get(Student, enr)
                 if not stu:
                     continue
                 # Avoid duplicates for same academic year
@@ -6546,7 +6546,7 @@ def offer_electives():
 @role_required("admin", "principal")
 def subject_assign(subject_id):
     subj = Subject.query.get_or_404(subject_id)
-    program = Program.query.get(subj.program_id_fk)
+    program = db.session.get(Program, subj.program_id_fk)
 
     # Principal scope restriction: only allow assignment within assigned program
     try:
@@ -6683,7 +6683,7 @@ def subject_assign(subject_id):
 @role_required("admin", "principal", "clerk")
 def subject_edit(subject_id: int):
     subj = Subject.query.get_or_404(subject_id)
-    program = Program.query.get(subj.program_id_fk)
+    program = db.session.get(Program, subj.program_id_fk)
     subject_types = SubjectType.query.order_by(SubjectType.type_code).all()
 
     # Scope restriction: principals/clerks can only edit within assigned program
@@ -6846,7 +6846,7 @@ def subject_new():
     sem_raw = request.args.get("semester")
     _ctx = _program_dropdown_context(program_id_raw, include_admin_all=False, default_program_name="BCA", exclude_names=["BCOM"])
     selected_program_id = _ctx.get("selected_program_id")
-    selected_program = Program.query.get(selected_program_id) if selected_program_id else None
+    selected_program = db.session.get(Program, selected_program_id) if selected_program_id else None
     try:
         semester = int(sem_raw) if sem_raw else 1
     except Exception:
@@ -7028,7 +7028,7 @@ def enroll_core():
     selected_program = None
     if program_id_raw:
         try:
-            selected_program = Program.query.get(int(program_id_raw))
+            selected_program = db.session.get(Program, int(program_id_raw))
         except Exception:
             selected_program = None
     # Enforce program scoping for principal/clerk
@@ -7036,7 +7036,7 @@ def enroll_core():
         user_role = (getattr(current_user, "role", "") or "").strip().lower()
         user_program = getattr(current_user, "program_id_fk", None)
         if user_role in ["principal", "clerk"] and user_program:
-            selected_program = Program.query.get(user_program) or selected_program
+            selected_program = db.session.get(Program, user_program) or selected_program
     except Exception:
         pass
     if not selected_program:
@@ -7511,7 +7511,7 @@ def user_map_program(user_id: int):
         flash("Invalid program selected.", "danger")
         return redirect(url_for("main.users_list"))
 
-    prog = Program.query.get(pid)
+    prog = db.session.get(Program, pid)
     if not prog:
         flash("Program not found.", "danger")
         return redirect(url_for("main.users_list"))
@@ -7674,8 +7674,8 @@ def attendance_mark():
         selected_period = None
 
     roster = []
-    subject = Subject.query.get(selected_subject_id) if selected_subject_id else None
-    division = Division.query.get(selected_division_id) if selected_division_id else None
+    subject = db.session.get(Subject, selected_subject_id) if selected_subject_id else None
+    division = db.session.get(Division, selected_division_id) if selected_division_id else None
     schedule = make_schedule()
     # Parse selected date or default to today
     from datetime import date
@@ -7722,7 +7722,7 @@ def attendance_mark():
             for r in roster:
                 enr = r.get("enrollment_no")
                 try:
-                    stu = Student.query.get(enr)
+                    stu = db.session.get(Student, enr)
                 except Exception:
                     stu = None
                 pid = getattr(stu, "program_id_fk", None) if stu else None
@@ -7858,14 +7858,14 @@ def attendance_show():
 
     # Optional student filter for personal daily report
     q_enr = (request.args.get("enrollment_no") or "").strip()
-    student = Student.query.get(q_enr) if q_enr else None
+    student = db.session.get(Student, q_enr) if q_enr else None
     # Compute student's Roll No
     # BCA: per-program+semester stable mapping 1..200, does not reset on division change
     # Others: fallback to per-division sequential numbering
     student_roll_no = None
     if student:
         try:
-            prog = Program.query.get(student.program_id_fk)
+            prog = db.session.get(Program, student.program_id_fk)
             is_bca = bool(prog and ((prog.program_name or "").strip().upper() == "BCA"))
             if is_bca and student.current_semester:
                 rows = (
@@ -8632,7 +8632,7 @@ def attendance_search():
     results = []
     if students and start_date and end_date:
         for s in students:
-            div = Division.query.get(s.division_id_fk) if s.division_id_fk else None
+            div = db.session.get(Division, s.division_id_fk) if s.division_id_fk else None
             sem = s.current_semester or (div.semester if div else None)
             div_code = div.division_code if div else ""
             att_rows = Attendance.query.filter(
@@ -8950,7 +8950,7 @@ def students_import():
         selected_program = None
         try:
             if program_id_raw:
-                selected_program = Program.query.get(int(program_id_raw))
+                selected_program = db.session.get(Program, int(program_id_raw))
         except Exception:
             selected_program = None
         try:
@@ -9042,7 +9042,7 @@ def subjects_import():
                 selected_program_id = int((request.form.get("program_id_fk") or "").strip() or 0) or selected_program_id
             except Exception:
                 selected_program_id = selected_program_id
-            selected_program = Program.query.get(selected_program_id) if selected_program_id else None
+            selected_program = db.session.get(Program, selected_program_id) if selected_program_id else None
 
         semester_raw = (request.form.get("semester") or "").strip()
         force_semester_flag = (request.form.get("force_semester") or "").strip().lower() in {"1","true","on"}
@@ -9050,7 +9050,7 @@ def subjects_import():
         dry_run_flag = ((request.form.get("dry_run") or "").strip().lower() in {"1","true","on"})
         errors = []
 
-        selected_program = Program.query.get(selected_program_id) if selected_program_id else None
+        selected_program = db.session.get(Program, selected_program_id) if selected_program_id else None
         try:
             semester = int(semester_raw) if semester_raw else None
         except Exception:
@@ -9220,7 +9220,7 @@ def subjects_import():
             )
 
     # GET with optional prefill; principals/clerks are locked to their program
-    selected_program = Program.query.get(selected_program_id) if selected_program_id else None
+    selected_program = db.session.get(Program, selected_program_id) if selected_program_id else None
     form_prefill = {
         "program_id_fk": (selected_program_id or ""),
         "semester": (request.args.get("semester") or "").strip(),
@@ -9582,7 +9582,7 @@ def fees_new():
         semester_raw = (request.form.get("semester") or "").strip()
 
         # Validate student
-        s = Student.query.get(enrollment_no) if enrollment_no else None
+        s = db.session.get(Student, enrollment_no) if enrollment_no else None
         if not s:
             errors.append("Student not found.")
 
@@ -9666,7 +9666,7 @@ def fees_student(enrollment_no):
     except Exception:
         return redirect(url_for("main.dashboard"))
     from ..models import FeesRecord, Student
-    s = Student.query.get(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
     if not s:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.fees_list"))
@@ -9763,7 +9763,7 @@ def fees_structure_view():
     if role in ("clerk"):
         programs = []
         if pid_scope:
-            p_row = Program.query.get(pid_scope)
+            p_row = db.session.get(Program, pid_scope)
             if p_row:
                 programs = [p_row]
         else:
@@ -9779,7 +9779,7 @@ def fees_structure_view():
     if role in ("clerk") and pid_scope:
         if (program_id is None) or (program_id != pid_scope):
             program_id = pid_scope
-    selected_program = Program.query.get(program_id) if program_id else None
+    selected_program = db.session.get(Program, program_id) if program_id else None
     # Medium should only apply and display for B.Com programs
     show_medium = bool(selected_program) and ("bcom" in ((selected_program.program_name or "").strip().lower()))
     if not show_medium:
@@ -9913,7 +9913,7 @@ def fees_heads():
     if role in ("clerk"):
         programs = []
         if pid_scope:
-            p_row = Program.query.get(pid_scope)
+            p_row = db.session.get(Program, pid_scope)
             if p_row:
                 programs = [p_row]
         else:
@@ -9932,7 +9932,7 @@ def fees_heads():
         if (program_id is None) or (program_id != pid_scope):
             program_id = pid_scope
     semester = int(semester_raw) if semester_raw.isdigit() else None
-    selected_program = Program.query.get(program_id) if program_id else None
+    selected_program = db.session.get(Program, program_id) if program_id else None
 
     errors = []
     messages = []
@@ -10133,7 +10133,7 @@ def fees_import():
     if role in ("clerk"):
         programs = []
         if pid_scope:
-            p_row = Program.query.get(pid_scope)
+            p_row = db.session.get(Program, pid_scope)
             if p_row:
                 programs = [p_row]
         else:
@@ -10153,7 +10153,7 @@ def fees_import():
         if (program_id is None) or (program_id != pid_scope):
             program_id = pid_scope
     semester = int(semester_raw) if semester_raw.isdigit() else None
-    selected_program = Program.query.get(program_id) if program_id else None
+    selected_program = db.session.get(Program, program_id) if program_id else None
 
     # Normalize medium: "" or "Common" => None; else title-cased (English/Gujarati)
     medium = None
@@ -10297,7 +10297,7 @@ def fees_import_sample():
     medium_raw = (request.args.get("medium") or "").strip()
     program_id = int(program_id_raw) if program_id_raw.isdigit() else None
     semester = int(semester_raw) if semester_raw.isdigit() else None
-    prog = Program.query.get(program_id) if program_id else None
+    prog = db.session.get(Program, program_id) if program_id else None
     # Normalize medium
     medium = None
     if medium_raw:
@@ -10408,7 +10408,7 @@ def module_divisions():
     plans = []
     selected_program = None
     if selected_program_id:
-        selected_program = Program.query.get(selected_program_id)
+        selected_program = db.session.get(Program, selected_program_id)
         plans = (
             ProgramDivisionPlan.query
             .filter_by(program_id_fk=selected_program_id)
@@ -10538,7 +10538,7 @@ def divisions_rebalance():
         return redirect(url_for("main.module_divisions"))
 
     # Resolve program and planned settings
-    prog = Program.query.get(program_id)
+    prog = db.session.get(Program, program_id)
     if not prog:
         flash("Selected program not found.", "danger")
         return redirect(url_for("main.module_divisions"))
@@ -10645,9 +10645,9 @@ def divisions_rebalance():
 
     # Programs to process
     if program_id:
-        programs = [Program.query.get(program_id)] if Program.query.get(program_id) else []
+        programs = [db.session.get(Program, program_id)] if db.session.get(Program, program_id) else []
     else:
-        programs = Program.query.all() if role == "admin" else ([Program.query.get(user_program_id)] if user_program_id else [])
+        programs = Program.query.all() if role == "admin" else ([db.session.get(Program, user_program_id)] if user_program_id else [])
 
     total_updated = 0
     for p in programs:
@@ -10862,7 +10862,7 @@ def division_new():
 def division_edit(division_id: int):
     from ..models import Division, Program
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    d = Division.query.get(division_id)
+    d = db.session.get(Division, division_id)
     if not d:
         flash("Division not found.", "danger")
         return redirect(url_for("main.divisions_list"))
@@ -10968,7 +10968,7 @@ def chart_students_by_program():
             # Principal sees only their program
             program_id = getattr(current_user, "program_id_fk", None)
             if program_id:
-                program = Program.query.get(program_id)
+                program = db.session.get(Program, program_id)
                 count = db.session.query(func.count(Student.enrollment_no)).filter(Student.program_id_fk == program_id).scalar() or 0
                 data = [{"label": (program.program_name if program else "Unknown"), "value": count, "color": "hsl(200, 70%, 60%)"}]
             else:
@@ -11030,7 +11030,7 @@ def chart_staff_by_program():
             # Principal sees only their program
             program_id = getattr(current_user, "program_id_fk", None)
             if program_id:
-                program = Program.query.get(program_id)
+                program = db.session.get(Program, program_id)
                 count = db.session.query(func.count(Faculty.faculty_id)).filter(Faculty.program_id_fk == program_id).scalar() or 0
                 data = [{"label": (program.program_name if program else "Unknown"), "value": count, "color": "hsl(120, 70%, 50%)"}]
             else:
@@ -11079,7 +11079,7 @@ def chart_fees_collection():
             # Principal sees only their program
             program_id = getattr(current_user, "program_id_fk", None)
             if program_id:
-                program = Program.query.get(program_id)
+                program = db.session.get(Program, program_id)
                 total_collected = db.session.query(db.func.sum(FeesRecord.amount_paid))\
                     .join(Student, Student.enrollment_no == FeesRecord.student_id_fk)\
                     .filter(
@@ -11258,7 +11258,7 @@ def students_export_csv():
     writer = _csv.writer(buf)
     writer.writerow(["EnrollmentNo", "Surname", "StudentName", "FatherName", "Program", "Semester", "Division", "Medium", "Mobile"])
     for s in rows:
-        div = Division.query.get(s.division_id_fk)
+        div = db.session.get(Division, s.division_id_fk)
         writer.writerow([
             s.enrollment_no or "",
             s.surname or "",
@@ -11447,7 +11447,7 @@ def api_reports_fees_program_status():
     except ValueError:
         sem = None
     med = medium_raw if medium_raw else None
-    prog = Program.query.get(pid) if pid else None
+    prog = db.session.get(Program, pid) if pid else None
     sq = Student.query
     if pid:
         sq = sq.filter(Student.program_id_fk == pid)
@@ -11556,7 +11556,7 @@ def fees_program_status_export_csv():
     except ValueError:
         sem = None
     med = medium_raw if medium_raw else None
-    prog = Program.query.get(pid) if pid else None
+    prog = db.session.get(Program, pid) if pid else None
     sq = Student.query
     if pid:
         sq = sq.filter(Student.program_id_fk == pid)
@@ -11712,7 +11712,7 @@ def api_reports_subject_lectures():
             sessions[k] = {"subject_id": k[0], "division_id": k[1], "date": k[2], "period": k[3]}
     items = list(sessions.values())
     items.sort(key=lambda x: ((x.get("date") or datetime.utcnow().date()), int(x.get("period") or 0)))
-    subj = Subject.query.get(sid) if sid else None
+    subj = db.session.get(Subject, sid) if sid else None
     div_map = {d.division_id: d.division_code for d in Division.query.all()}
     for it in items:
         it["division_code"] = div_map.get(it.get("division_id"))
@@ -11721,7 +11721,7 @@ def api_reports_subject_lectures():
         p = int(it.get("period") or 0)
         timing_map = {1: "09:00-10:00", 2: "10:00-11:00", 3: "11:00-12:00", 4: "12:00-13:00", 5: "14:00-15:00", 6: "15:00-16:00"}
         it["timing"] = timing_map.get(p, "")
-    prog = Program.query.get(pid) if pid else None
+    prog = db.session.get(Program, pid) if pid else None
     summary = {
         "program_id": pid,
         "program_name": getattr(prog, "program_name", "") if prog else "All",
@@ -11798,8 +11798,8 @@ def subject_lectures_export_csv():
             sessions[k] = {"subject_id": k[0], "division_id": k[1], "date": k[2], "period": k[3]}
     items = list(sessions.values())
     items.sort(key=lambda x: ((x.get("date") or datetime.utcnow().date()), int(x.get("period") or 0)))
-    subj = Subject.query.get(sid) if sid else None
-    prog = Program.query.get(pid) if pid else None
+    subj = db.session.get(Subject, sid) if sid else None
+    prog = db.session.get(Program, pid) if pid else None
     import io, csv as _csv
     buf = io.StringIO()
     w = _csv.writer(buf)
@@ -12009,7 +12009,7 @@ def api_reports_absentees():
             counts[key] = counts.get(key, 0) + 1
     items = []
     for sid_fk, c in counts.items():
-        st = Student.query.get(sid_fk) if sid_fk else None
+        st = db.session.get(Student, sid_fk) if sid_fk else None
         items.append({
             "student_id": sid_fk,
             "enrollment_no": getattr(st, "enrollment_no", None),
@@ -12052,7 +12052,7 @@ def absentees_export_csv():
     w = _csv.writer(buf)
     w.writerow(["StudentID", "EnrollmentNo", "Name", "Absences"])
     for sid_fk, c in sorted(counts.items(), key=lambda kv: kv[1], reverse=True):
-        st = Student.query.get(sid_fk) if sid_fk else None
+        st = db.session.get(Student, sid_fk) if sid_fk else None
         w.writerow([sid_fk or "", getattr(st, "enrollment_no", "") or "", (((getattr(st, "student_name", "") or "") + " " + (getattr(st, "surname", "") or "")).strip()), c])
     data = buf.getvalue().encode("utf-8")
     return Response(data, headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=absentees.csv"})
@@ -12133,6 +12133,75 @@ def api_reports_attendance_students():
     items.sort(key=lambda x: x.get("rate", 0.0))
     return api_success({"items": items, "total": len(items)}, {"program_id": pid, "semester": sem, "subject_id": subj, "threshold": thr, "mode": mode_raw})
 
+@main_bp.route("/admin/reports/nep-exit-eligibility", methods=["GET"])
+@login_required
+@role_required("admin", "principal")
+@cache.cached(timeout=60, key_prefix=lambda: f"nep_report_{getattr(current_user, 'user_id', 'anon')}_{request.full_path}", unless=lambda: session.get("_flashes"))
+def nep_exit_report():
+    programs = Program.query.order_by(Program.program_name.asc()).all()
+    program_id_raw = (request.args.get("program_id") or "").strip()
+    selected_program = None
+    report_data = []
+
+    if program_id_raw:
+        try:
+            pid = int(program_id_raw)
+            selected_program = db.session.get(Program, pid)
+            if selected_program:
+                # 1. Fetch all students for this program
+                students = Student.query.filter_by(program_id_fk=pid, active=True).order_by(Student.enrollment_no.asc()).all()
+                
+                # 2. Bulk fetch Credit Structure for all subjects in this program
+                # Map subject_id -> total_credits
+                subjects = Subject.query.filter_by(program_id_fk=pid).all()
+                subject_credits = {}
+                for s in subjects:
+                    # If explicit structure exists
+                    if s.credit_structure:
+                        subject_credits[s.subject_id] = s.credit_structure.total_credits
+                    else:
+                        # Fallback: assume 4 credits for now if missing
+                        subject_credits[s.subject_id] = 4
+                
+                # 3. Bulk fetch Grades for these students
+                student_ids = [s.enrollment_no for s in students]
+                if student_ids:
+                    # We want all grades for these students where they 'passed'
+                    # Assuming GPA >= 4.0 is pass for now
+                    grades = Grade.query.filter(Grade.student_id_fk.in_(student_ids), Grade.gpa_for_subject >= 4.0).all()
+                    
+                    # 4. Calculate total credits per student
+                    student_credit_map = {sid: 0 for sid in student_ids}
+                    for g in grades:
+                        c = subject_credits.get(g.subject_id_fk, 0)
+                        if g.student_id_fk in student_credit_map:
+                            student_credit_map[g.student_id_fk] += c
+                    
+                    # 5. Build report rows
+                    for s in students:
+                        total_credits = student_credit_map.get(s.enrollment_no, 0)
+                        
+                        # Eligibility Logic (Example Thresholds)
+                        # Certificate: Sem 2 passed (approx 40 credits)
+                        # Diploma: Sem 4 passed (approx 80 credits)
+                        # Degree: Sem 6 passed (approx 120 credits)
+                        
+                        row = {
+                            "enrollment_no": s.enrollment_no,
+                            "name": f"{s.student_name} {s.surname}".strip(),
+                            "current_semester": s.current_semester,
+                            "total_credits": total_credits,
+                            "eligible_certificate": (total_credits >= 40),
+                            "eligible_diploma": (total_credits >= 80),
+                            "eligible_degree": (total_credits >= 120),
+                        }
+                        report_data.append(row)
+        except Exception as e:
+            current_app.logger.error(f"Error generating NEP report: {e}")
+            flash("Error generating report.", "danger")
+
+    return render_template("nep_exit_report.html", programs=programs, selected_program=selected_program, report_data=report_data)
+
 @main_bp.route("/attendance/export.csv", methods=["GET"])
 @login_required
 def attendance_students_export_csv():
@@ -12187,7 +12256,7 @@ def attendance_students_export_csv():
     except Exception:
         program_map = {}
     try:
-        subj_name = Subject.query.get(subj).subject_name if subj else None
+        subj_name = db.session.get(Subject, subj).subject_name if subj else None
     except Exception:
         subj_name = None
     prog_name = program_map.get(pid) if pid else None
