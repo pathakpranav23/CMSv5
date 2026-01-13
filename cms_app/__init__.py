@@ -83,6 +83,9 @@ def create_app():
         pass
     try:
         cache.init_app(app)
+        # Fix for Flask-Caching AttributeError: 'Cache' object has no attribute 'app'
+        if not hasattr(cache, "app"):
+            cache.app = app
     except Exception:
         pass
     # Auth: Flask-Login
@@ -284,7 +287,7 @@ def create_app():
     def load_user(user_id: str):
         try:
             from .models import User
-            return User.query.get(int(user_id))
+            return db.session.get(User, int(user_id))
         except Exception:
             return None
 

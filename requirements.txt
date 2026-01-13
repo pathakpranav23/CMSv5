@@ -2,7 +2,7 @@ Flask==2.2.5
 Flask-SQLAlchemy==2.5.1
 Flask-Migrate==3.1.0
 Flask-Login==0.6.2
-psycopg2-binary==2.9.9
+# psycopg2-binary==2.9.9 # Optional/Prod only
 python-dotenv==0.21.1
 openpyxl==3.0.10
 SQLAlchemy==1.4.49
