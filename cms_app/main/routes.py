@@ -3,7 +3,7 @@ from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
 import os
 import csv
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
@@ -2506,7 +2506,7 @@ def dashboard():
     charts = {}
     try:
         # Build program map for labels
-        prog_rows = Program.query.order_by(Program.program_name.asc()).all()
+        prog_rows = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
         prog_map = {p.program_id: p.program_name for p in prog_rows}
 
         # Student enrollment counts
@@ -2514,7 +2514,7 @@ def dashboard():
             data = []
             for pid, name in prog_map.items():
                 try:
-                    cnt = Student.query.filter_by(program_id_fk=pid).count()
+                    cnt = db.session.scalar(select(func.count()).select_from(Student).filter_by(program_id_fk=pid))
                 except Exception:
                     cnt = 0
                 data.append({"label": name, "value": cnt})
@@ -2524,13 +2524,13 @@ def dashboard():
         def _fees_by_program():
             # Map enrollment -> program id
             try:
-                st_rows = Student.query.with_entities(Student.enrollment_no, Student.program_id_fk).all()
+                st_rows = db.session.execute(select(Student.enrollment_no, Student.program_id_fk)).all()
             except Exception:
                 st_rows = []
             enr_to_prog = {enr: pid for (enr, pid) in st_rows}
             sums = {pid: 0.0 for pid in prog_map.keys()}
             try:
-                fee_rows = FeesRecord.query.with_entities(FeesRecord.student_id_fk, FeesRecord.amount_paid).all()
+                fee_rows = db.session.execute(select(FeesRecord.student_id_fk, FeesRecord.amount_paid)).all()
             except Exception:
                 fee_rows = []
             for enr, amt in fee_rows:
@@ -2547,7 +2547,7 @@ def dashboard():
             data = []
             for pid, name in prog_map.items():
                 try:
-                    cnt = Faculty.query.filter_by(program_id_fk=pid).count()
+                    cnt = db.session.scalar(select(func.count()).select_from(Faculty).filter_by(program_id_fk=pid))
                 except Exception:
                     cnt = 0
                 data.append({"label": name, "value": cnt})
@@ -2559,7 +2559,7 @@ def dashboard():
             income = {}
             years = set()
             try:
-                fee_rows = FeesRecord.query.with_entities(FeesRecord.date_paid, FeesRecord.amount_paid).all()
+                fee_rows = db.session.execute(select(FeesRecord.date_paid, FeesRecord.amount_paid)).all()
             except Exception:
                 fee_rows = []
             for dt, amt in fee_rows:
@@ -2585,7 +2585,7 @@ def dashboard():
         # Principal/Clerk scoped helpers
         def _students_by_semester(program_id: int, selected_semester: int = None):
             try:
-                rows = Student.query.with_entities(Student.current_semester).filter_by(program_id_fk=program_id).all()
+                rows = db.session.execute(select(Student.current_semester).filter_by(program_id_fk=program_id)).all()
             except Exception:
                 rows = []
             counts = {}
@@ -8920,7 +8920,7 @@ def program_delete(program_id: int):
 def students_import():
     from ..models import Program
     # Programs for selection
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     # Optional sample preview of result UI without uploading
     preview_flag = (request.args.get("preview") or "").strip().lower()
     if preview_flag == "sample":
@@ -12149,7 +12149,7 @@ def nep_exit_report():
             selected_program = db.session.get(Program, pid)
             if selected_program:
                 # 1. Fetch all students for this program
-                students = Student.query.filter_by(program_id_fk=pid, active=True).order_by(Student.enrollment_no.asc()).all()
+                students = Student.query.filter_by(program_id_fk=pid).order_by(Student.enrollment_no.asc()).all()
                 
                 # 2. Bulk fetch Credit Structure for all subjects in this program
                 # Map subject_id -> total_credits

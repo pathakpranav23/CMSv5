@@ -4,6 +4,7 @@ import os
 import csv
 from datetime import datetime
 from typing import Dict, List
+from sqlalchemy import select
 
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
@@ -167,7 +168,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
         program_name = detect_program_from_filename(path)
 
     # Ensure program exists
-    program = Program.query.filter_by(program_name=program_name).first()
+    program = db.session.execute(select(Program).filter_by(program_name=program_name)).scalars().first()
     if not program:
         program = Program(program_name=program_name, program_duration_years=3)
         db.session.add(program)
@@ -202,10 +203,10 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
 
             # Division (respect per-program planning)
             division_code = cell_to_str(data.get("division_code")) or "A"
-            division = Division.query.filter_by(program_id_fk=program.program_id, semester=semester, division_code=division_code).first()
+            division = db.session.execute(select(Division).filter_by(program_id_fk=program.program_id, semester=semester, division_code=division_code)).scalars().first()
             if not division:
                 # Determine capacity from ProgramDivisionPlan; fallback to BCA=67 else Division default
-                plan = ProgramDivisionPlan.query.filter_by(program_id_fk=program.program_id, semester=semester).first()
+                plan = db.session.execute(select(ProgramDivisionPlan).filter_by(program_id_fk=program.program_id, semester=semester)).scalars().first()
                 cap = None
                 if plan:
                     try:
@@ -221,7 +222,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                 divisions_created += 1
             else:
                 # Align capacity with planning when available; avoid uniform forcing
-                plan = ProgramDivisionPlan.query.filter_by(program_id_fk=program.program_id, semester=semester).first()
+                plan = db.session.execute(select(ProgramDivisionPlan).filter_by(program_id_fk=program.program_id, semester=semester)).scalars().first()
                 if plan:
                     try:
                         cap = int(plan.capacity_per_division)
@@ -285,7 +286,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
 
             current_semester = semester or to_int(data.get("current_semester"))
 
-            student = Student.query.filter_by(enrollment_no=enrollment_no).first()
+            student = db.session.execute(select(Student).filter_by(enrollment_no=enrollment_no)).scalars().first()
             if not student:
                 student = Student(
                     enrollment_no=enrollment_no,
@@ -353,9 +354,9 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                 continue
 
             division_code = cell_to_str(data.get("division_code")) or "A"
-            division = Division.query.filter_by(program_id_fk=program.program_id, semester=semester, division_code=division_code).first()
+            division = db.session.execute(select(Division).filter_by(program_id_fk=program.program_id, semester=semester, division_code=division_code)).scalars().first()
             if not division:
-                plan = ProgramDivisionPlan.query.filter_by(program_id_fk=program.program_id, semester=semester).first()
+                plan = db.session.execute(select(ProgramDivisionPlan).filter_by(program_id_fk=program.program_id, semester=semester)).scalars().first()
                 cap = None
                 if plan:
                     try:
@@ -422,7 +423,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
 
             current_semester = semester or to_int(data.get("current_semester"))
 
-            student = Student.query.filter_by(enrollment_no=enrollment_no).first()
+            student = db.session.execute(select(Student).filter_by(enrollment_no=enrollment_no)).scalars().first()
             if not student:
                 student = Student(
                     enrollment_no=enrollment_no,
