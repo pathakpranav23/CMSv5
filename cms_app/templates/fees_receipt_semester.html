@@ -45,212 +45,46 @@
   {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
   <div class="section-header d-flex justify-content-between align-items-center mb-3 no-print">
     <h2 class="mb-0 title d-flex align-items-center">Semester Fees Receipt <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
-    <div class="actions">
-       <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#batchOps" aria-expanded="false" aria-controls="batchOps">
-         <i class="bi bi-gear-wide-connected me-1"></i> Batch Operations
-       </button>
-    </div>
+    <div class="actions"></div>
   </div>
 
-  <!-- Primary Action: Hybrid Global Search (Omni-Search) -->
-  <div class="card mb-3 no-print quick-pay-card shadow-sm border-primary">
-    <div class="card-body p-4">
-      <div class="row g-2 align-items-center">
-        <div class="col-12">
-          <label class="form-label fw-bold text-primary mb-2"><i class="bi bi-search me-1"></i> Search Student for Payment</label>
-          <div class="position-relative">
-            <div class="input-group input-group-lg">
-              <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
-              <input type="text" id="qpSearch" class="form-control border-start-0 ps-0 form-control-lg" placeholder="Loading directory..." disabled autocomplete="off" autofocus />
-              <button class="btn btn-outline-secondary" type="button" id="forceSearchBtn" title="Force Server Search"><i class="bi bi-cloud-download"></i></button>
-            </div>
-            <div id="qpSuggestions" class="list-group position-absolute w-100 shadow-lg" style="z-index: 1000; max-height: 400px; overflow-y:auto; display:none; top: 100%;"></div>
-          </div>
-          <div class="d-flex justify-content-between mt-2">
-            <div class="form-text"><i class="bi bi-info-circle me-1"></i> Instant search. If not found, press Enter to search server.</div>
-            <div class="small text-muted" id="cacheStatus">Initializing...</div>
-          </div>
-        </div>
-      </div>
+  <form method="get" class="row g-3 mb-3 no-print">
+    {% if (current_user.role|lower) == 'admin' %}
+    <div class="col-md-6">
+      <label for="program_id" class="form-label">Program</label>
+      <select class="form-select" id="program_id" name="program_id" required>
+        <option value="">Select Program</option>
+        {% for p in programs %}
+          <option value="{{ p.program_id }}" {% if filters.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+        {% endfor %}
+      </select>
     </div>
-  </div>
-
-  <script>
-    (function(){
-      // -----------------------------------------------------------------------
-      // Hybrid Search Engine (Local Cache + API Fallback)
-      // -----------------------------------------------------------------------
-      const searchInput = document.getElementById('qpSearch');
-      const suggBox = document.getElementById('qpSuggestions');
-      const cacheStatus = document.getElementById('cacheStatus');
-      const forceBtn = document.getElementById('forceSearchBtn');
-      const feesPaymentUrlTemplate = "{{ url_for('main.fees_payment', enrollment_no='__ENR__') }}";
-      
-      let allStudents = [];
-      let isLoaded = false;
-      let debounceTimer;
-
-      // 1. Initial Load (Tier 1)
-      async function loadStudents() {
-        try {
-          cacheStatus.innerText = "Downloading directory...";
-          const resp = await fetch("{{ url_for('main.api_students_search') }}?limit=2000"); 
-          const jsonResp = await resp.json();
-          // API returns {success: true, data: {items: [...]}}
-          const items = (jsonResp.data && jsonResp.data.items) || (jsonResp.items) || [];
-          allStudents = items;
-          isLoaded = true;
-          
-          searchInput.disabled = false;
-          searchInput.placeholder = "Start typing Name, Surname, or Enrollment No...";
-          cacheStatus.innerText = `${allStudents.length} students loaded locally.`;
-          
-          // Auto-focus
-          searchInput.focus();
-        } catch(e) {
-          console.error("Failed to load students", e);
-          cacheStatus.innerText = "Offline mode or server error.";
-          searchInput.disabled = false;
-          searchInput.placeholder = "Search server directly...";
-        }
-      }
-
-      loadStudents();
-
-      // 2. Hybrid Search Logic
-      function performSearch(query, forceServer = false) {
-        if (!query) {
-           suggBox.style.display = 'none';
-           return;
-        }
-        
-        // Step A: Local Search
-        const q = query.toLowerCase();
-        let matches = allStudents.filter(s => {
-          if (s.enrollment_no && s.enrollment_no.toLowerCase().includes(q)) return true;
-          const full = (s.name || '').toLowerCase();
-          return full.includes(q);
-        }).slice(0, 15);
-
-        // Step B: Decision - Show Local or Ask Server?
-        if (matches.length > 0 && !forceServer) {
-          showSuggestions(matches, false);
-        } else {
-          // If local failed OR user forced it, go to Server (Tier 2)
-          fetchServerSearch(query);
-        }
-      }
-
-      async function fetchServerSearch(query) {
-        suggBox.innerHTML = '<div class="list-group-item text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Searching server archive...</div>';
-        suggBox.style.display = 'block';
-        
-        try {
-          const url = new URL("{{ url_for('main.api_students_search') }}", window.location.origin);
-          url.searchParams.set('q', query);
-          url.searchParams.set('limit', 50); // Deep search gets more specific results
-          
-          const resp = await fetch(url.toString());
-          const jsonResp = await resp.json();
-          // API returns {success: true, data: {items: [...]}}
-          const items = (jsonResp.data && jsonResp.data.items) || (jsonResp.items) || [];
-          
-          if (items.length === 0) {
-             suggBox.innerHTML = '<div class="list-group-item text-center text-muted py-3">No matching students found on server.</div>';
-          } else {
-             showSuggestions(items, true);
-          }
-        } catch(e) {
-          suggBox.innerHTML = '<div class="list-group-item text-danger">Server search failed. Check connection.</div>';
-        }
-      }
-
-      // 3. Render
-      function showSuggestions(items, isServerResult) {
-        suggBox.innerHTML = '';
-        
-        const header = document.createElement('div');
-        header.className = 'list-group-item bg-light fw-bold text-muted small py-2 d-flex justify-content-between';
-        header.innerHTML = `<span>${isServerResult ? 'Server Results' : 'Instant Results'}</span><span class="badge bg-secondary">${items.length}</span>`;
-        suggBox.appendChild(header);
-
-        items.forEach(it => {
-           const item = document.createElement('div');
-           item.className = 'list-group-item list-group-item-action py-2';
-           
-           let paymentUrl = feesPaymentUrlTemplate.replace('__ENR__', encodeURIComponent(it.enrollment_no));
-           const params = new URLSearchParams();
-           if (it.semester) params.set('semester', it.semester);
-           if (it.program_id) params.set('program_id', it.program_id);
-           paymentUrl += '?' + params.toString();
-
-           item.innerHTML = `
-              <div class="row align-items-center">
-                <div class="col-2">
-                   <div class="ratio ratio-1x1 rounded-circle bg-secondary bg-opacity-10 overflow-hidden" style="width: 40px; height: 40px;">
-                     ${it.photo_url ? `<img src="${it.photo_url}" class="w-100 h-100 object-fit-cover">` : '<i class="bi bi-person-fill text-muted fs-5 d-flex align-items-center justify-content-center h-100"></i>'}
-                   </div>
-                </div>
-                <div class="col-6">
-                  <div class="fw-bold text-dark small">${it.name}</div>
-                  <div class="small text-muted" style="font-size:0.75rem;">${it.enrollment_no} • ${it.program_name || ''} Sem ${it.semester}</div>
-                </div>
-                <div class="col-4 text-end">
-                  <a href="${paymentUrl}" class="btn btn-xs btn-primary rounded-pill px-3 py-1" style="font-size:0.8rem;">
-                    Select
-                  </a>
-                </div>
-              </div>
-           `;
-           suggBox.appendChild(item);
-        });
-        
-        // Add "Search Server" option at bottom if local result
-        if (!isServerResult) {
-            const footer = document.createElement('div');
-            footer.className = 'list-group-item list-group-item-action text-center text-primary small py-2';
-            footer.style.cursor = 'pointer';
-            footer.innerHTML = '<i class="bi bi-cloud-download me-1"></i> Not here? Search entire server';
-            footer.onclick = () => fetchServerSearch(searchInput.value);
-            suggBox.appendChild(footer);
-        }
-        
-        suggBox.style.display = 'block';
-      }
-
-      // 4. Event Listeners
-      searchInput.addEventListener('input', function() {
-        const q = (this.value || '').trim();
-        if (debounceTimer) clearTimeout(debounceTimer);
-        
-        if (q.length < 2) {
-          suggBox.style.display = 'none';
-          return;
-        }
-        
-        // 300ms delay for smooth typing
-        debounceTimer = setTimeout(() => performSearch(q), 300);
-      });
-      
-      // Force search on Enter
-      searchInput.addEventListener('keydown', function(e) {
-         if (e.key === 'Enter') {
-             e.preventDefault();
-             performSearch(this.value, true); // Force server search
-         }
-      });
-      
-      forceBtn.addEventListener('click', () => performSearch(searchInput.value, true));
-
-      // Hide on click outside
-      document.addEventListener('click', function(ev){
-        if (!suggBox.contains(ev.target) && ev.target !== searchInput && ev.target !== forceBtn) {
-          suggBox.style.display = 'none';
-        }
-      });
-
-    })();
-  </script>
+    {% endif %}
+    <div class="col-md-3">
+      <label for="semester" class="form-label">Semester</label>
+      <input class="form-control" type="number" min="1" id="semester" name="semester" value="{{ filters.semester or '' }}" required />
+    </div>
+    {% if show_medium %}
+    <div class="col-md-3">
+      <label for="medium" class="form-label">Medium</label>
+      <select class="form-select" id="medium" name="medium">
+        <option value="" {% if not filters.medium %}selected{% endif %}>Common</option>
+        <option value="English" {% if (filters.medium or '')|lower == 'english' %}selected{% endif %}>English</option>
+        <option value="Gujarati" {% if (filters.medium or '')|lower == 'gujarati' %}selected{% endif %}>Gujarati</option>
+      </select>
+    </div>
+    {% endif %}
+    <div class="col-md-3">
+      <label for="mode" class="form-label">Mode</label>
+      <select class="form-select" id="mode" name="mode">
+        <option value="frozen" {% if filters.mode == 'frozen' %}selected{% endif %}>Finalized only (frozen)</option>
+        <option value="preview" {% if filters.mode == 'preview' %}selected{% endif %}>Preview current amounts</option>
+      </select>
+    </div>
+    <div class="col-12">
+      <button type="submit" class="btn btn-primary">Generate</button>
+    </div>
+  </form>
 
   {% if selected_program and semester %}
     <div class="text-center mb-3 receipt-header no-print">
@@ -297,19 +131,23 @@
       <div class="card-body">
         <form id="quickPayForm" method="get" action="">
           <div class="row g-2 align-items-end">
-            <div class="col-12">
-              <label class="form-label fw-bold">Find Student</label>
+            <div class="col-md-6 col-lg-5">
+              <label class="form-label">Search by Name or Enrollment No.</label>
               <div class="position-relative">
-                <div class="input-group input-group-lg">
-                  <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
-                  <input type="text" id="qpSearch" class="form-control border-start-0 ps-0" placeholder="Type Name, Surname, or Enrollment No..." autocomplete="off" />
-                </div>
-                <div id="qpSuggestions" class="list-group position-absolute w-100 shadow-lg" style="z-index: 1000; max-height: 400px; overflow-y:auto; display:none; top: 100%;"></div>
+                <input type="text" id="qpSearch" class="form-control" placeholder="Type 2+ letters or digits (e.g., 1001 or Patel)" autocomplete="off" />
+                <div id="qpSuggestions" class="list-group position-absolute w-100" style="z-index: 1000; max-height: 220px; overflow:auto; display:none;"></div>
               </div>
-              <div class="form-text mt-2"><i class="bi bi-info-circle me-1"></i> Start typing to see student details. Click "Select" to proceed to payment.</div>
+            </div>
+            <div class="col-md-4 col-lg-3">
+              <label class="form-label">Enrollment</label>
+              <input type="text" name="enrollment" id="qpEnrollment" class="form-control" placeholder="e.g., 1001" />
+            </div>
+            <div class="col-md-2 col-lg-2">
+              <button type="submit" class="btn btn-primary w-100">Open Payment</button>
             </div>
           </div>
         </form>
+        <p class="text-muted mb-0">Find a student by name or enrollment, then open the Direct UPI payment page with current context.</p>
       </div>
     </div>
 
@@ -326,77 +164,55 @@
       (function(){
         const searchInput = document.getElementById('qpSearch');
         const suggBox = document.getElementById('qpSuggestions');
+        const enrInput = document.getElementById('qpEnrollment');
+        const form = document.getElementById('quickPayForm');
         const cfgEl = document.getElementById('qpConfig');
+        const studentsUrlBase = (cfgEl && cfgEl.dataset && cfgEl.dataset.studentsUrl) || '';
         const feesPaymentUrlTemplate = (cfgEl && cfgEl.dataset && cfgEl.dataset.feesPaymentUrlTemplate) || '';
         const programId = (cfgEl && cfgEl.dataset && cfgEl.dataset.programId ? Number(cfgEl.dataset.programId) : null);
         const semesterVal = (cfgEl && cfgEl.dataset && cfgEl.dataset.semester ? Number(cfgEl.dataset.semester) : null);
         const mediumVal = (cfgEl && cfgEl.dataset && cfgEl.dataset.medium) || '';
         const hasContext = Boolean(programId) && Boolean(semesterVal);
 
-        // Gate search only if we wanted to enforce context, but now it's global.
-        // However, we still need to handle the payment URL construction dynamically.
-        
-        function clearSuggestions(){ suggBox.innerHTML = ''; suggBox.style.display = 'none'; }
-        
-        function showSuggestions(items){
-          if (!items || items.length === 0) { 
-            suggBox.innerHTML = '<div class="list-group-item text-center text-muted py-3">No students found matching your query.</div>';
-            suggBox.style.display = 'block';
-            return; 
+        // Gate search until program & semester are set
+        if (!hasContext) {
+          if (searchInput) {
+            searchInput.disabled = true;
+            searchInput.placeholder = 'Select program & semester to search';
           }
+        }
+
+        function clearSuggestions(){ suggBox.innerHTML = ''; suggBox.style.display = 'none'; }
+        function showSuggestions(items){
+          if (!items || items.length === 0) { clearSuggestions(); return; }
           suggBox.innerHTML = '';
-          
-          // Header for results
-          const header = document.createElement('div');
-          header.className = 'list-group-item bg-light fw-bold text-muted small py-2';
-          header.innerHTML = '<div class="row"><div class="col-2">Photo</div><div class="col-6">Student Details</div><div class="col-4 text-end">Action</div></div>';
-          suggBox.appendChild(header);
-
           items.forEach(function(it){
-            const item = document.createElement('div');
-            item.className = 'list-group-item list-group-item-action py-3';
-            
-            // Construct Name
-            const fullName = [it.name, it.father_name, it.surname].filter(Boolean).join(' ');
-            const enrollment = it.enrollment_no || 'N/A';
-            const programInfo = it.program_name ? `${it.program_name} Sem ${it.semester}` : '';
-            
-            // AUTO-CONTEXT SWITCHING URL
-            // We use the student's actual semester and program_id from the search result
-            // instead of the currently loaded page context.
-            // This ensures clicking a Sem 5 student loads the Sem 5 receipt page.
-            let paymentUrl = feesPaymentUrlTemplate.replace('__ENR__', encodeURIComponent(enrollment));
-            
-            // Append the student's actual semester to the URL parameters
-            const params = new URLSearchParams();
-            if (it.semester) params.set('semester', it.semester);
-            if (it.program_id) params.set('program_id', it.program_id);
-            // We don't know medium from search result yet (API update needed ideally), but common usually works.
-            // If medium is needed, the next page load will handle it or default it.
-            
-            paymentUrl += '?' + params.toString();
-
-            item.innerHTML = `
-              <div class="row align-items-center">
-                <div class="col-2">
-                  <div class="ratio ratio-1x1 rounded-circle bg-secondary bg-opacity-10 overflow-hidden" style="width: 48px; height: 48px;">
-                     ${it.photo_url ? `<img src="${it.photo_url}" class="w-100 h-100 object-fit-cover" alt="Student">` : '<i class="bi bi-person-fill text-muted fs-4 d-flex align-items-center justify-content-center h-100"></i>'}
-                  </div>
-                </div>
-                <div class="col-6">
-                  <div class="fw-bold text-dark">${fullName}</div>
-                  <div class="small text-muted"><i class="bi bi-card-heading me-1"></i> ${enrollment}</div>
-                  <div class="small text-secondary">${programInfo}</div>
-                </div>
-                <div class="col-4 text-end">
-                  <a href="${paymentUrl}" class="btn btn-sm btn-primary rounded-pill px-3">
-                    Select <i class="bi bi-arrow-right ms-1"></i>
-                  </a>
-                </div>
-              </div>
-            `;
-            suggBox.appendChild(item);
+            const a = document.createElement('a');
+            a.href = '#'; a.className = 'list-group-item list-group-item-action';
+            a.innerHTML = `<div class="d-flex justify-content-between"><span><span class="fw-semibold">${it.name || '—'}</span><span class="text-muted small"> &middot; ${it.program_name || ''}</span><span class="badge bg-light text-dark ms-2">Sem ${it.semester || ''}</span></span><span class="badge bg-secondary">${it.enrollment_no}</span></div>`;
+            a.addEventListener('click', function(ev){ ev.preventDefault(); enrInput.value = it.enrollment_no || ''; searchInput.value = it.name || ''; clearSuggestions(); });
+            suggBox.appendChild(a);
           });
+          // Append a small "view all matches" link with same filters
+          const q = (searchInput.value || '').trim();
+          if (q.length >= 2) {
+            const link = document.createElement('a');
+            link.className = 'list-group-item list-group-item-action';
+            const params = new URLSearchParams();
+            if (programId) params.set('program_id', String(programId));
+            if (semesterVal) params.set('semester', String(semesterVal));
+            if (mediumVal) params.set('medium', (mediumVal || '').toLowerCase() || 'all');
+            // Route supports name or enrollment_no; choose based on query pattern
+            const isNameLike = /[a-zA-Z]/.test(q);
+            if (isNameLike) {
+              params.set('name', q);
+            } else {
+              params.set('enrollment_no', q);
+            }
+            link.href = studentsUrlBase + '?' + params.toString();
+            link.innerHTML = `<div class="d-flex justify-content-center"><span class="small text-primary">View all matches</span></div>`;
+            suggBox.appendChild(link);
+          }
           suggBox.style.display = 'block';
         }
 
@@ -405,18 +221,28 @@
           const q = (searchInput.value || '').trim();
           if (debounceTimer) { clearTimeout(debounceTimer); }
           if (q.length < 2) { clearSuggestions(); return; }
-          
+          if (!hasContext) { clearSuggestions(); return; }
           debounceTimer = setTimeout(function(){
-            // For global search, we don't strictly limit by current page context anymore
             const params = new URLSearchParams({ q: q });
-            // We can optionally pass current context as hint, but backend now handles global search if 'q' is present.
             if (programId) params.set('program_id', String(programId));
-            
+            if (semesterVal) params.set('semester', String(semesterVal));
+            if (mediumVal) params.set('medium', mediumVal);
             fetch(`${window.location.origin}/api/students/search?` + params.toString())
               .then(r => r.ok ? r.json() : Promise.reject())
               .then(data => showSuggestions((data && data.items) || []))
               .catch(() => clearSuggestions());
-          }, 300);
+          }, 220);
+        });
+
+        form.addEventListener('submit', function(ev){
+          ev.preventDefault();
+          const enr = (enrInput.value || '').trim();
+          if (!enr) { alert('Please select or enter an enrollment number.'); return; }
+          const url = feesPaymentUrlTemplate.replace('__ENR__', encodeURIComponent(enr));
+          const params = new URLSearchParams();
+          if (semesterVal) params.set('semester', String(semesterVal));
+          if (mediumVal) params.set('medium', mediumVal);
+          window.location.href = url + (params.toString() ? ('?' + params.toString()) : '');
         });
 
         document.addEventListener('click', function(ev){

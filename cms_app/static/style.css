@@ -433,7 +433,7 @@ body > main { flex: 1 0 auto; }
 .dashboard-linear .btn-outline-primary:hover { background-color: #4f46e5; color: #fff; border-color: #4f46e5; }
 
 /* Mobile dashboard improvements */
-@media (max-width: 767.98px) {
+@media (max-width: 768px) {
   .dashboard-linear .card-header {
     padding: 0.75rem 1rem;
     display: flex;
@@ -526,7 +526,7 @@ body > main { flex: 1 0 auto; }
 .sidebar .nav a .label { flex: 1; }
 .sidebar .user-tools { margin-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.15); padding-top: 0.5rem; }
 
-/* Dashboard Module Icon Badges (Visible Contrast) */
+/* Small modern icon badge next to modules */
 .module-icon {
   display: inline-flex;
   align-items: center;
@@ -534,18 +534,10 @@ body > main { flex: 1 0 auto; }
   width: 22px;
   height: 22px;
   border-radius: 6px;
-  background-color: var(--nav-bg); /* Use solid navbar color instead of transparent */
-  color: #ffffff; /* Always white for best contrast against nav-bg */
-  opacity: 0.9;
-  flex-shrink: 0;
-}
-.module-icon i { font-size: 0.9rem; line-height: 1; }
-
-/* In sidebar, ensure contrast against dark background */
-.sidebar .module-icon {
-  background-color: rgba(255,255,255,0.2);
+  background-color: rgba(255,255,255,0.15);
   color: var(--nav-fg);
 }
+.module-icon i { font-size: 1rem; line-height: 1; }
 
 .app-main { margin-left: 256px; flex: 1 0 auto; }
 
@@ -626,11 +618,11 @@ body > main { flex: 1 0 auto; }
     left: 0;
     bottom: 0;
     z-index: 1040;
-    width: 250px;
-    max-width: 80%;
+    width: 85%;
+    max-width: 320px;
     box-shadow: var(--shadow-strong);
+    /* Subtle gradient for visual appeal on mobile */
     background-image: linear-gradient(135deg, var(--nav-bg), rgba(255,255,255,0.06));
-    transition: transform 0.3s ease-in-out;
   }
   .app-shell.sidebar-open .sidebar { transform: translateX(0); }
 
@@ -639,18 +631,11 @@ body > main { flex: 1 0 auto; }
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.5);
-    z-index: 1035;
-    backdrop-filter: blur(2px);
+    background: rgba(0,0,0,0.35);
+    z-index: 1030;
   }
 
-  .app-main { 
-    position: relative; 
-    z-index: 1; 
-    margin-left: 0; 
-    width: 100%;
-    overflow-x: hidden;
-  }
+  .app-main { position: relative; z-index: 1; margin-left: 0; }
   .sidebar .nav a { padding: 0.5rem; }
 }
 
@@ -694,7 +679,7 @@ html, body { width: 100%; overflow-x: hidden; }
   .kpi-hero .kpi { display: flex; flex-direction: column; align-items: flex-start; width: 100%; padding: 0.5rem 0.75rem; background-color: var(--card-header-bg); border: 1px solid var(--card-border); border-radius: 8px; }
 }
 /* KPI hero: two-column layout on small phones (sm range) */
-@media (min-width: 576px) and (max-width: 767.98px) {
+@media (min-width: 576px) and (max-width: 768px) {
   .kpi-hero .card-body { flex-direction: column; align-items: stretch; }
   .kpi-hero .card-body > .d-flex { flex-wrap: wrap; }
   .kpi-hero .kpi { flex: 1 1 calc(50% - 0.75rem); min-width: 0; }
@@ -1245,8 +1230,6 @@ body[data-theme="lightblue"] .app-footer { --gradient-start: #eaf2ff; --gradient
   .actions .btn.btn-sm {
     min-height: var(--btn-height-sm);
     padding: 0 0.75rem;
-    width: auto;
-    min-width: 0;
   }
 }
 

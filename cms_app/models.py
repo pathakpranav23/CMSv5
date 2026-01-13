@@ -156,8 +156,6 @@ class Attendance(db.Model):
     semester = db.Column(db.Integer)
     # Lecture period number (1-6) for day-wise schedule; optional for legacy rows
     period_no = db.Column(db.Integer)
-    # NEW: Topic/Unit covered in this lecture (for Syllabus Tracking)
-    topic = db.Column(db.String(255))
 
 
 class Grade(db.Model):

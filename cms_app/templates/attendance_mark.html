@@ -18,22 +18,8 @@
   {% endif %}
 
   <form method="get" action="" class="card mb-3">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <span>Select Context</span>
-      <div class="small text-muted d-none d-md-block">AY {{ selected.academic_year }}</div>
-    </div>
+    <div class="card-header">Select Context</div>
     <div class="card-body row g-3">
-      {% if (role_display_lower == 'admin') %}
-      <div class="col-md-3">
-        <label class="form-label">Program</label>
-        <select name="program_id" class="form-select" id="markProgram" onchange="this.form.submit()">
-          <option value="">Select Program</option>
-          {% for p in programs %}
-            <option value="{{ p.program_id }}" {% if selected_program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% endif %}
       <div class="col-md-2">
         <label class="form-label">Semester</label>
         <select name="semester" class="form-select" id="markSemester">
@@ -48,7 +34,7 @@
         <label class="form-label">Subject</label>
         <select name="subject_id" class="form-select" id="markSubject" required>
           <option value="">Select subject…</option>
-          {% for opt in unique_subjects %}
+          {% for opt in options %}
             <option value="{{ opt.subject_id }}" data-semester="{{ opt.semester }}" {% if selected.subject_id == opt.subject_id %}selected{% endif %}>{{ opt.subject_name }} (Sem {{ opt.semester }})</option>
           {% endfor %}
         </select>
@@ -151,95 +137,56 @@
       </div>
     </div>
     <div class="col-lg-8">
-      <form method="post" action="" class="card" id="rosterForm">
-        <div class="card-header d-flex flex-wrap align-items-center justify-content-between sticky-top bg-white z-2 border-bottom gap-2">
-          <div class="d-none d-md-block">
-            <span>Roster{% if subject %}: {{ subject.subject_name }}{% endif %}{% if division %} — {{ division.division_code }}{% endif %}</span>
-          </div>
-
-          <div class="flex-grow-1" style="min-width: 200px;">
-            <input type="text" name="topic" class="form-control form-control-sm border-primary" placeholder="Enter Topic / Unit Covered (e.g., Unit 1: Intro)" required>
-          </div>
-
-          <div class="d-flex align-items-center gap-2 w-100 w-md-auto justify-content-between justify-content-md-end">
-            <select name="period_no" class="form-select form-select-sm" style="max-width: 140px;" required>
+      <form method="post" action="" class="card">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <span>Roster{% if subject %}: {{ subject.subject_name }}{% endif %}{% if division %} — {{ division.division_code }}{% endif %} — {{ selected.date }}</span>
+          <div class="d-flex gap-2">
+            <select name="period_no" class="form-select form-select-sm" style="width:auto" required>
               <option value="">Select lecture…</option>
               {% for s in schedule %}
-                <option value="{{ s.idx }}" {% if selected.period_no == s.idx %}selected{% endif %}>Lec {{ s.idx }} ({{ s.start }})</option>
+                <option value="{{ s.idx }}" {% if selected.period_no == s.idx %}selected{% endif %}>Lecture {{ s.idx }} ({{ s.start }}–{{ s.end }})</option>
               {% endfor %}
             </select>
-            <button type="submit" class="btn btn-success btn-sm text-nowrap"><i class="bi bi-save me-1"></i> Save</button>
+            <button type="submit" class="btn btn-success btn-sm">Save Attendance</button>
           </div>
         </div>
-        
-        <!-- Mobile Bulk Actions -->
-        {% if roster and roster|length > 0 %}
-        <div class="bg-light p-2 border-bottom d-flex justify-content-between align-items-center">
-           <button type="button" class="btn btn-sm btn-outline-success" onclick="markAll('P')">All Present</button>
-           <div class="small fw-bold text-muted" id="statsBar">P: 0 | A: 0</div>
-        </div>
-        {% endif %}
-
         <div class="card-body p-0">
           {% if roster_alert %}
             <div class="alert alert-warning m-3">
-              Short roster detected: {{ roster_alert.enrolled }} enrolled out of {{ roster_alert.total }} students.
-              <span class="d-block mt-1 small">Tip: Use Enroll Core to refresh enrollments.</span>
+              Short roster detected: {{ roster_alert.enrolled }} enrolled out of {{ roster_alert.total }} students
+              {% if division %}in Division {{ division.division_code }}{% endif %}
+              {% if subject %}for {{ subject.subject_name }}{% endif %}
+              | AY {{ selected.academic_year }}. Missing active enrollments: {{ roster_alert.missing }}.
+              <span class="d-block mt-1 small">Tip: Use Enroll Core to refresh enrollments after rebalancing or subject updates.</span>
             </div>
           {% endif %}
-          
           {% if roster and roster|length > 0 %}
-            <!-- Mobile Card View -->
-            <div class="d-block d-md-none">
-              {% for r in roster %}
-              <div class="p-3 border-bottom student-card" id="card_{{ r.enrollment_no }}">
-                <div class="d-flex justify-content-between mb-2">
-                  <div>
-                    <div class="fw-bold">{{ r.name }}</div>
-                    <div class="small text-muted">{{ r.enrollment_no }} <span class="mx-1">&middot;</span> Roll: {{ r.roll_no or '-' }}</div>
-                  </div>
-                  <div class="status-indicator badge bg-success align-self-start" id="badge_{{ r.enrollment_no }}">P</div>
-                </div>
-                <div class="btn-group w-100" role="group">
-                  <input type="radio" class="btn-check status-radio" name="status_{{ r.enrollment_no }}" id="p_{{ r.enrollment_no }}" value="P" checked onchange="updateCard('{{ r.enrollment_no }}', 'P')">
-                  <label class="btn btn-outline-success" for="p_{{ r.enrollment_no }}">Present</label>
-                  
-                  <input type="radio" class="btn-check status-radio" name="status_{{ r.enrollment_no }}" id="a_{{ r.enrollment_no }}" value="A" onchange="updateCard('{{ r.enrollment_no }}', 'A')">
-                  <label class="btn btn-outline-danger" for="a_{{ r.enrollment_no }}">Absent</label>
-                  
-                  <input type="radio" class="btn-check status-radio" name="status_{{ r.enrollment_no }}" id="l_{{ r.enrollment_no }}" value="L" onchange="updateCard('{{ r.enrollment_no }}', 'L')">
-                  <label class="btn btn-outline-warning" for="l_{{ r.enrollment_no }}">Late</label>
-                </div>
-              </div>
-              {% endfor %}
-            </div>
-
-            <!-- Desktop Table View -->
-            <div class="table-responsive d-none d-md-block">
-              <table class="table table-sm table-hover mb-0 align-middle">
+            <div class="table-responsive">
+              <table class="table table-sm table-hover mb-0">
                 <thead class="table-light">
                   <tr>
-                    <th scope="col" class="text-center" style="width: 50px;">Roll</th>
+                    <th scope="col" class="text-center">Sr#</th>
+                    <th scope="col" class="text-center">Roll No</th>
+                    <th scope="col" class="text-nowrap">Enrollment</th>
                     <th scope="col">Name</th>
-                    <th scope="col" class="text-center" style="width: 200px;">Status</th>
+                    <th scope="col" class="text-center">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {% for r in roster %}
-                    <tr id="row_{{ r.enrollment_no }}">
+                    <tr>
+                      <td class="text-center">{{ loop.index }}</td>
                       <td class="text-center">{{ r.roll_no or '-' }}</td>
-                      <td>
-                        <div class="fw-bold">{{ r.name }}</div>
-                        <div class="small text-muted">{{ r.enrollment_no }}</div>
-                      </td>
+                      <td class="text-nowrap">{{ r.enrollment_no }}</td>
+                      <td>{{ r.name }}</td>
                       <td class="text-center">
                         <div class="btn-group btn-group-sm" role="group">
-                          <input type="radio" class="btn-check status-radio-dt" name="status_{{ r.enrollment_no }}" id="dt_p_{{ r.enrollment_no }}" value="P" checked onchange="updateRow('{{ r.enrollment_no }}', 'P')">
-                          <label class="btn btn-outline-success" for="dt_p_{{ r.enrollment_no }}">P</label>
-                          <input type="radio" class="btn-check status-radio-dt" name="status_{{ r.enrollment_no }}" id="dt_a_{{ r.enrollment_no }}" value="A" onchange="updateRow('{{ r.enrollment_no }}', 'A')">
-                          <label class="btn btn-outline-danger" for="dt_a_{{ r.enrollment_no }}">A</label>
-                          <input type="radio" class="btn-check status-radio-dt" name="status_{{ r.enrollment_no }}" id="dt_l_{{ r.enrollment_no }}" value="L" onchange="updateRow('{{ r.enrollment_no }}', 'L')">
-                          <label class="btn btn-outline-warning" for="dt_l_{{ r.enrollment_no }}">L</label>
+                          <input type="radio" class="btn-check" name="status_{{ r.enrollment_no }}" id="p_{{ r.enrollment_no }}" value="P" checked>
+                          <label class="btn btn-outline-success" for="p_{{ r.enrollment_no }}">P</label>
+                          <input type="radio" class="btn-check" name="status_{{ r.enrollment_no }}" id="a_{{ r.enrollment_no }}" value="A">
+                          <label class="btn btn-outline-danger" for="a_{{ r.enrollment_no }}">A</label>
+                          <input type="radio" class="btn-check" name="status_{{ r.enrollment_no }}" id="l_{{ r.enrollment_no }}" value="L">
+                          <label class="btn btn-outline-warning" for="l_{{ r.enrollment_no }}">L</label>
                         </div>
                       </td>
                     </tr>
@@ -248,118 +195,11 @@
               </table>
             </div>
           {% else %}
-            <div class="p-5 text-center text-muted">
-              <i class="bi bi-people display-4 d-block mb-3 opacity-25"></i>
-              Load a subject & division to start marking.
-            </div>
+            <div class="p-3 text-muted">Load a subject/division to see roster.</div>
           {% endif %}
         </div>
       </form>
     </div>
   </div>
 </div>
-
-<script>
-  // Sync logic for mobile/desktop & Stats
-  function updateStats() {
-    const total = document.querySelectorAll('.student-card').length || document.querySelectorAll('tbody tr').length;
-    if (total === 0) return;
-    
-    // Count based on checked radios
-    // Since mobile and desktop radios have same name, they are synced by browser form behavior? 
-    // Actually no, IDs must be unique. I gave them unique IDs but same name.
-    // Name collision might be an issue if both are in DOM. 
-    // Wait, checked state syncs if names are same? Yes.
-    
-    let p = 0, a = 0, l = 0;
-    const radios = document.querySelectorAll('input[type="radio"]:checked');
-    radios.forEach(r => {
-      // Filter out schedule radios
-      if (r.name.startsWith('status_')) {
-         // This double counts if both mobile/desktop elements exist?
-         // We should just query data.
-      }
-    });
-    
-    // Better way: iterate unique enrollments
-    const cards = document.querySelectorAll('.student-card');
-    p = 0; a = 0; l = 0;
-    
-    if (cards.length > 0) {
-        cards.forEach(c => {
-            const enr = c.id.replace('card_', '');
-            const val = document.querySelector(`input[name="status_${enr}"]:checked`).value;
-            if (val === 'P') p++;
-            else if (val === 'A') a++;
-            else if (val === 'L') l++;
-        });
-    } else {
-        // Desktop only fallback
-        const rows = document.querySelectorAll('tbody tr');
-        rows.forEach(r => {
-             const enr = r.id.replace('row_', '');
-             const val = document.querySelector(`input[name="status_${enr}"]:checked`).value;
-             if (val === 'P') p++;
-             else if (val === 'A') a++;
-             else if (val === 'L') l++;
-        });
-    }
-    
-    const bar = document.getElementById('statsBar');
-    if (bar) bar.innerHTML = `P: ${p} | A: <span class="text-danger">${a}</span> | L: ${l}`;
-  }
-
-  function updateCard(enr, status) {
-    // Visual feedback for mobile card
-    const card = document.getElementById('card_' + enr);
-    const badge = document.getElementById('badge_' + enr);
-    if (!card) return;
-    
-    // Reset classes
-    card.classList.remove('bg-danger-subtle', 'bg-warning-subtle');
-    badge.className = 'status-indicator badge';
-    
-    if (status === 'A') {
-      card.classList.add('bg-danger-subtle'); // Light red
-      badge.classList.add('text-bg-danger');
-      badge.innerText = 'A';
-    } else if (status === 'L') {
-      card.classList.add('bg-warning-subtle'); // Light yellow
-      badge.classList.add('text-bg-warning');
-      badge.innerText = 'L';
-    } else {
-      badge.classList.add('bg-success');
-      badge.innerText = 'P';
-    }
-    
-    // Sync desktop radio if exists
-    const dtRadio = document.getElementById(`dt_${status.toLowerCase()}_${enr}`);
-    if (dtRadio) dtRadio.checked = true;
-    
-    updateStats();
-  }
-  
-  function updateRow(enr, status) {
-      // Sync mobile radio if exists
-      const mobRadio = document.getElementById(`${status.toLowerCase()}_${enr}`);
-      if (mobRadio) mobRadio.checked = true;
-      updateCard(enr, status); // Re-use card logic for stats
-  }
-
-  function markAll(status) {
-    const radios = document.querySelectorAll(`input[value="${status}"]`);
-    radios.forEach(r => {
-        if (r.name.startsWith('status_')) {
-            r.checked = true;
-            // Trigger visual update
-            const enr = r.name.replace('status_', '');
-            updateCard(enr, status);
-        }
-    });
-    updateStats();
-  }
-
-  // Init stats on load
-  document.addEventListener('DOMContentLoaded', updateStats);
-</script>
 {% endblock %}

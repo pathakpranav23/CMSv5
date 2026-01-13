@@ -110,18 +110,31 @@
     <div class="mt-3">
       <label class="form-label">Pick students</label>
       <div class="d-flex gap-2 align-items-start">
-        <div class="flex-grow-1 position-relative">
-          <input type="text" id="studentPickerInput" class="form-control" placeholder="Loading directory..." disabled autocomplete="off" />
-          <div id="studentSuggestions" class="list-group position-absolute w-100 shadow-lg" style="z-index: 1000; max-height: 400px; overflow-y: auto; display: none;"></div>
-        </div>
-        <button type="button" class="btn btn-outline-secondary" id="forceSearchBtn" title="Search Server"><i class="bi bi-cloud-download"></i></button>
+        <input type="text" id="studentPickerInput" class="form-control" list="studentPickerList" placeholder="Type name, enrollment, division, or semester..." style="max-width: 420px;" aria-autocomplete="list" aria-controls="studentSuggestions" aria-expanded="false">
+        <button type="button" class="btn btn-outline-primary" id="addRecipientBtn">Add</button>
       </div>
-      <div class="d-flex justify-content-between mt-1">
-         <div class="form-text soft-hint">Type name/enrollment. Press Enter to search server if not found.</div>
-         <div class="small text-muted" id="cacheStatus">Initializing...</div>
+      <datalist id="studentPickerList">
+        {% for s in (students_for_picker or []) %}
+          <option value="{{ s.enrollment_no }}">{{ s.display_name }} ({{ s.enrollment_no }}) — Sem {{ s.semester or '-' }}, Div {{ s.division_code or '-' }}</option>
+        {% endfor %}
+      </datalist>
+      <div class="d-flex gap-2 mt-2" id="pickerFilters">
+        <select id="programFilter" class="form-select" style="max-width: 260px;" aria-label="Filter by program">
+          <option value="">All Programs</option>
+          {% for p in programs %}
+            <option value="{{ p.program_id }}">{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+        <select id="semesterFilter" class="form-select" style="max-width: 160px;" aria-label="Filter by semester">
+          <option value="">All Semesters</option>
+          {% for s in range(1, 9) %}
+            <option value="{{ s }}">Sem {{ s }}</option>
+          {% endfor %}
+        </select>
       </div>
-      
+      <div id="studentSuggestions" class="list-group mt-2" style="max-width: 420px;"></div>
       <div id="recipientChips" class="d-flex flex-wrap gap-2 mt-2"></div>
+      <div class="form-text soft-hint">Use the picker to add recipients and manage them via chips below.</div>
     </div>
     <div class="form-check mt-3">
       <input class="form-check-input" type="checkbox" name="is_active" id="isActive" {% if form_data.is_active %}checked{% endif %}>
@@ -134,59 +147,39 @@
       (function() {
         const textArea = document.getElementById('recipientEnrollmentNos');
         const input = document.getElementById('studentPickerInput');
-        const forceBtn = document.getElementById('forceSearchBtn');
+        const addBtn = document.getElementById('addRecipientBtn');
         const chips = document.getElementById('recipientChips');
+        const studentsDataEl = document.getElementById('studentsData');
         const suggestions = document.getElementById('studentSuggestions');
-        const cacheStatus = document.getElementById('cacheStatus');
-        
-        // We will ignore the pre-loaded template data (studentsData) and use our robust API loader instead
-        // This unifies the logic with Quick Payment and View Students
-        let allStudents = [];
-        let debounceTimer;
-
-        // 1. Initial Load (Tier 1)
-        async function loadStudents() {
-          try {
-            cacheStatus.innerText = "Downloading directory...";
-            const resp = await fetch("{{ url_for('main.api_students_search') }}?limit=2000"); 
-            const jsonResp = await resp.json();
-            const items = (jsonResp.data && jsonResp.data.items) || (jsonResp.items) || [];
-            allStudents = items;
-            
-            input.disabled = false;
-            input.placeholder = "Type name, enrollment, or semester...";
-            cacheStatus.innerText = `${allStudents.length} students loaded locally.`;
-          } catch(e) {
-            console.error("Failed to load students", e);
-            cacheStatus.innerText = "Offline mode or server error.";
-            input.disabled = false;
-            input.placeholder = "Search server directly...";
-          }
-        }
-        loadStudents();
+        const programFilter = document.getElementById('programFilter');
+        const semesterFilter = document.getElementById('semesterFilter');
+        const formProgramSelect = document.querySelector('select[name="program_id_fk"]');
+        const STUDENTS = studentsDataEl ? JSON.parse(studentsDataEl.textContent || '[]') : [];
+        let activeIdx = -1;
+        let recipients = [];
 
         function parseInitial() {
           const raw = (textArea.value || '').replace(/\n/g, ' ').replace(/,/g, ' ');
           const toks = raw.split(' ').map(t => t.trim()).filter(Boolean);
+          // Deduplicate while preserving order
           const seen = new Set();
-          window.recipients = []; // Global scope for simplicity in this context
-          for (const t of toks) { if (!seen.has(t)) { seen.add(t); window.recipients.push(t); } }
+          recipients = [];
+          for (const t of toks) { if (!seen.has(t)) { seen.add(t); recipients.push(t); } }
         }
 
         function formatStudentLabel(s) {
           const semTxt = (s.semester != null && s.semester !== '') ? 'Sem ' + s.semester : '';
-          const progTxt = (s.program_name) ? s.program_name : '';
-          const meta = [progTxt, semTxt].filter(Boolean).join(' • ');
-          return `${s.enrollment_no} — ${s.name}${meta ? ' (' + meta + ')' : ''}`;
+          const divTxt = (s.division_code) ? 'Div ' + s.division_code : '';
+          const meta = [semTxt, divTxt].filter(Boolean).join(' • ');
+          return `${s.enrollment_no} — ${s.display_name}${meta ? ' (' + meta + ')' : ''}`;
         }
 
-        function renderChips() {
+        function render() {
           chips.innerHTML = '';
-          (window.recipients || []).forEach(enr => {
+          recipients.forEach(enr => {
             const span = document.createElement('span');
             span.className = 'badge bg-secondary rounded-pill px-2 py-1';
-            // Try to find details in loaded list
-            const st = allStudents.find(x => x.enrollment_no === enr);
+            const st = STUDENTS.find(x => x.enrollment_no === enr);
             const label = st ? formatStudentLabel(st) : enr;
             span.textContent = label + ' ';
             const close = document.createElement('button');
@@ -196,120 +189,105 @@
             close.setAttribute('data-enr', enr);
             close.addEventListener('click', (e) => {
               const val = e.currentTarget.getAttribute('data-enr');
-              window.recipients = window.recipients.filter(r => r !== val);
-              renderChips();
+              recipients = recipients.filter(r => r !== val);
+              render();
             });
             span.appendChild(close);
             chips.appendChild(span);
           });
-          textArea.value = (window.recipients || []).join(', ');
+          textArea.value = recipients.join(', ');
         }
 
         function addRecipient(val) {
           const enr = (val || '').trim();
           if (!enr) return;
-          if (!window.recipients) window.recipients = [];
-          if (!window.recipients.includes(enr)) {
-            window.recipients.push(enr);
-            renderChips();
+          if (!recipients.includes(enr)) {
+            recipients.push(enr);
+            render();
           }
-          input.value = '';
+        }
+
+        addBtn?.addEventListener('click', () => { addRecipient(input.value); input.value = ''; suggestions.innerHTML = ''; activeIdx = -1; });
+
+        // Live fuzzy suggestions
+        function scoreStudent(s, q) {
+          const hay = `${s.enrollment_no} ${s.display_name} ${s.division_code || ''} sem ${s.semester || ''}`.toLowerCase();
+          const query = (q || '').toLowerCase().trim();
+          if (!query) return 0;
+          let score = 0;
+          if (hay.includes(query)) score += 10;
+          if (hay.startsWith(query)) score += 20;
+          if ((s.enrollment_no || '').toLowerCase().startsWith(query)) score += 30;
+          // subsequence bonus
+          let i = 0, j = 0;
+          while (i < hay.length && j < query.length) { if (hay[i] === query[j]) j++; i++; }
+          if (j === query.length) score += Math.max(1, 10 - (i - j));
+          return score;
+        }
+
+        function renderSuggestions(q) {
+          const query = (q || '').trim();
+          const hasFilters = !!(programFilter?.value || semesterFilter?.value);
+          if (!query && !hasFilters) { suggestions.innerHTML = ''; input.setAttribute('aria-expanded', 'false'); return; }
+          const filtered = STUDENTS.filter(s => (
+            (!programFilter?.value || String(s.program_id_fk) === String(programFilter.value)) &&
+            (!semesterFilter?.value || String(s.semester || '') === String(semesterFilter.value))
+          ));
+          const scored = filtered.map(s => ({ s, score: scoreStudent(s, query) }))
+                                 .filter(x => x.score > 0 || !query)
+                                 .sort((a, b) => b.score - a.score)
+                                 .slice(0, 10);
           suggestions.innerHTML = '';
-        }
-
-        // 2. Hybrid Search Logic
-        function performSearch(query, forceServer = false) {
-          if (!query) {
-             suggestions.style.display = 'none';
-             return;
-          }
-          
-          const q = query.toLowerCase();
-          let matches = allStudents.filter(s => {
-            if (s.enrollment_no && s.enrollment_no.toLowerCase().includes(q)) return true;
-            const full = (s.name || '').toLowerCase();
-            return full.includes(q);
-          }).slice(0, 15);
-
-          if (matches.length > 0 && !forceServer) {
-            showSuggestions(matches, false);
-          } else {
-            fetchServerSearch(query);
-          }
-        }
-
-        async function fetchServerSearch(query) {
-          suggestions.innerHTML = '<div class="list-group-item text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Searching server archive...</div>';
-          suggestions.style.display = 'block';
-          
-          try {
-            const url = new URL("{{ url_for('main.api_students_search') }}", window.location.origin);
-            url.searchParams.set('q', query);
-            url.searchParams.set('limit', 50);
-            
-            const resp = await fetch(url.toString());
-            const jsonResp = await resp.json();
-            const items = (jsonResp.data && jsonResp.data.items) || (jsonResp.items) || [];
-            
-            if (items.length === 0) {
-               suggestions.innerHTML = '<div class="list-group-item text-center text-muted py-3">No matching students found.</div>';
-            } else {
-               showSuggestions(items, true);
-            }
-          } catch(e) {
-            suggestions.innerHTML = '<div class="list-group-item text-danger">Server search failed.</div>';
-          }
-        }
-
-        function showSuggestions(items, isServerResult) {
-          suggestions.innerHTML = '';
-          const header = document.createElement('div');
-          header.className = 'list-group-item bg-light fw-bold text-muted small py-2 d-flex justify-content-between';
-          header.innerHTML = `<span>${isServerResult ? 'Server Results' : 'Instant Results'}</span><span class="badge bg-secondary">${items.length}</span>`;
-          suggestions.appendChild(header);
-
-          items.forEach(s => {
+          suggestions.setAttribute('role', 'listbox');
+          scored.forEach(({ s }) => {
             const item = document.createElement('button');
             item.type = 'button';
-            item.className = 'list-group-item list-group-item-action text-start';
+            item.className = 'list-group-item list-group-item-action';
+            item.setAttribute('role', 'option');
             item.textContent = formatStudentLabel(s);
-            item.addEventListener('click', () => addRecipient(s.enrollment_no));
+            item.addEventListener('click', () => { addRecipient(s.enrollment_no); input.value = ''; suggestions.innerHTML = ''; activeIdx = -1; });
             suggestions.appendChild(item);
           });
-          
-          if (!isServerResult) {
-              const footer = document.createElement('div');
-              footer.className = 'list-group-item list-group-item-action text-center text-primary small py-2';
-              footer.style.cursor = 'pointer';
-              footer.innerHTML = '<i class="bi bi-cloud-download me-1"></i> Not here? Search entire server';
-              footer.onclick = () => fetchServerSearch(input.value);
-              suggestions.appendChild(footer);
-          }
-          suggestions.style.display = 'block';
+          activeIdx = -1;
+          input.setAttribute('aria-expanded', scored.length ? 'true' : 'false');
         }
 
-        input.addEventListener('input', function() {
-          const q = (this.value || '').trim();
-          if (debounceTimer) clearTimeout(debounceTimer);
-          if (q.length < 2) { suggestions.style.display = 'none'; return; }
-          debounceTimer = setTimeout(() => performSearch(q), 300);
+        input?.addEventListener('input', (e) => { renderSuggestions(e.target.value); });
+        input?.addEventListener('keydown', (e) => {
+          const items = Array.from(suggestions.querySelectorAll('.list-group-item'));
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!items.length) return;
+            activeIdx = (activeIdx + 1) % items.length;
+            items.forEach((el, idx) => el.classList.toggle('active', idx === activeIdx));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!items.length) return;
+            activeIdx = (activeIdx - 1 + items.length) % items.length;
+            items.forEach((el, idx) => el.classList.toggle('active', idx === activeIdx));
+          } else if (e.key === 'Enter') {
+            if (activeIdx >= 0 && items[activeIdx]) {
+              e.preventDefault();
+              items[activeIdx].click();
+            }
+          } else if (e.key === 'Escape') {
+            suggestions.innerHTML = '';
+            activeIdx = -1;
+          }
         });
-
-        input.addEventListener('keydown', function(e) {
-           if (e.key === 'Enter') {
-               e.preventDefault();
-               performSearch(this.value, true);
-           }
-        });
-        
-        forceBtn.addEventListener('click', () => performSearch(input.value, true));
-
-        document.addEventListener('click', (e) => { 
-           if (!suggestions.contains(e.target) && e.target !== input && e.target !== forceBtn) suggestions.style.display = 'none'; 
-        });
+        programFilter?.addEventListener('change', () => { renderSuggestions(input.value); });
+        semesterFilter?.addEventListener('change', () => { renderSuggestions(input.value); });
+        if (formProgramSelect && programFilter) {
+          programFilter.value = formProgramSelect.value || '';
+          formProgramSelect.addEventListener('change', () => {
+            programFilter.value = formProgramSelect.value || '';
+            renderSuggestions(input.value);
+          });
+        }
+        document.addEventListener('click', (e) => { if (!suggestions.contains(e.target) && e.target !== input) suggestions.innerHTML = ''; });
 
         parseInitial();
-        renderChips();
+        render();
       })();
     </script>
     <div class="mt-3">

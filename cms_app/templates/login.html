@@ -1,16 +1,16 @@
 {% extends 'layout.html' %}
 {% block content %}
-<div class="container py-3 px-3 px-md-0" style="max-width:480px;">
+<div class="container py-5" style="max-width:480px;">
   <div class="text-center mb-3">
-    <img src="{{ url_for('static', filename='logo.png') }}" alt="Parekh Colleges Logo" class="brand-logo-xl img-fluid" style="max-height: 96px; width:auto;" />
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="Parekh Colleges Logo" class="brand-logo-xl" style="height: 96px; width:auto;" />
   </div>
-  <div class="login-title mb-4 text-center mx-2 mx-md-0">
-    <div class="brand-title-main text-break">The Group of Parekh Colleges - Mahuva</div>
-    <div class="brand-title-sub text-break">Managed by Shri Balvant Parekh Education Trust (SBPET)</div>
+  <div class="login-title mb-4 text-center">
+    <div class="brand-title-main">The Group of Parekh Colleges - Mahuva</div>
+    <div class="brand-title-sub">Managed by Shri Balvant Parekh Education Trust (SBPET)</div>
   </div>
-  <div class="card shadow-sm mx-2 mx-md-0">
-    <div class="card-body p-3 p-md-4">
-      <h3 class="card-title mb-3 text-center">Sign In</h3>
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h3 class="card-title mb-3">Sign In</h3>
       <form method="post" action="{{ url_for('main.login') }}">
         <div class="mb-3">
           <label for="username" class="form-label">Username</label>

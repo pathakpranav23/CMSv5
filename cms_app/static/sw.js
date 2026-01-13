@@ -1,5 +1,5 @@
 // Service Worker for Parekh Colleges CMS
-const CACHE_NAME = 'cms-cache-v1';
+const CACHE_NAME = 'cms-cache-v2';
 const URLS_TO_CACHE = [
   '/',
   '/static/style.css',
@@ -9,17 +9,29 @@ const URLS_TO_CACHE = [
 ];
 
 self.addEventListener('install', (event) => {
+  console.log('[ServiceWorker] Install');
   self.skipWaiting(); // Force waiting service worker to become active
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => {
+        console.log('[ServiceWorker] Caching app shell');
         return cache.addAll(URLS_TO_CACHE);
       })
   );
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim()); // Take control of all clients immediately
+  console.log('[ServiceWorker] Activate');
+  event.waitUntil(
+    caches.keys().then((keyList) => {
+      return Promise.all(keyList.map((key) => {
+        if (key !== CACHE_NAME) {
+          console.log('[ServiceWorker] Removing old cache', key);
+          return caches.delete(key);
+        }
+      }));
+    }).then(() => self.clients.claim())
+  );
 });
 
 self.addEventListener('fetch', (event) => {
