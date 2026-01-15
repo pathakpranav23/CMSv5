@@ -612,7 +612,9 @@
                 {
                     text: function (date, value, dayRect) {
                         if (value === null) return "";
-                        const ts = Math.floor(date.getTime() / 1000);
+                        // Handle date being either a timestamp (number) or Date object
+                        const dateObj = new Date(date);
+                        const ts = Math.floor(dateObj.getTime() / 1000);
                         const detailText = details[ts] ? `\n${details[ts]}` : "";
                         return `${value}% Absent${detailText}`;
                     },
