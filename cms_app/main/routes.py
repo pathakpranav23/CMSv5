@@ -3,7 +3,7 @@ from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
 import os
 import csv
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, and_
 from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
