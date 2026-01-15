@@ -6,8 +6,9 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from cms_app import create_app
+from cms_app import create_app, db
 from cms_app.models import User, Program
+from sqlalchemy import select
 
 
 def main():
@@ -16,17 +17,20 @@ def main():
 
     app = create_app()
     with app.app_context():
-        user = User.query.filter_by(username=username).first()
+        user = db.session.execute(
+            select(User).filter_by(username=username)
+        ).scalars().first()
         if not user:
             print(f"No user found with username '{username}'.")
             return
-        target_program = Program.query.filter_by(program_name=target_program_name).first()
+        target_program = db.session.execute(
+            select(Program).filter_by(program_name=target_program_name)
+        ).scalars().first()
         if not target_program:
             print(f"Program '{target_program_name}' not found.")
             return
         before_pid = user.program_id_fk
         user.program_id_fk = target_program.program_id
-        from cms_app import db
         db.session.commit()
         print(f"Updated principal '{username}' program_id from {before_pid} to {user.program_id_fk} ({target_program.program_name}).")
 

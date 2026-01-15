@@ -9,12 +9,15 @@ if BASE_DIR not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import User
+from sqlalchemy import select
 
 
 def set_role(username: str, role: str) -> None:
     app = create_app()
     with app.app_context():
-        u = User.query.filter_by(username=username).first()
+        u = db.session.execute(
+            select(User).filter_by(username=username)
+        ).scalars().first()
         if not u:
             print(f"User '{username}' not found.")
             return

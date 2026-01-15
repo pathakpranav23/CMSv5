@@ -13,6 +13,7 @@ if BASE_DIR not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import Program, FeeStructure
+from sqlalchemy import select
 
 
 def cell_to_str(v: Any) -> str:
@@ -52,7 +53,9 @@ def _import_wide_sheet(ws) -> Tuple[int, int]:
         if not p_name_raw:
             continue
         p_lookup = p_name_raw.replace(".", "").replace("(E)", "E").replace("(G)", "G").strip()
-        prog = Program.query.filter(Program.program_name.ilike(p_lookup)).first()
+        prog = db.session.execute(
+            select(Program).where(Program.program_name.ilike(p_lookup))
+        ).scalars().first()
         if not prog:
             prog = Program(program_name=p_lookup, program_duration_years=3)
             db.session.add(prog)
@@ -107,7 +110,13 @@ def _import_wide_sheet(ws) -> Tuple[int, int]:
                 amount = None
             if amount is None:
                 continue
-            fs = FeeStructure.query.filter_by(program_id_fk=prog_obj.program_id, component_name=component, semester=current_semester).first()
+            fs = db.session.execute(
+                select(FeeStructure).filter_by(
+                    program_id_fk=prog_obj.program_id,
+                    component_name=component,
+                    semester=current_semester,
+                )
+            ).scalars().first()
             if not fs:
                 fs = FeeStructure(program_id_fk=prog_obj.program_id, component_name=component, semester=current_semester, amount=amount)
                 db.session.add(fs)
@@ -164,7 +173,9 @@ def _import_single_program_sheet(ws, program_name_hint: Optional[str]) -> Tuple[
 
     # Ensure program exists
     p_lookup = program_name.replace(".", "").replace("(E)", "E").replace("(G)", "G").strip()
-    prog = Program.query.filter(Program.program_name.ilike(p_lookup)).first()
+    prog = db.session.execute(
+        select(Program).where(Program.program_name.ilike(p_lookup))
+    ).scalars().first()
     if not prog:
         prog = Program(program_name=p_lookup, program_duration_years=3)
         db.session.add(prog)
@@ -234,7 +245,13 @@ def _import_single_program_sheet(ws, program_name_hint: Optional[str]) -> Tuple[
             amount = None
         if amount is None:
             continue
-        fs = FeeStructure.query.filter_by(program_id_fk=prog.program_id, component_name=component, semester=current_semester).first()
+        fs = db.session.execute(
+            select(FeeStructure).filter_by(
+                program_id_fk=prog.program_id,
+                component_name=component,
+                semester=current_semester,
+            )
+        ).scalars().first()
         if not fs:
             fs = FeeStructure(program_id_fk=prog.program_id, component_name=component, semester=current_semester, amount=amount)
             db.session.add(fs)

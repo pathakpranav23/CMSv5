@@ -10,12 +10,15 @@ if BASE_DIR not in sys.path:
 from cms_app import create_app, db
 from cms_app.models import Program, FeeStructure
 from cms_app.main.routes import FEE_COMPONENTS, _slugify_component
+from sqlalchemy import select
 
 
 def main():
     app = create_app()
     with app.app_context():
-        programs = Program.query.order_by(Program.program_name.asc()).all()
+        programs = db.session.execute(
+            select(Program).order_by(Program.program_name.asc())
+        ).scalars().all()
         total_created = 0
         for p in programs:
             # Assume up to 8 semesters (2 per year) unless program specifies fewer
@@ -26,11 +29,9 @@ def main():
             max_sem = max(2 * years, 2)
 
             for s in range(1, max_sem + 1):
-                existing_rows = (
-                    FeeStructure.query
-                    .filter_by(program_id_fk=p.program_id, semester=s)
-                    .all()
-                )
+                existing_rows = db.session.execute(
+                    select(FeeStructure).filter_by(program_id_fk=p.program_id, semester=s)
+                ).scalars().all()
                 existing_norms = { _slugify_component((r.component_name or "").strip()) for r in existing_rows }
                 for comp in FEE_COMPONENTS:
                     norm = _slugify_component(comp)

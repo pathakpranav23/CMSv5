@@ -9,6 +9,7 @@ if BASE_DIR not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import Program, FeeStructure
+from sqlalchemy import select
 
 
 FEE_COMPONENTS: List[str] = [
@@ -51,7 +52,9 @@ def upsert_bca_sem1_fees():
     app = create_app()
     with app.app_context():
         # Find or create BCA program
-        prog = Program.query.filter(Program.program_name.ilike("BCA")).first()
+        prog = db.session.execute(
+            select(Program).where(Program.program_name.ilike("BCA"))
+        ).scalars().first()
         if not prog:
             prog = Program(program_name="BCA", program_duration_years=3)
             db.session.add(prog)
@@ -61,11 +64,13 @@ def upsert_bca_sem1_fees():
         updated = 0
 
         for comp, amt in zip(FEE_COMPONENTS, AMOUNTS):
-            row = FeeStructure.query.filter_by(
-                program_id_fk=prog.program_id,
-                semester=1,
-                component_name=comp,
-            ).first()
+            row = db.session.execute(
+                select(FeeStructure).filter_by(
+                    program_id_fk=prog.program_id,
+                    semester=1,
+                    component_name=comp,
+                )
+            ).scalars().first()
             if not row:
                 row = FeeStructure(
                     program_id_fk=prog.program_id,

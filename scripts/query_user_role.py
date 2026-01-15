@@ -5,8 +5,9 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from cms_app import create_app
+from cms_app import create_app, db
 from cms_app.models import User, Program
+from sqlalchemy import select
 
 
 def main():
@@ -17,7 +18,9 @@ def main():
 
     app = create_app()
     with app.app_context():
-        u = User.query.filter_by(username=username).first()
+        u = db.session.execute(
+            select(User).filter_by(username=username)
+        ).scalars().first()
         if not u:
             print(f"NOT_FOUND: {username}")
             return
@@ -27,7 +30,7 @@ def main():
         prog_name = None
         if prog_id:
             try:
-                p = Program.query.get(int(prog_id))
+                p = db.session.get(Program, int(prog_id))
                 prog_name = getattr(p, "program_name", None)
             except Exception:
                 prog_name = None

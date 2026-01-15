@@ -10,6 +10,7 @@ if ROOT_DIR not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import Program, Division, Student, StudentSubjectEnrollment
+from sqlalchemy import select
 import math
 
 CAPACITY = 67
@@ -33,12 +34,11 @@ def _generate_codes(n: int):
 
 def ensure_divisions(program: Program, semester: int, required_n: int) -> Dict[str, Division]:
     mapping: Dict[str, Division] = {}
-    existing = (
-        Division.query
+    existing = db.session.execute(
+        select(Division)
         .filter_by(program_id_fk=program.program_id, semester=semester)
         .order_by(Division.division_code.asc())
-        .all()
-    )
+    ).scalars().all()
     # Update capacity for existing divisions
     for d in existing:
         if d.capacity != CAPACITY:
@@ -55,7 +55,11 @@ def ensure_divisions(program: Program, semester: int, required_n: int) -> Dict[s
             db.session.add(div)
     db.session.commit()
     # Refresh and build mapping
-    rows = Division.query.filter_by(program_id_fk=program.program_id, semester=semester).order_by(Division.division_code.asc()).all()
+    rows = db.session.execute(
+        select(Division)
+        .filter_by(program_id_fk=program.program_id, semester=semester)
+        .order_by(Division.division_code.asc())
+    ).scalars().all()
     for d in rows:
         mapping[d.division_code] = d
     return mapping
@@ -72,22 +76,29 @@ def assign_code(index: int, codes):
 def rebalance_bca_divisions():
     app = create_app()
     with app.app_context():
-        program = Program.query.filter_by(program_name="BCA").first()
+        program = db.session.execute(
+            select(Program).filter_by(program_name="BCA")
+        ).scalars().first()
         if not program:
             print("Program BCA not found.")
             return
 
         # Determine semesters present among BCA students
-        semesters = sorted({s.current_semester for s in Student.query.filter_by(program_id_fk=program.program_id).all() if s.current_semester})
+        semesters = sorted({
+            s.current_semester
+            for s in db.session.execute(
+                select(Student).filter_by(program_id_fk=program.program_id)
+            ).scalars().all()
+            if s.current_semester
+        })
         total_updated = 0
         for sem in semesters:
-            students = (
-                Student.query
+            students = db.session.execute(
+                select(Student)
                 .filter_by(program_id_fk=program.program_id)
                 .filter_by(current_semester=sem)
                 .order_by(Student.enrollment_no.asc())
-                .all()
-            )
+            ).scalars().all()
             required_n = max(math.ceil(len(students) / CAPACITY), 1)
             div_map = ensure_divisions(program, sem, required_n)
             codes = sorted(list(div_map.keys()))
@@ -104,14 +115,18 @@ def rebalance_bca_divisions():
             sse_updates = 0
             if moved_students:
                 # Fetch active enrollments for impacted students in this semester
-                enr_rows = (
-                    StudentSubjectEnrollment.query
-                    .filter(StudentSubjectEnrollment.student_id_fk.in_(moved_students))
+                enr_rows = db.session.execute(
+                    select(StudentSubjectEnrollment)
+                    .where(StudentSubjectEnrollment.student_id_fk.in_(moved_students))
                     .filter_by(semester=sem, is_active=True)
-                    .all()
-                )
+                ).scalars().all()
                 # Map student current division
-                stu_map = {s.enrollment_no: s for s in Student.query.filter(Student.enrollment_no.in_(moved_students)).all()}
+                stu_map = {
+                    s.enrollment_no: s
+                    for s in db.session.execute(
+                        select(Student).where(Student.enrollment_no.in_(moved_students))
+                    ).scalars().all()
+                }
                 for enr in enr_rows:
                     stu = stu_map.get(enr.student_id_fk)
                     if not stu:

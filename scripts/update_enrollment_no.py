@@ -26,11 +26,11 @@ def main():
             sys.exit(1)
 
         # Validate student exists and target doesn't collide
-        current = Student.query.get(old_enr)
+        current = db.session.get(Student, old_enr)
         if not current:
             print(f"ERROR: No student found with enrollment_no='{old_enr}'.")
             sys.exit(1)
-        collision = Student.query.get(new_enr)
+        collision = db.session.get(Student, new_enr)
         if collision:
             print(f"ERROR: A student already exists with enrollment_no='{new_enr}'. Choose a different value.")
             sys.exit(1)

@@ -9,7 +9,7 @@ if BASE_DIR not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import FeeStructure
-from sqlalchemy import func
+from sqlalchemy import func, select
 
 
 TARGET_COMPONENTS: List[str] = [
@@ -26,11 +26,11 @@ def main():
         total_deleted = 0
         for name in TARGET_COMPONENTS:
             # Match case-insensitively and ignore leading/trailing spaces
-            rows = (
-                FeeStructure.query
-                .filter(func.upper(func.trim(FeeStructure.component_name)) == name.upper())
-                .all()
-            )
+            rows = db.session.execute(
+                select(FeeStructure).where(
+                    func.upper(func.trim(FeeStructure.component_name)) == name.upper()
+                )
+            ).scalars().all()
             count = len(rows)
             for r in rows:
                 db.session.delete(r)

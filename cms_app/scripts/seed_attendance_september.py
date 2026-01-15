@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 import random
 from typing import Optional
+from sqlalchemy import select
 
 from cms_app import create_app, db
 from cms_app.models import Program, Division, Student, Subject, Attendance, StudentSubjectEnrollment
@@ -15,50 +16,53 @@ def seed(year: Optional[int] = None, weekdays_only: bool = False, use_enrollment
     """
     app = create_app()
     with app.app_context():
-        bca = Program.query.filter_by(program_name="BCA").first()
+        bca = db.session.execute(select(Program).filter_by(program_name="BCA")).scalars().first()
         if not bca:
             print("BCA program not found. Aborting.")
             return
 
         target_semesters = [3, 5]
         divs = (
-            Division.query
-            .filter(Division.program_id_fk == bca.program_id)
-            .filter(Division.semester.in_(target_semesters))
-            .order_by(Division.semester, Division.division_code)
-            .all()
+            db.session.execute(
+                select(Division)
+                .filter(Division.program_id_fk == bca.program_id)
+                .filter(Division.semester.in_(target_semesters))
+                .order_by(Division.semester, Division.division_code)
+            ).scalars().all()
         )
         div_map = {d.division_id: d for d in divs}
         div_ids = list(div_map.keys())
 
         students = (
-            Student.query
-            .filter(Student.division_id_fk.in_(div_ids))
-            .order_by(Student.enrollment_no)
-            .all()
+            db.session.execute(
+                select(Student)
+                .filter(Student.division_id_fk.in_(div_ids))
+                .order_by(Student.enrollment_no)
+            ).scalars().all()
         )
 
         subjects_by_sem = {
-            3: Subject.query.filter_by(program_id_fk=bca.program_id, semester=3).order_by(Subject.subject_name).all(),
-            5: Subject.query.filter_by(program_id_fk=bca.program_id, semester=5).order_by(Subject.subject_name).all(),
+            3: db.session.execute(select(Subject).filter_by(program_id_fk=bca.program_id, semester=3).order_by(Subject.subject_name)).scalars().all(),
+            5: db.session.execute(select(Subject).filter_by(program_id_fk=bca.program_id, semester=5).order_by(Subject.subject_name)).scalars().all(),
         }
 
         # If using enrollments, build per-student subject lists for active enrollments in Sem 3/5
         subjects_by_student = {}
         if use_enrollments:
             enr_rows = (
-                StudentSubjectEnrollment.query
-                .filter(StudentSubjectEnrollment.student_id_fk.in_([s.enrollment_no for s in students]))
-                .filter(StudentSubjectEnrollment.is_active == True)
-                .filter(StudentSubjectEnrollment.semester.in_(target_semesters))
-                .all()
+                db.session.execute(
+                    select(StudentSubjectEnrollment)
+                    .filter(StudentSubjectEnrollment.student_id_fk.in_([s.enrollment_no for s in students]))
+                    .filter(StudentSubjectEnrollment.is_active == True)
+                    .filter(StudentSubjectEnrollment.semester.in_(target_semesters))
+                ).scalars().all()
             )
             sid_to_subjects = {}
             for r in enr_rows:
                 sid_to_subjects.setdefault(r.student_id_fk, set()).add(r.subject_id_fk)
             # Fetch subject objects once
             all_subject_ids = {sid for sids in sid_to_subjects.values() for sid in sids}
-            sub_map = {s.subject_id: s for s in Subject.query.filter(Subject.subject_id.in_(list(all_subject_ids))).all()}
+            sub_map = {s.subject_id: s for s in db.session.execute(select(Subject).filter(Subject.subject_id.in_(list(all_subject_ids)))).scalars().all()}
             for stu in students:
                 subjects_by_student[stu.enrollment_no] = [sub_map[sid] for sid in sid_to_subjects.get(stu.enrollment_no, set()) if sid in sub_map]
 
@@ -92,11 +96,11 @@ def seed(year: Optional[int] = None, weekdays_only: bool = False, use_enrollment
                     subjects = subjects_by_sem.get(sem, [])
                 for sub in subjects:
                     # Avoid duplicates on reruns
-                    exists = Attendance.query.filter_by(
+                    exists = db.session.execute(select(Attendance).filter_by(
                         student_id_fk=stu.enrollment_no,
                         subject_id_fk=sub.subject_id,
                         date_marked=d,
-                    ).first()
+                    )).scalars().first()
                     if exists:
                         skipped += 1
                         continue

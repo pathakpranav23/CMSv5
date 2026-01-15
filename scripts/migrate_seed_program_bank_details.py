@@ -7,6 +7,7 @@ if BASE_DIR not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import Program, ProgramBankDetails
+from sqlalchemy import select
 
 
 SEED_DETAILS = {
@@ -85,7 +86,9 @@ SEED_DETAILS = {
 
 def upsert_details(app):
     with app.app_context():
-        programs = Program.query.order_by(Program.program_name.asc()).all()
+        programs = db.session.execute(
+            select(Program).order_by(Program.program_name.asc())
+        ).scalars().all()
         prog_by_name = { (p.program_name or "").strip().upper(): p for p in programs }
         created, updated, skipped = 0, 0, []
         for name, detail in SEED_DETAILS.items():
@@ -94,7 +97,9 @@ def upsert_details(app):
             if not p:
                 skipped.append(name)
                 continue
-            row = ProgramBankDetails.query.filter_by(program_id_fk=p.program_id).first()
+            row = db.session.execute(
+                select(ProgramBankDetails).filter_by(program_id_fk=p.program_id)
+            ).scalars().first()
             if row:
                 row.bank_name = detail["bank_name"]
                 row.account_name = detail["account_name"]

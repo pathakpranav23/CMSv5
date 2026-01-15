@@ -15,6 +15,7 @@ if PROJECT_ROOT not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import Program, User, Faculty
+from sqlalchemy import select
 
 
 HEADER_MAP: Dict[str, List[str]] = {
@@ -115,7 +116,9 @@ def detect_program_from_filename(path: str) -> str:
 
 
 def upsert_faculty(program_name: str, path: str):
-    program = Program.query.filter_by(program_name=program_name).first()
+    program = db.session.execute(
+        select(Program).filter_by(program_name=program_name)
+    ).scalars().first()
     if not program:
         program = Program(program_name=program_name, program_duration_years=3)
         db.session.add(program)
@@ -157,7 +160,9 @@ def upsert_faculty(program_name: str, path: str):
             if not username:
                 username = full_name or "faculty"
 
-            user = User.query.filter_by(username=username).first()
+            user = db.session.execute(
+                select(User).filter_by(username=username)
+            ).scalars().first()
             if not user:
                 user = User(username=username, role="Faculty", program_id_fk=program.program_id)
                 db.session.add(user)
@@ -169,9 +174,13 @@ def upsert_faculty(program_name: str, path: str):
             # Upsert Faculty record using email if present, else username
             fac_q = None
             if email:
-                fac_q = Faculty.query.filter_by(email=email).first()
+                fac_q = db.session.execute(
+                    select(Faculty).filter_by(email=email)
+                ).scalars().first()
             if not fac_q:
-                fac_q = Faculty.query.filter_by(user_id_fk=user.user_id).first()
+                fac_q = db.session.execute(
+                    select(Faculty).filter_by(user_id_fk=user.user_id)
+                ).scalars().first()
 
             if not fac_q:
                 fac = Faculty(
@@ -236,7 +245,9 @@ def upsert_faculty(program_name: str, path: str):
             username = email or (mobile if mobile else full_name)
             username = username.strip() or (full_name or "faculty")
 
-            user = User.query.filter_by(username=username).first()
+            user = db.session.execute(
+                select(User).filter_by(username=username)
+            ).scalars().first()
             if not user:
                 user = User(username=username, role="Faculty", program_id_fk=program.program_id)
                 db.session.add(user)
@@ -247,9 +258,13 @@ def upsert_faculty(program_name: str, path: str):
 
             fac_q = None
             if email:
-                fac_q = Faculty.query.filter_by(email=email).first()
+                fac_q = db.session.execute(
+                    select(Faculty).filter_by(email=email)
+                ).scalars().first()
             if not fac_q:
-                fac_q = Faculty.query.filter_by(user_id_fk=user.user_id).first()
+                fac_q = db.session.execute(
+                    select(Faculty).filter_by(user_id_fk=user.user_id)
+                ).scalars().first()
 
             if not fac_q:
                 fac = Faculty(

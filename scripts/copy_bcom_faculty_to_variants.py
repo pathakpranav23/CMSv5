@@ -9,6 +9,7 @@ if PROJECT_ROOT not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import Program, Faculty
+from sqlalchemy import select
 
 
 def normalize_name(s: Optional[str]) -> str:
@@ -27,7 +28,9 @@ def is_generic_bcom(name: str) -> bool:
 
 
 def ensure_program(name: str) -> Program:
-    prog = Program.query.filter(Program.program_name.ilike(name)).first()
+    prog = db.session.execute(
+        select(Program).where(Program.program_name.ilike(name))
+    ).scalars().first()
     if not prog:
         prog = Program(program_name=name, program_duration_years=3)
         db.session.add(prog)
@@ -39,17 +42,19 @@ def copy_faculty_to_program(src_fac: Faculty, dest_prog: Program) -> str:
     # Try to find an existing faculty in destination by email first, then by name
     existing = None
     if src_fac.email:
-        existing = (
-            Faculty.query
-            .filter(Faculty.program_id_fk == dest_prog.program_id, Faculty.email == src_fac.email)
-            .first()
-        )
+        existing = db.session.execute(
+            select(Faculty).where(
+                Faculty.program_id_fk == dest_prog.program_id,
+                Faculty.email == src_fac.email,
+            )
+        ).scalars().first()
     if (existing is None) and src_fac.full_name:
-        existing = (
-            Faculty.query
-            .filter(Faculty.program_id_fk == dest_prog.program_id, Faculty.full_name == src_fac.full_name)
-            .first()
-        )
+        existing = db.session.execute(
+            select(Faculty).where(
+                Faculty.program_id_fk == dest_prog.program_id,
+                Faculty.full_name == src_fac.full_name,
+            )
+        ).scalars().first()
 
     if existing:
         # Update destination record with source details (conservative on user link)
@@ -87,7 +92,9 @@ def copy_faculty_to_program(src_fac: Faculty, dest_prog: Program) -> str:
 def copy_bcom_faculty_to_variants():
     # Locate source generic BCOM program
     src_prog: Optional[Program] = None
-    for p in Program.query.order_by(Program.program_name.asc()).all():
+    for p in db.session.execute(
+        select(Program).order_by(Program.program_name.asc())
+    ).scalars().all():
         if is_generic_bcom(p.program_name or ""):
             src_prog = p
             break
@@ -101,7 +108,9 @@ def copy_bcom_faculty_to_variants():
     dest_guj = ensure_program("BCom (Gujarati)")
 
     # Copy all faculty from BCOM into each destination program
-    src_faculty = Faculty.query.filter(Faculty.program_id_fk == src_prog.program_id).all()
+    src_faculty = db.session.execute(
+        select(Faculty).where(Faculty.program_id_fk == src_prog.program_id)
+    ).scalars().all()
     created_eng = updated_eng = 0
     created_guj = updated_guj = 0
     for f in src_faculty:

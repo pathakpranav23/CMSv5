@@ -13,6 +13,7 @@ if PROJECT_ROOT not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import Program, SubjectType, Subject, CreditStructure
+from sqlalchemy import select
 
 
 # Synonyms to normalize headers from university Excel files
@@ -153,7 +154,9 @@ def detect_semester_from_path(path: str) -> int:
 
 def get_or_create_subject_type(code: str) -> SubjectType:
     code_norm = (code or "MAJOR").strip().upper()
-    st = SubjectType.query.filter_by(type_code=code_norm).first()
+    st = db.session.execute(
+        select(SubjectType).filter_by(type_code=code_norm)
+    ).scalars().first()
     if not st:
         st = SubjectType(type_code=code_norm, description=None)
         db.session.add(st)
@@ -215,7 +218,9 @@ def upsert_subject_for_program(
     group_id: str,
     medium_tag: str,
 ) -> Tuple[Subject, bool]:
-    program = Program.query.filter_by(program_name=program_name).first()
+    program = db.session.execute(
+        select(Program).filter_by(program_name=program_name)
+    ).scalars().first()
     if not program:
         program = Program(program_name=program_name, program_duration_years=3)
         db.session.add(program)
@@ -224,9 +229,17 @@ def upsert_subject_for_program(
     st = get_or_create_subject_type(subject_type_code)
     subj = None
     if subject_code:
-        subj = Subject.query.filter_by(program_id_fk=program.program_id, subject_code=subject_code).first()
+        subj = db.session.execute(
+            select(Subject).filter_by(program_id_fk=program.program_id, subject_code=subject_code)
+        ).scalars().first()
     if not subj:
-        subj = Subject.query.filter_by(program_id_fk=program.program_id, subject_name=subject_name, semester=semester).first()
+        subj = db.session.execute(
+            select(Subject).filter_by(
+                program_id_fk=program.program_id,
+                subject_name=subject_name,
+                semester=semester,
+            )
+        ).scalars().first()
 
     created = False
     if not subj:
@@ -261,7 +274,9 @@ def upsert_subject_for_program(
         if medium_tag:
             subj.medium_tag = medium_tag
 
-    cs = CreditStructure.query.filter_by(subject_id_fk=subj.subject_id).first()
+    cs = db.session.execute(
+        select(CreditStructure).filter_by(subject_id_fk=subj.subject_id)
+    ).scalars().first()
     if not cs:
         cs = CreditStructure(subject_id_fk=subj.subject_id, theory_credits=th, practical_credits=pr, total_credits=total)
         db.session.add(cs)

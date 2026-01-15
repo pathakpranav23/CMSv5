@@ -273,21 +273,21 @@ def _user_is_faculty_assigned(subject_id: int) -> bool:
         user_id = getattr(current_user, "user_id", None)
         if not user_id:
             return False
-        return CourseAssignment.query.filter_by(subject_id_fk=subject_id, faculty_id_fk=user_id, is_active=True).first() is not None
+        return db.session.execute(select(CourseAssignment).filter_by(subject_id_fk=subject_id, faculty_id_fk=user_id, is_active=True)).scalars().first() is not None
     except Exception:
         return False
 
 def _user_is_student_enrolled(subject_id: int, academic_year: str) -> bool:
     try:
-        s = Student.query.filter_by(user_id_fk=current_user.user_id).first()
+        s = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
         if not s:
             return False
-        return StudentSubjectEnrollment.query.filter_by(
+        return db.session.execute(select(StudentSubjectEnrollment).filter_by(
             student_id_fk=s.student_id,
             subject_id_fk=subject_id,
             academic_year=academic_year,
             is_active=True,
-        ).first() is not None
+        )).scalars().first() is not None
     except Exception:
         return False
 
@@ -295,8 +295,8 @@ def _user_is_student_enrolled(subject_id: int, academic_year: str) -> bool:
 def _program_dropdown_context(q_program_raw: str = None, *, include_admin_all: bool = True, default_program_name: str = None, exclude_names: list = None, warn_unmapped: bool = True, fallback_to_first: bool = True, prefer_user_program_default: bool = True):
     role = (getattr(current_user, "role", "") or "").strip().lower()
     # Base list: all programs ordered by name
-    program_q = Program.query.order_by(Program.program_name.asc())
-    program_list = program_q.all()
+    program_q = select(Program).order_by(Program.program_name.asc())
+    program_list = db.session.execute(program_q).scalars().all()
     # Optional exclusions by display name
     try:
         if exclude_names:
@@ -502,18 +502,18 @@ def fees_entry():
     if selected_program and semester:
         try:
             q = (
-                FeeStructure.query
+                select(FeeStructure)
                 .filter_by(program_id_fk=selected_program.program_id, semester=semester)
             )
             if is_bcom:
                 # For B.Com, require medium to load existing rows; otherwise show empty until selected
                 if medium:
                     q = q.filter_by(medium_tag=medium)
-                    rows = q.all()
+                    rows = db.session.execute(q).scalars().all()
                 else:
                     rows = []
             else:
-                rows = q.all()
+                rows = db.session.execute(q).scalars().all()
             for r in rows:
                 r_name = (r.component_name or "").strip()
                 r_slug = _normalize_component_slug(_slugify_component(r_name))
@@ -558,21 +558,20 @@ def fees_entry():
                 }
                 if is_bcom:
                     criteria["medium_tag"] = medium
-                row = (
-                    FeeStructure.query
+                row = db.session.execute(
+                    select(FeeStructure)
                     .filter_by(**criteria)
-                    .first()
-                )
+                ).scalars().first()
                 # If not found by exact name, try matching by slug to avoid duplicate rows
                 if not row:
                     try:
                         q2 = (
-                            FeeStructure.query
+                            select(FeeStructure)
                             .filter_by(program_id_fk=selected_program.program_id, semester=semester)
                         )
                         if is_bcom:
                             q2 = q2.filter_by(medium_tag=medium)
-                        comp_rows = q2.all()
+                        comp_rows = db.session.execute(q2).scalars().all()
                         for r in comp_rows:
                             norm = _normalize_component_slug(_slugify_component(r.component_name or ""))
                             if norm == slug:
@@ -634,11 +633,10 @@ def fees_entry():
         if action == "freeze":
             # After freezing, verify at least one canonical component is frozen
             try:
-                rows_chk = (
-                    FeeStructure.query
+                rows_chk = db.session.execute(
+                    select(FeeStructure)
                     .filter_by(program_id_fk=selected_program.program_id, semester=semester, is_active=True)
-                    .all()
-                )
+                ).scalars().all()
                 frozen_count = 0
                 for r in rows_chk:
                     comp_chk = (r.component_name or "").strip()
@@ -675,11 +673,10 @@ def fees_entry():
     components_all = list(FEE_COMPONENTS)
     if selected_program and semester:
         try:
-            rows = (
-                FeeStructure.query
+            rows = db.session.execute(
+                select(FeeStructure)
                 .filter_by(program_id_fk=selected_program.program_id, semester=semester)
-                .all()
-            )
+            ).scalars().all()
             canon_norms = {_slugify_component(c) for c in FEE_COMPONENTS}
             extras = []
             for r in rows:
@@ -843,8 +840,8 @@ def fees_receipt_semester():
 
     if selected_program and semester:
         # Pull all rows for requested medium plus Common for fallback
-        q = FeeStructure.query.filter_by(program_id_fk=selected_program.program_id, semester=semester, is_active=True)
-        rows = q.all()
+        q = select(FeeStructure).filter_by(program_id_fk=selected_program.program_id, semester=semester, is_active=True)
+        rows = db.session.execute(q).scalars().all()
         # Group by normalized slug to avoid double-counting, pick the highest amount per slug
         by_slug = {}
         for r in rows:
@@ -908,12 +905,11 @@ def fees_receipt_semester():
     try:
         if student and selected_program and semester:
             from ..models import FeePayment
-            qp = (
-                FeePayment.query
+            qp = db.session.execute(
+                select(FeePayment)
                 .filter_by(enrollment_no=student.enrollment_no, program_id_fk=selected_program.program_id, semester=semester)
                 .order_by(FeePayment.verified_at.desc())
-                .first()
-            )
+            ).scalars().first()
             if qp and ((qp.status or "").strip().lower() == "verified"):
                 verified_payment = qp
     except Exception:
@@ -961,7 +957,7 @@ def fees_payment_status():
 
     from ..models import Program, Student, FeePayment
 
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
 
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
@@ -995,11 +991,10 @@ def fees_payment_status():
     required_total = 0.0
     from ..models import FeeStructure
     if selected_program and semester:
-        rows = (
-            FeeStructure.query
+        rows = db.session.execute(
+            select(FeeStructure)
             .filter_by(program_id_fk=selected_program.program_id, semester=semester, is_active=True)
-            .all()
-        )
+        ).scalars().all()
         by_slug = {}
         for r in rows:
             comp_raw = (r.component_name or "").strip()
@@ -1026,7 +1021,7 @@ def fees_payment_status():
 
     # Aggregate verified payments per student for the selected scope
     from sqlalchemy import func
-    verified_q = FeePayment.query
+    verified_q = select(FeePayment.enrollment_no, func.sum(FeePayment.amount)).group_by(FeePayment.enrollment_no)
     if selected_program:
         verified_q = verified_q.filter(FeePayment.program_id_fk == selected_program.program_id)
     if semester:
@@ -1036,13 +1031,11 @@ def fees_payment_status():
     verified_q = verified_q.filter((FeePayment.status or "").ilike("verified"))
     verified_sums = {
         enr: float(total or 0.0)
-        for (enr, total) in (
-            verified_q.with_entities(FeePayment.enrollment_no, func.sum(FeePayment.amount)).group_by(FeePayment.enrollment_no).all()
-        )
+        for (enr, total) in db.session.execute(verified_q).all()
     }
 
     # Existence of submitted (pending) payments for badge display / quick verification link
-    submitted_q = FeePayment.query
+    submitted_q = select(FeePayment.enrollment_no).distinct()
     if selected_program:
         submitted_q = submitted_q.filter(FeePayment.program_id_fk == selected_program.program_id)
     if semester:
@@ -1050,10 +1043,10 @@ def fees_payment_status():
     if show_medium and medium:
         submitted_q = submitted_q.filter(FeePayment.medium_tag == medium)
     submitted_q = submitted_q.filter((FeePayment.status or "").ilike("submitted"))
-    submitted_map = {enr: True for (enr,) in submitted_q.with_entities(FeePayment.enrollment_no).distinct().all()}
+    submitted_map = {enr: True for (enr,) in db.session.execute(submitted_q).all()}
 
     # Existence of rejected payments for rejected filter/badge
-    rejected_q = FeePayment.query
+    rejected_q = select(FeePayment.enrollment_no).distinct()
     if selected_program:
         rejected_q = rejected_q.filter(FeePayment.program_id_fk == selected_program.program_id)
     if semester:
@@ -1061,7 +1054,7 @@ def fees_payment_status():
     if show_medium and medium:
         rejected_q = rejected_q.filter(FeePayment.medium_tag == medium)
     rejected_q = rejected_q.filter((FeePayment.status or "").ilike("rejected"))
-    rejected_map = {enr: True for (enr,) in rejected_q.with_entities(FeePayment.enrollment_no).distinct().all()}
+    rejected_map = {enr: True for (enr,) in db.session.execute(rejected_q).all()}
 
     # Build rows with status classification
     rows = []
@@ -1152,7 +1145,7 @@ def fees_payment(enrollment_no):
     if role == "student":
         try:
             # Ensure the logged in student matches the enrollment
-            me = Student.query.filter_by(user_id_fk=current_user.user_id).first()
+            me = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
             if not me or (me.student_id != s.student_id):
                 flash("You are not authorized to view this payment page.", "danger")
                 return redirect(url_for("main.dashboard"))
@@ -1198,8 +1191,8 @@ def fees_payment(enrollment_no):
     total_amount = 0.0
     items = []
     if program and semester:
-        q = FeeStructure.query.filter_by(program_id_fk=program.program_id, semester=semester, is_active=True)
-        rows = q.all()
+        q = select(FeeStructure).filter_by(program_id_fk=program.program_id, semester=semester, is_active=True)
+        rows = db.session.execute(q).scalars().all()
         by_slug = {}
         for r in rows:
             comp_raw = (r.component_name or "").strip()
@@ -1265,13 +1258,12 @@ def fees_payment(enrollment_no):
     from ..models import FeePayment
     recent_payments = []
     try:
-        recent_payments = (
-            FeePayment.query
+        recent_payments = db.session.execute(
+            select(FeePayment)
             .filter_by(enrollment_no=s.enrollment_no)
             .order_by(FeePayment.created_at.desc())
             .limit(3)
-            .all()
-        )
+        ).scalars().all()
     except Exception:
         recent_payments = []
 
@@ -1315,7 +1307,7 @@ def fees_payment_mark_paid(enrollment_no):
         return redirect(url_for("main.students"))
     if role == "student":
         try:
-            me = Student.query.filter_by(user_id_fk=current_user.user_id).first()
+            me = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
             if not me or (me.enrollment_no != s.enrollment_no):
                 flash("You can only submit your own payment.", "danger")
                 return redirect(url_for("main.dashboard"))
@@ -1350,7 +1342,7 @@ def fees_payment_mark_paid(enrollment_no):
 
     # Optional duplicate UTR warning (does not block student submission)
     try:
-        dup_count = FeePayment.query.filter(FeePayment.utr == utr).count()
+        dup_count = db.session.scalar(select(func.count(FeePayment.payment_id)).where(FeePayment.utr == utr))
         if dup_count > 0:
             flash("Warning: This UTR appears already used. Accounts may reject.", "warning")
     except Exception:
@@ -1395,12 +1387,12 @@ def fees_payments_queue():
         flash("Not authorized to view verification queue.", "danger")
         return redirect(url_for("main.dashboard"))
     from ..models import FeePayment, Student, Program
-    q = FeePayment.query.filter_by(status="submitted").order_by(FeePayment.created_at.asc())
-    payments = q.all()
+    q = select(FeePayment).filter_by(status="submitted").order_by(FeePayment.created_at.asc())
+    payments = db.session.execute(q).scalars().all()
     # Preload related student/program maps for display
-    students = {s.enrollment_no: s for s in Student.query.filter(Student.enrollment_no.in_([p.enrollment_no for p in payments])).all()} if payments else {}
+    students = {s.enrollment_no: s for s in db.session.execute(select(Student).filter(Student.enrollment_no.in_([p.enrollment_no for p in payments]))).scalars().all()} if payments else {}
     prog_ids = sorted({p.program_id_fk for p in payments if p.program_id_fk})
-    programs = {p.program_id: p for p in Program.query.filter(Program.program_id.in_(prog_ids)).all()} if prog_ids else {}
+    programs = {p.program_id: p for p in db.session.execute(select(Program).filter(Program.program_id.in_(prog_ids))).scalars().all()} if prog_ids else {}
     return render_template("fees_verification_queue.html", payments=payments, students=students, programs=programs)
 
 # Verify a payment (Admin/Clerk), supports duplicate UTR override
@@ -1419,7 +1411,7 @@ def fees_payment_verify(payment_id):
     # Duplicate UTR check
     override = ((request.form.get("override_duplicate") or "").strip().lower() in ("1", "true", "yes"))
     try:
-        dup_exists = FeePayment.query.filter(FeePayment.utr == fp.utr, FeePayment.payment_id != fp.payment_id).first() is not None
+        dup_exists = db.session.execute(select(FeePayment).filter(FeePayment.utr == fp.utr, FeePayment.payment_id != fp.payment_id)).scalars().first() is not None
     except Exception:
         dup_exists = False
     if dup_exists and not override:
@@ -1568,24 +1560,22 @@ def materials_hub():
     ay = current_academic_year()
     try:
         if role == "student":
-            s = Student.query.filter_by(user_id_fk=current_user.user_id).first()
+            s = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
             if s:
-                enr = (
-                    StudentSubjectEnrollment.query
+                enr = db.session.execute(
+                    select(StudentSubjectEnrollment)
                     .filter_by(student_id_fk=s.student_id, academic_year=ay, is_active=True)
-                    .all()
-                )
+                ).scalars().all()
                 subj_ids = sorted({e.subject_id_fk for e in enr if e.subject_id_fk})
-                student_subjects = Subject.query.filter(Subject.subject_id.in_(subj_ids)).order_by(Subject.semester.asc(), Subject.subject_name.asc()).all() if subj_ids else []
+                student_subjects = db.session.execute(select(Subject).filter(Subject.subject_id.in_(subj_ids)).order_by(Subject.semester.asc(), Subject.subject_name.asc())).scalars().all() if subj_ids else []
         elif role == "faculty":
-            assignments = (
-                CourseAssignment.query
+            assignments = db.session.execute(
+                select(CourseAssignment)
                 .filter_by(faculty_id_fk=current_user.user_id, is_active=True)
                 .order_by(CourseAssignment.academic_year.desc())
-                .all()
-            )
+            ).scalars().all()
             subj_ids = sorted({a.subject_id_fk for a in assignments if a.subject_id_fk})
-            faculty_subjects = Subject.query.filter(Subject.subject_id.in_(subj_ids)).order_by(Subject.semester.asc(), Subject.subject_name.asc()).all() if subj_ids else []
+            faculty_subjects = db.session.execute(select(Subject).filter(Subject.subject_id.in_(subj_ids)).order_by(Subject.semester.asc(), Subject.subject_name.asc())).scalars().all() if subj_ids else []
     except Exception:
         # Fail-soft: show empty lists
         student_subjects = []
@@ -1604,17 +1594,16 @@ def materials_downloads():
     ay = current_academic_year()
     from ..models import SubjectMaterial
     try:
-        s = Student.query.filter_by(user_id_fk=current_user.user_id).first()
+        s = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
         if not s:
             flash("No student profile linked to your account.", "danger")
             return redirect(url_for("main.materials_hub"))
 
         # Resolve enrolled subject IDs for current AY
-        enr = (
-            StudentSubjectEnrollment.query
+        enr = db.session.execute(
+            select(StudentSubjectEnrollment)
             .filter_by(student_id_fk=s.student_id, academic_year=ay, is_active=True)
-            .all()
-        )
+        ).scalars().all()
         subj_ids = sorted({e.subject_id_fk for e in enr if e.subject_id_fk})
         if not subj_ids:
             return render_template("materials_downloads.html", ay=ay, items=[], subject_map={}, filters={}, subjects_options=[])
@@ -1629,7 +1618,7 @@ def materials_downloads():
 
         # Build base query: published and not flagged, scoped to enrolled subjects
         q = (
-            SubjectMaterial.query
+            select(SubjectMaterial)
             .filter(SubjectMaterial.subject_id_fk.in_(subj_ids))
             .filter(SubjectMaterial.is_published == True)
             .filter(SubjectMaterial.is_flagged == False)
@@ -1676,10 +1665,10 @@ def materials_downloads():
 
         # Sort newest first
         q = q.order_by(SubjectMaterial.created_at.desc())
-        items = q.all()
+        items = db.session.execute(q).scalars().all()
 
         # Subject map and options for filter
-        subjects = Subject.query.filter(Subject.subject_id.in_(subj_ids)).order_by(Subject.subject_name.asc()).all()
+        subjects = db.session.execute(select(Subject).filter(Subject.subject_id.in_(subj_ids)).order_by(Subject.subject_name.asc())).scalars().all()
         subject_map = {sub.subject_id: sub for sub in subjects}
         subjects_options = [{"subject_id": sub.subject_id, "subject_name": sub.subject_name} for sub in subjects]
 
@@ -1717,13 +1706,15 @@ def materials_downloads():
 @main_bp.route("/subjects/<int:subject_id>/materials")
 @login_required
 def subject_materials(subject_id: int):
-    subject = Subject.query.get_or_404(subject_id)
+    subject = db.session.get(Subject, subject_id)
+    if not subject:
+        abort(404)
     role = (getattr(current_user, "role", "") or "").strip().lower()
     can_manage = False
     if _user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(subject_id)):
         can_manage = True
 
-    q = SubjectMaterial.query.filter_by(subject_id_fk=subject_id)
+    q = select(SubjectMaterial).filter_by(subject_id_fk=subject_id)
     if role == "student":
         ay = current_academic_year()
         if not _user_is_student_enrolled(subject_id, ay):
@@ -1731,16 +1722,16 @@ def subject_materials(subject_id: int):
             return redirect(url_for("main.subjects_list"))
         q = q.filter(SubjectMaterial.is_published == True, SubjectMaterial.is_flagged == False)
 
-    materials = q.order_by(SubjectMaterial.created_at.desc()).all()
+    materials = db.session.execute(q.order_by(SubjectMaterial.created_at.desc())).scalars().all()
     # Owner display map
     owner_ids = sorted({m.faculty_id_fk for m in materials if m.faculty_id_fk})
     owners = {}
     if owner_ids:
         try:
-            users = User.query.filter(User.user_id.in_(owner_ids)).all()
+            users = db.session.execute(select(User).filter(User.user_id.in_(owner_ids))).scalars().all()
             for u in users:
                 owners[u.user_id] = (u.username or f"User #{u.user_id}")
-            facs = Faculty.query.filter(Faculty.user_id_fk.in_(owner_ids)).all()
+            facs = db.session.execute(select(Faculty).filter(Faculty.user_id_fk.in_(owner_ids))).scalars().all()
             for f in facs:
                 # Prefer faculty full_name when available
                 owners[f.user_id_fk] = f.full_name or owners.get(f.user_id_fk, f"User #{f.user_id_fk}")
@@ -1786,7 +1777,9 @@ def _quota_limits():
 @login_required
 @csrf_required
 def subject_material_new(subject_id: int):
-    subject = Subject.query.get_or_404(subject_id)
+    subject = db.session.get(Subject, subject_id)
+    if not subject:
+        abort(404)
     role = (getattr(current_user, "role", "") or "").strip().lower()
     if not (_user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(subject_id))):
         flash("You are not authorized to add materials.", "danger")
@@ -1806,7 +1799,7 @@ def subject_material_new(subject_id: int):
         max_items, max_mb = _quota_limits()
         existing_count = 0
         try:
-            existing_count = SubjectMaterial.query.filter_by(subject_id_fk=subject_id).count()
+            existing_count = db.session.scalar(select(func.count(SubjectMaterial.material_id)).filter_by(subject_id_fk=subject_id))
         except Exception:
             existing_count = 0
         if existing_count >= max_items:
@@ -1861,7 +1854,7 @@ def subject_material_new(subject_id: int):
             return render_template("materials_new.html", subject=subject)
 
         db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="create", actor_user_id_fk=current_user.user_id, actor_role=role, meta_json=None))
-        ver = (db.session.query(func.max(MaterialRevision.version)).filter(MaterialRevision.material_id_fk == material.material_id).scalar() or 0) + 1
+        ver = (db.session.scalar(select(func.max(MaterialRevision.version)).filter(MaterialRevision.material_id_fk == material.material_id)) or 0) + 1
         db.session.add(MaterialRevision(material_id_fk=material.material_id, version=ver, title=material.title, description=material.description, kind=material.kind, file_path=material.file_path, external_url=material.external_url, actor_user_id_fk=current_user.user_id))
         db.session.commit()
         flash("Material added. Awaiting publish.", "success")
@@ -1873,7 +1866,9 @@ def subject_material_new(subject_id: int):
 @login_required
 @csrf_required
 def subject_material_edit(material_id: int):
-    material = SubjectMaterial.query.get_or_404(material_id)
+    material = db.session.get(SubjectMaterial, material_id)
+    if not material:
+        abort(404)
     subject = db.session.get(Subject, material.subject_id_fk)
     role = (getattr(current_user, "role", "") or "").strip().lower()
     is_owner = (material.faculty_id_fk == current_user.user_id)
@@ -1932,7 +1927,7 @@ def subject_material_edit(material_id: int):
             return render_template("materials_edit.html", subject=subject, material=material)
 
     db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="update", actor_user_id_fk=current_user.user_id, actor_role=role, meta_json=None))
-    ver = (db.session.query(func.max(MaterialRevision.version)).filter(MaterialRevision.material_id_fk == material.material_id).scalar() or 0) + 1
+    ver = (db.session.scalar(select(func.max(MaterialRevision.version)).filter(MaterialRevision.material_id_fk == material.material_id)) or 0) + 1
     db.session.add(MaterialRevision(material_id_fk=material.material_id, version=ver, title=material.title, description=material.description, kind=material.kind, file_path=material.file_path, external_url=material.external_url, actor_user_id_fk=current_user.user_id))
     db.session.commit()
     flash("Material updated.", "success")
@@ -1944,7 +1939,9 @@ def subject_material_edit(material_id: int):
 @login_required
 @csrf_required
 def subject_material_delete(material_id: int):
-    material = SubjectMaterial.query.get_or_404(material_id)
+    material = db.session.get(SubjectMaterial, material_id)
+    if not material:
+        abort(404)
     role = (getattr(current_user, "role", "") or "").strip().lower()
     is_owner = (material.faculty_id_fk == current_user.user_id)
     if not (_user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(material.subject_id_fk) and is_owner)):
@@ -1964,7 +1961,9 @@ def subject_material_publish(material_id: int):
     if not _user_is_admin_or_principal():
         flash("Only admin or principal can publish.", "danger")
         return redirect(url_for("main.dashboard"))
-    material = SubjectMaterial.query.get_or_404(material_id)
+    material = db.session.get(SubjectMaterial, material_id)
+    if not material:
+        abort(404)
     material.is_published = True
     db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="publish", actor_user_id_fk=current_user.user_id, actor_role=(current_user.role or ""), meta_json=None))
     db.session.commit()
@@ -1978,7 +1977,9 @@ def subject_material_unpublish(material_id: int):
     if not _user_is_admin_or_principal():
         flash("Only admin or principal can unpublish.", "danger")
         return redirect(url_for("main.dashboard"))
-    material = SubjectMaterial.query.get_or_404(material_id)
+    material = db.session.get(SubjectMaterial, material_id)
+    if not material:
+        abort(404)
     material.is_published = False
     db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="unpublish", actor_user_id_fk=current_user.user_id, actor_role=(current_user.role or ""), meta_json=None))
     db.session.commit()
@@ -1990,7 +1991,9 @@ def subject_material_unpublish(material_id: int):
 @csrf_required
 def subject_material_flag(material_id: int):
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    material = SubjectMaterial.query.get_or_404(material_id)
+    material = db.session.get(SubjectMaterial, material_id)
+    if not material:
+        abort(404)
     if not (_user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(material.subject_id_fk))):
         flash("You are not authorized to flag this material.", "danger")
         return redirect(url_for("main.subject_materials", subject_id=material.subject_id_fk))
@@ -2007,7 +2010,9 @@ def subject_material_unflag(material_id: int):
     if not _user_is_admin_or_principal():
         flash("Only admin or principal can unflag.", "danger")
         return redirect(url_for("main.dashboard"))
-    material = SubjectMaterial.query.get_or_404(material_id)
+    material = db.session.get(SubjectMaterial, material_id)
+    if not material:
+        abort(404)
     material.is_flagged = False
     db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="unflag", actor_user_id_fk=current_user.user_id, actor_role=(current_user.role or ""), meta_json=None))
     db.session.commit()
@@ -2021,17 +2026,17 @@ def materials_moderation():
         flash("You are not authorized to access moderation.", "danger")
         return redirect(url_for("main.dashboard"))
     # Show unpublished or flagged materials
-    q = SubjectMaterial.query.filter((SubjectMaterial.is_published == False) | (SubjectMaterial.is_flagged == True))
-    materials = q.order_by(SubjectMaterial.created_at.desc()).all()
+    q = select(SubjectMaterial).filter((SubjectMaterial.is_published == False) | (SubjectMaterial.is_flagged == True))
+    materials = db.session.execute(q.order_by(SubjectMaterial.created_at.desc())).scalars().all()
     # Owner map
     owner_ids = sorted({m.faculty_id_fk for m in materials if m.faculty_id_fk})
     owners = {}
     if owner_ids:
         try:
-            users = User.query.filter(User.user_id.in_(owner_ids)).all()
+            users = db.session.execute(select(User).filter(User.user_id.in_(owner_ids))).scalars().all()
             for u in users:
                 owners[u.user_id] = (u.username or f"User #{u.user_id}")
-            facs = Faculty.query.filter(Faculty.user_id_fk.in_(owner_ids)).all()
+            facs = db.session.execute(select(Faculty).filter(Faculty.user_id_fk.in_(owner_ids))).scalars().all()
             for f in facs:
                 owners[f.user_id_fk] = f.full_name or owners.get(f.user_id_fk, f"User #{f.user_id_fk}")
         except Exception:
@@ -2041,7 +2046,7 @@ def materials_moderation():
     subjects = {}
     if subj_ids:
         try:
-            subs = Subject.query.filter(Subject.subject_id.in_(subj_ids)).all()
+            subs = db.session.execute(select(Subject).filter(Subject.subject_id.in_(subj_ids))).scalars().all()
             for s in subs:
                 subjects[s.subject_id] = s
         except Exception:
@@ -2097,7 +2102,7 @@ def login():
         if not username or not password:
             flash("Username and password are required.", "danger")
             return render_template("login.html")
-        user = User.query.filter_by(username=username).first()
+        user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
         if not user or not user.password_hash or not check_password_hash(user.password_hash, password):
             flash("Invalid credentials.", "danger")
             return render_template("login.html")
@@ -2110,7 +2115,7 @@ def login():
             if _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", user.username or ""):
                 email_present = True
             if not email_present:
-                lf = Faculty.query.filter_by(user_id_fk=user.user_id).first()
+                lf = db.session.execute(select(Faculty).filter_by(user_id_fk=user.user_id)).scalars().first()
                 if lf and lf.email:
                     email_present = True
             if not email_present:
@@ -2162,7 +2167,7 @@ def dashboard():
             except Exception:
                 selected_program = None
         if not selected_program:
-            selected_program = Program.query.filter_by(program_name="BCA").first()
+            selected_program = db.session.execute(select(Program).filter_by(program_name="BCA")).scalars().first()
 
     # Compute current academic year (e.g., 2025-26)
     now = datetime.now()
@@ -2174,30 +2179,30 @@ def dashboard():
     pid = selected_program.program_id if selected_program else None
     def _safe_count(q):
         try:
-            return q.count()
+            return db.session.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
         except Exception:
             return 0
 
-    students_count = _safe_count(Student.query.filter_by(program_id_fk=pid)) if pid else _safe_count(Student.query)
-    subjects_count = _safe_count(Subject.query.filter_by(program_id_fk=pid)) if pid else _safe_count(Subject.query)
-    faculties_count = _safe_count(Faculty.query.filter_by(program_id_fk=pid)) if pid else _safe_count(Faculty.query)
-    divisions_count = _safe_count(Division.query.filter_by(program_id_fk=pid)) if pid else _safe_count(Division.query)
+    students_count = _safe_count(select(Student).filter_by(program_id_fk=pid)) if pid else _safe_count(select(Student))
+    subjects_count = _safe_count(select(Subject).filter_by(program_id_fk=pid)) if pid else _safe_count(select(Subject))
+    faculties_count = _safe_count(select(Faculty).filter_by(program_id_fk=pid)) if pid else _safe_count(select(Faculty))
+    divisions_count = _safe_count(select(Division).filter_by(program_id_fk=pid)) if pid else _safe_count(select(Division))
 
     # Active course assignments (teaching load)
     if pid:
         assignments_count = _safe_count(
-            CourseAssignment.query.join(Subject, CourseAssignment.subject_id_fk == Subject.subject_id)
+            select(CourseAssignment).join(Subject, CourseAssignment.subject_id_fk == Subject.subject_id)
             .filter(Subject.program_id_fk == pid, CourseAssignment.is_active == True)
         )
     else:
-        assignments_count = _safe_count(CourseAssignment.query.filter_by(is_active=True))
+        assignments_count = _safe_count(select(CourseAssignment).filter_by(is_active=True))
 
     # Active student-subject enrollments for current academic year
     if pid:
-        subject_ids = [sid for (sid,) in Subject.query.with_entities(Subject.subject_id).filter(Subject.program_id_fk == pid).all()]
+        subject_ids = db.session.execute(select(Subject.subject_id).filter(Subject.program_id_fk == pid)).scalars().all()
         if subject_ids:
             enrollments_count = _safe_count(
-                StudentSubjectEnrollment.query
+                select(StudentSubjectEnrollment)
                 .filter(StudentSubjectEnrollment.subject_id_fk.in_(subject_ids))
                 .filter(StudentSubjectEnrollment.is_active == True)
                 .filter(StudentSubjectEnrollment.academic_year == academic_year)
@@ -2206,13 +2211,13 @@ def dashboard():
             enrollments_count = 0
     else:
         enrollments_count = _safe_count(
-            StudentSubjectEnrollment.query
+            select(StudentSubjectEnrollment)
             .filter(StudentSubjectEnrollment.is_active == True)
             .filter(StudentSubjectEnrollment.academic_year == academic_year)
         )
 
     # Elective subjects scoped
-    elective_subjects_count = _safe_count(Subject.query.filter_by(program_id_fk=pid, is_elective=True)) if pid else _safe_count(Subject.query.filter_by(is_elective=True))
+    elective_subjects_count = _safe_count(select(Subject).filter_by(program_id_fk=pid, is_elective=True)) if pid else _safe_count(select(Subject).filter_by(is_elective=True))
 
     summary = {
         "program": selected_program.program_name if selected_program else ("All Programs" if role == "admin" else "BCA"),
@@ -2254,13 +2259,13 @@ def dashboard():
         except Exception:
             att_semester = None
         # Build subject scope: principal scoped to selected_program; admin across all
-        subj_q = Subject.query
+        subj_q = select(Subject)
         if selected_program:
             subj_q = subj_q.filter_by(program_id_fk=selected_program.program_id)
         # Bound subjects by selected semester if provided
         if att_semester:
             subj_q = subj_q.filter(Subject.semester == att_semester)
-        subject_list = subj_q.order_by(Subject.subject_name.asc()).all()
+        subject_list = db.session.execute(subj_q.order_by(Subject.subject_name.asc())).scalars().all()
         # For admin without a selected program, require program selection to enable subject filter
         if role == "admin" and not selected_program:
             subject_list = []
@@ -2270,18 +2275,18 @@ def dashboard():
         status_counts = {"P": 0, "A": 0, "L": 0}
         if subj_ids:
             att_rows_q = (
-                Attendance.query
+                select(Attendance)
                 .filter(Attendance.subject_id_fk.in_(subj_ids))
                 .filter(Attendance.date_marked == selected_date)
             )
         else:
-            att_rows_q = Attendance.query.filter(Attendance.date_marked == selected_date)
+            att_rows_q = select(Attendance).filter(Attendance.date_marked == selected_date)
         # Bound by semester if selected
         if att_semester:
             att_rows_q = att_rows_q.filter(Attendance.semester == att_semester)
         if att_division_id:
             att_rows_q = att_rows_q.filter(Attendance.division_id_fk == att_division_id)
-        att_rows = att_rows_q.all()
+        att_rows = db.session.execute(att_rows_q).scalars().all()
         for r in att_rows:
             s = (r.status or "").upper()
             if s in status_counts:
@@ -2302,14 +2307,14 @@ def dashboard():
         week_pct_present = []
         week_pct_absent = []
         # Prefetch rows between range
-        att_week_q = Attendance.query.filter(Attendance.date_marked >= start_week).filter(Attendance.date_marked <= selected_date)
+        att_week_q = select(Attendance).filter(Attendance.date_marked >= start_week).filter(Attendance.date_marked <= selected_date)
         if subj_ids:
             att_week_q = att_week_q.filter(Attendance.subject_id_fk.in_(subj_ids))
         if att_semester:
             att_week_q = att_week_q.filter(Attendance.semester == att_semester)
         if att_division_id:
             att_week_q = att_week_q.filter(Attendance.division_id_fk == att_division_id)
-        att_week_rows = att_week_q.all()
+        att_week_rows = db.session.execute(att_week_q).scalars().all()
         # Group by date
         by_date = {}
         for r in att_week_rows:
@@ -2352,14 +2357,14 @@ def dashboard():
         month_counts = {"P": [], "A": [], "L": []}
         month_pct_present = []
         month_pct_absent = []
-        att_month_q = Attendance.query.filter(Attendance.date_marked >= start_month).filter(Attendance.date_marked <= end_month)
+        att_month_q = select(Attendance).filter(Attendance.date_marked >= start_month).filter(Attendance.date_marked <= end_month)
         if subj_ids:
             att_month_q = att_month_q.filter(Attendance.subject_id_fk.in_(subj_ids))
         if att_semester:
             att_month_q = att_month_q.filter(Attendance.semester == att_semester)
         if att_division_id:
             att_month_q = att_month_q.filter(Attendance.division_id_fk == att_division_id)
-        att_month_rows = att_month_q.all()
+        att_month_rows = db.session.execute(att_month_q).scalars().all()
         by_date_m = {}
         for r in att_month_rows:
             d = r.date_marked
@@ -2393,13 +2398,13 @@ def dashboard():
             "absent_pct": month_pct_absent,
         }
         # Build division list and selected filters for UI
-        div_q = Division.query
+        div_q = select(Division)
         if selected_program:
             div_q = div_q.filter_by(program_id_fk=selected_program.program_id)
         # Bound divisions by selected semester if provided
         if att_semester:
             div_q = div_q.filter(Division.semester == att_semester)
-        division_list = div_q.order_by(Division.semester.asc(), Division.division_code.asc()).all()
+        division_list = db.session.execute(div_q.order_by(Division.semester.asc(), Division.division_code.asc())).scalars().all()
         # For admin without a selected program, require program selection to enable division filter
         if role == "admin" and not selected_program:
             division_list = []
@@ -2430,7 +2435,7 @@ def dashboard():
     # Admin program list for picker
     program_list = []
     if role == "admin":
-        program_list = Program.query.order_by(Program.program_name.asc()).all()
+        program_list = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     # Charts program filter (admin-only)
     chart_program_id = None
     try:
@@ -2443,7 +2448,7 @@ def dashboard():
     # Personal announcements: if recipients are set, show only to selected students and Principal/Clerk.
     announcements = []
     try:
-        ann_q = Announcement.query.filter(Announcement.is_active == True)
+        ann_q = select(Announcement).filter(Announcement.is_active == True)
         ann_q = ann_q.filter(or_(Announcement.start_at == None, Announcement.start_at <= (now + timedelta(hours=12))))
         ann_q = ann_q.filter(or_(Announcement.end_at == None, Announcement.end_at >= (now - timedelta(hours=12))))
         # Program scoping for non-admin/clerk: show global or same program
@@ -2460,12 +2465,12 @@ def dashboard():
         try:
             user_id = getattr(current_user, "user_id", None)
             if user_id:
-                dismissed_ids = [d.announcement_id_fk for d in AnnouncementDismissal.query.filter_by(user_id_fk=user_id).all()]
+                dismissed_ids = db.session.execute(select(AnnouncementDismissal.announcement_id_fk).filter_by(user_id_fk=user_id)).scalars().all()
                 if dismissed_ids:
                     ann_q = ann_q.filter(~Announcement.announcement_id.in_(dismissed_ids))
         except Exception:
             pass
-        rows = ann_q.order_by(Announcement.created_at.desc()).all()
+        rows = db.session.execute(ann_q.order_by(Announcement.created_at.desc())).scalars().all()
         # Audience targeting: if specific roles are configured, show only when user role matches.
         # Personal targeting via recipients: visible only to selected students and Principal/Clerk.
         user_role = (role or "").strip().lower()
@@ -2473,7 +2478,7 @@ def dashboard():
         cur_student_enr = None
         try:
             if user_role == "student":
-                st = Student.query.filter_by(user_id_fk=getattr(current_user, "user_id", None)).first()
+                st = db.session.execute(select(Student).filter_by(user_id_fk=getattr(current_user, "user_id", None))).scalars().first()
                 cur_student_enr = getattr(st, "enrollment_no", None) if st else None
         except Exception:
             cur_student_enr = None
@@ -2607,13 +2612,13 @@ def dashboard():
         def _fees_by_semester(program_id: int, selected_semester: int = None):
             # Map enrollment -> semester for fees rows, filtered to program students
             try:
-                st_rows = Student.query.with_entities(Student.enrollment_no).filter_by(program_id_fk=program_id).all()
+                st_rows = db.session.execute(select(Student.enrollment_no).filter_by(program_id_fk=program_id)).scalars().all()
             except Exception:
                 st_rows = []
-            enr_set = {enr for (enr,) in st_rows}
+            enr_set = {enr for enr in st_rows}
             sums = {}
             try:
-                fee_rows = FeesRecord.query.with_entities(FeesRecord.student_id_fk, FeesRecord.semester, FeesRecord.amount_paid).all()
+                fee_rows = db.session.execute(select(FeesRecord.student_id_fk, FeesRecord.semester, FeesRecord.amount_paid)).all()
             except Exception:
                 fee_rows = []
             for enr, sem, amt in fee_rows:
@@ -2636,7 +2641,7 @@ def dashboard():
 
         def _gender_by_semester(program_id: int, selected_semester: int = None):
             try:
-                st_rows = Student.query.with_entities(Student.current_semester, Student.gender).filter_by(program_id_fk=program_id).all()
+                st_rows = db.session.execute(select(Student.current_semester, Student.gender).filter_by(program_id_fk=program_id)).all()
             except Exception:
                 st_rows = []
             male = {}
@@ -2670,13 +2675,13 @@ def dashboard():
         def _subject_results_for_program(program_id: int, selected_semester: int = None, selected_subject_id: int = None):
             # Average GPA per subject within program (optionally filter by semester)
             try:
-                subj_rows = Subject.query.with_entities(Subject.subject_id, Subject.subject_name, Subject.semester).filter_by(program_id_fk=program_id).order_by(Subject.semester.asc(), Subject.subject_name.asc()).all()
+                subj_rows = db.session.execute(select(Subject.subject_id, Subject.subject_name, Subject.semester).filter_by(program_id_fk=program_id).order_by(Subject.semester.asc(), Subject.subject_name.asc())).all()
             except Exception:
                 subj_rows = []
             subj_map = {sid: {"name": name, "sem": sem} for (sid, name, sem) in subj_rows}
             sums = {sid: {"sum": 0.0, "cnt": 0} for sid in subj_map.keys()}
             try:
-                grade_rows = Grade.query.with_entities(Grade.subject_id_fk, Grade.gpa_for_subject).all()
+                grade_rows = db.session.execute(select(Grade.subject_id_fk, Grade.gpa_for_subject)).all()
             except Exception:
                 grade_rows = []
             for sid, gpa in grade_rows:
@@ -2709,7 +2714,7 @@ def dashboard():
             # Limit to current academic year or last 6 months
             try:
                 # Get total active students in program to calculate percentage
-                total_students = Student.query.filter_by(program_id_fk=program_id).count()
+                total_students = db.session.scalar(select(func.count()).select_from(Student).filter_by(program_id_fk=program_id))
                 if not total_students:
                     total_students = 1  # avoid division by zero
                 
@@ -2719,16 +2724,17 @@ def dashboard():
                 cutoff = cutoff_dt.date() if hasattr(cutoff_dt, 'date') else cutoff_dt
                 
                 att_rows = (
-                    db.session.query(
-                        Attendance.date_marked,
-                        func.count(Attendance.attendance_id)
-                    )
-                    .join(Student, Student.enrollment_no == Attendance.student_id_fk)
-                    .filter(Student.program_id_fk == program_id)
-                    .filter(Attendance.date_marked >= cutoff)
-                    .filter(Attendance.status.in_(['P', 'L']))
-                    .group_by(Attendance.date_marked)
-                    .all()
+                    db.session.execute(
+                        select(
+                            Attendance.date_marked,
+                            func.count(Attendance.attendance_id)
+                        )
+                        .join(Student, Student.enrollment_no == Attendance.student_id_fk)
+                        .filter(Student.program_id_fk == program_id)
+                        .filter(Attendance.date_marked >= cutoff)
+                        .filter(Attendance.status.in_(['P', 'L']))
+                        .group_by(Attendance.date_marked)
+                    ).all()
                 )
                 
                 # Format for frontend: unix timestamp (seconds) -> value (0-100 scale or count)
@@ -2753,11 +2759,11 @@ def dashboard():
 
                 try:
                     assignments = (
-                        CourseAssignment.query
-                        .with_entities(CourseAssignment.subject_id_fk, CourseAssignment.division_id_fk)
-                        .filter(CourseAssignment.faculty_id_fk == faculty_user_id)
-                        .filter(CourseAssignment.is_active == True)
-                        .all()
+                        db.session.execute(
+                            select(CourseAssignment.subject_id_fk, CourseAssignment.division_id_fk)
+                            .filter(CourseAssignment.faculty_id_fk == faculty_user_id)
+                            .filter(CourseAssignment.is_active == True)
+                        ).all()
                     )
                 except Exception:
                     assignments = []
@@ -2769,7 +2775,7 @@ def dashboard():
 
                 # Group by Subject to find culprits
                 q = (
-                    db.session.query(
+                    select(
                         Attendance.date_marked,
                         Attendance.subject_id_fk,
                         Attendance.status,
@@ -2782,10 +2788,10 @@ def dashboard():
                 if division_ids:
                     q = q.filter(Attendance.division_id_fk.in_(division_ids))
 
-                rows = q.all()
+                rows = db.session.execute(q).all()
                 
                 try:
-                    sub_objs = Subject.query.with_entities(Subject.subject_id, Subject.subject_name).filter(Subject.subject_id.in_(subject_ids)).all()
+                    sub_objs = db.session.execute(select(Subject.subject_id, Subject.subject_name).filter(Subject.subject_id.in_(subject_ids))).all()
                     subject_names = {sid: name for (sid, name) in sub_objs}
                 except Exception:
                     subject_names = {}
@@ -2840,20 +2846,20 @@ def dashboard():
             # Build base program-level charts; if chart_program_id is selected, filter to that program
             def _students_for_program(program_id: int):
                 try:
-                    return Student.query.filter_by(program_id_fk=program_id).count()
+                    return db.session.scalar(select(func.count()).select_from(Student).filter_by(program_id_fk=program_id)) or 0
                 except Exception:
                     return 0
 
             def _fees_for_program(program_id: int):
                 # Sum fees for students in selected program
                 try:
-                    st_rows = Student.query.with_entities(Student.enrollment_no).filter_by(program_id_fk=program_id).all()
+                    st_rows = db.session.execute(select(Student.enrollment_no).filter_by(program_id_fk=program_id)).scalars().all()
                 except Exception:
                     st_rows = []
-                enr_set = {enr for (enr,) in st_rows}
+                enr_set = {enr for enr in st_rows}
                 total = 0.0
                 try:
-                    fee_rows = FeesRecord.query.with_entities(FeesRecord.student_id_fk, FeesRecord.amount_paid).all()
+                    fee_rows = db.session.execute(select(FeesRecord.student_id_fk, FeesRecord.amount_paid)).all()
                 except Exception:
                     fee_rows = []
                 for enr, amt in fee_rows:
@@ -2866,7 +2872,7 @@ def dashboard():
 
             def _staff_for_program(program_id: int):
                 try:
-                    return Faculty.query.filter_by(program_id_fk=program_id).count()
+                    return db.session.scalar(select(func.count()).select_from(Faculty).filter_by(program_id_fk=program_id)) or 0
                 except Exception:
                     return 0
 
@@ -2911,20 +2917,21 @@ def dashboard():
                 # --- Active Subjects (Today's Classes replacement) ---
                 try:
                     active_assignments = (
-                        CourseAssignment.query
-                        .filter_by(faculty_id_fk=faculty_user_id, is_active=True)
-                        .join(Subject, Subject.subject_id == CourseAssignment.subject_id_fk)
-                        .join(Division, Division.division_id == CourseAssignment.division_id_fk)
-                        .join(Program, Program.program_id == Division.program_id_fk)
-                        .with_entities(
-                            Subject.subject_name,
-                            Division.division_code,
-                            Division.semester,
-                            Program.program_name,
-                            CourseAssignment.subject_id_fk,
-                            CourseAssignment.division_id_fk
-                        )
-                        .all()
+                        db.session.execute(
+                            select(
+                                Subject.subject_name,
+                                Division.division_code,
+                                Division.semester,
+                                Program.program_name,
+                                CourseAssignment.subject_id_fk,
+                                CourseAssignment.division_id_fk
+                            )
+                            .select_from(CourseAssignment)
+                            .filter_by(faculty_id_fk=faculty_user_id, is_active=True)
+                            .join(Subject, Subject.subject_id == CourseAssignment.subject_id_fk)
+                            .join(Division, Division.division_id == CourseAssignment.division_id_fk)
+                            .join(Program, Program.program_id == Division.program_id_fk)
+                        ).all()
                     )
                     charts["active_subjects"] = [
                         {
@@ -2945,33 +2952,34 @@ def dashboard():
                     risk_list = []
                     # Get assigned subject/division pairs
                     pairs = (
-                        CourseAssignment.query
-                        .filter_by(faculty_id_fk=faculty_user_id, is_active=True)
-                        .with_entities(CourseAssignment.subject_id_fk, CourseAssignment.division_id_fk)
-                        .all()
+                        db.session.execute(
+                            select(CourseAssignment.subject_id_fk, CourseAssignment.division_id_fk)
+                            .filter_by(faculty_id_fk=faculty_user_id, is_active=True)
+                        ).all()
                     )
                     
                     for sid, did in pairs:
-                        sub_name = Subject.query.with_entities(Subject.subject_name).filter_by(subject_id=sid).scalar() or "Unknown"
+                        sub_name = db.session.scalar(select(Subject.subject_name).filter_by(subject_id=sid)) or "Unknown"
                         
                         st_enrollments = (
-                            Student.query
-                            .with_entities(Student.enrollment_no, Student.student_name, Student.surname)
-                            .filter_by(division_id_fk=did)
-                            .all()
+                            db.session.execute(
+                                select(Student.enrollment_no, Student.student_name, Student.surname)
+                                .filter_by(division_id_fk=did)
+                            ).all()
                         )
                         
                         att_counts = (
-                            db.session.query(
-                                Attendance.student_id_fk,
-                                Attendance.status,
-                                func.count(Attendance.attendance_id)
-                            )
-                            .filter(Attendance.subject_id_fk == sid)
-                            .filter(Attendance.division_id_fk == did)
-                            .filter(Attendance.date_marked >= cutoff_risk_date)
-                            .group_by(Attendance.student_id_fk, Attendance.status)
-                            .all()
+                            db.session.execute(
+                                select(
+                                    Attendance.student_id_fk,
+                                    Attendance.status,
+                                    func.count(Attendance.attendance_id)
+                                )
+                                .filter(Attendance.subject_id_fk == sid)
+                                .filter(Attendance.division_id_fk == did)
+                                .filter(Attendance.date_marked >= cutoff_risk_date)
+                                .group_by(Attendance.student_id_fk, Attendance.status)
+                            ).all()
                         )
                         
                         st_stats = {}
@@ -3007,14 +3015,15 @@ def dashboard():
                 # --- Faculty Notices ---
                 try:
                     notices = (
-                        Announcement.query
-                        .filter_by(is_active=True)
-                        # Relaxed time filter to account for timezone diffs (e.g. UTC server vs IST user)
-                        .filter(Announcement.start_at <= (now + timedelta(hours=12)))
-                        .filter((Announcement.end_at == None) | (Announcement.end_at >= (now - timedelta(hours=12))))
-                        .order_by(Announcement.start_at.desc())
-                        .limit(10)
-                        .all()
+                        db.session.execute(
+                            select(Announcement)
+                            .filter_by(is_active=True)
+                            # Relaxed time filter to account for timezone diffs (e.g. UTC server vs IST user)
+                            .filter(Announcement.start_at <= (now + timedelta(hours=12)))
+                            .filter((Announcement.end_at == None) | (Announcement.end_at >= (now - timedelta(hours=12))))
+                            .order_by(Announcement.start_at.desc())
+                            .limit(10)
+                        ).scalars().all()
                     )
                     final_notices = []
                     for n in notices:
@@ -3046,14 +3055,15 @@ def dashboard():
     try:
         role_lower = (getattr(current_user, "role", "") or "").strip().lower()
         if role_lower == "student":
-            s = Student.query.filter_by(user_id_fk=current_user.user_id).first()
+            s = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
             if s:
                 notifications = (
-                    Notification.query
-                    .filter_by(student_id_fk=s.enrollment_no, is_read=False)
-                    .order_by(Notification.created_at.desc())
-                    .limit(10)
-                    .all()
+                    db.session.execute(
+                        select(Notification)
+                        .filter_by(student_id_fk=s.enrollment_no, is_read=False)
+                        .order_by(Notification.created_at.desc())
+                        .limit(10)
+                    ).scalars().all()
                 )
             # Build view models with deep-link URLs
             try:
@@ -3114,8 +3124,8 @@ def announcements_list():
     program_id_raw = (request.args.get("program_id") or "").strip()
     severity = (request.args.get("severity") or "").strip().lower()
     only_active = (request.args.get("active") or "true").strip().lower() == "true"
-    programs = Program.query.order_by(Program.program_name.asc()).all()
-    q = Announcement.query
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    q = select(Announcement)
     # Principal/Faculty: manage only their own announcements
     try:
         _role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -3136,7 +3146,7 @@ def announcements_list():
         q = q.filter(Announcement.is_active == True)
         q = q.filter(or_(Announcement.start_at == None, Announcement.start_at <= (now + timedelta(hours=12))))
         q = q.filter(or_(Announcement.end_at == None, Announcement.end_at >= (now - timedelta(hours=12))))
-    rows = q.order_by(Announcement.created_at.desc()).all()
+    rows = db.session.execute(q.order_by(Announcement.created_at.desc())).scalars().all()
     return render_template("announcements.html", rows=rows, programs=programs, selected_program_id=(int(program_id_raw) if program_id_raw else None), selected_severity=severity, only_active=only_active)
 
 @main_bp.route("/notifications/<int:notification_id>/dismiss", methods=["POST"])
@@ -3149,7 +3159,7 @@ def notification_dismiss(notification_id):
     if not n:
         return jsonify({"ok": False, "error": "not_found"}), 404
     try:
-        s = Student.query.filter_by(user_id_fk=current_user.user_id).first()
+        s = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
     except Exception:
         s = None
     if not s or n.student_id_fk != s.enrollment_no:
@@ -3168,17 +3178,17 @@ def notification_dismiss(notification_id):
 @role_required("admin", "clerk", "principal", "faculty")
 @csrf_required
 def announcement_new():
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     # Student picker options (scoped for Principal/Faculty)
     students_for_picker = []
     try:
-        st_q = Student.query
+        st_q = select(Student)
         _role = (getattr(current_user, "role", "") or "").strip().lower()
         if _role in ("principal", "faculty"):
             pid = getattr(current_user, "program_id_fk", None)
             if pid:
                 st_q = st_q.filter_by(program_id_fk=pid)
-        st_rows = st_q.order_by(Student.student_name.asc()).limit(500).all()
+        st_rows = db.session.execute(st_q.order_by(Student.student_name.asc()).limit(500)).scalars().all()
         for s in st_rows:
             name = (f"{(s.student_name or '').strip()} {(s.surname or '').strip()}".strip() or s.enrollment_no)
             # Include division code and semester for richer UI display and filtering
@@ -3290,7 +3300,7 @@ def announcement_new():
         try:
             db.session.add(a)
             db.session.flush()
-            ver = (db.session.query(func.max(AnnouncementRevision.version)).filter(AnnouncementRevision.announcement_id_fk == a.announcement_id).scalar() or 0) + 1
+            ver = (db.session.execute(select(func.max(AnnouncementRevision.version)).filter(AnnouncementRevision.announcement_id_fk == a.announcement_id)).scalar() or 0) + 1
             db.session.add(AnnouncementRevision(announcement_id_fk=a.announcement_id, version=ver, title=a.title, message=a.message, severity=a.severity, is_active=a.is_active, program_id_fk=a.program_id_fk, start_at=a.start_at, end_at=a.end_at, actor_user_id_fk=getattr(current_user, "user_id", None)))
             db.session.commit()
             # Save audience targeting when specific roles selected (omit for all)
@@ -3319,7 +3329,7 @@ def announcement_new():
                 enr_list = [t for t in tokens if t]
                 if enr_list:
                     # Scope students by program for Principal/Faculty
-                    st_q = Student.query
+                    st_q = select(Student)
                     try:
                         _role = (getattr(current_user, "role", "") or "").strip().lower()
                         if _role in ("principal", "faculty"):
@@ -3328,7 +3338,7 @@ def announcement_new():
                                 st_q = st_q.filter_by(program_id_fk=pid)
                     except Exception:
                         pass
-                    st_rows = st_q.filter(Student.enrollment_no.in_(enr_list)).all()
+                    st_rows = db.session.execute(st_q.filter(Student.enrollment_no.in_(enr_list))).scalars().all()
                     valid_enrs = {s.enrollment_no for s in st_rows}
                     for enr in valid_enrs:
                         db.session.add(AnnouncementRecipient(announcement_id_fk=a.announcement_id, student_id_fk=enr))
@@ -3391,17 +3401,17 @@ def announcement_edit(announcement_id: int):
             return redirect(url_for("main.announcements_list"))
     except Exception:
         pass
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     # Student picker options (scoped for Principal/Faculty)
     students_for_picker = []
     try:
-        st_q = Student.query
+        st_q = select(Student)
         _role = (getattr(current_user, "role", "") or "").strip().lower()
         if _role in ("principal", "faculty"):
             pid = getattr(current_user, "program_id_fk", None)
             if pid:
                 st_q = st_q.filter_by(program_id_fk=pid)
-        st_rows = st_q.order_by(Student.student_name.asc()).limit(500).all()
+        st_rows = db.session.execute(st_q.order_by(Student.student_name.asc()).limit(500)).scalars().all()
         for s in st_rows:
             name = (f"{(s.student_name or '').strip()} {(s.surname or '').strip()}".strip() or s.enrollment_no)
             div_code = getattr(getattr(s, "division", None), "division_code", None)
@@ -3504,7 +3514,7 @@ def announcement_edit(announcement_id: int):
                         chosen = ["student", "faculty"]
             except Exception:
                 pass
-            AnnouncementAudience.query.filter_by(announcement_id_fk=a.announcement_id).delete()
+            db.session.execute(delete(AnnouncementAudience).filter_by(announcement_id_fk=a.announcement_id))
             if chosen:
                 for r in chosen:
                     db.session.add(AnnouncementAudience(announcement_id_fk=a.announcement_id, role=r))
@@ -3513,11 +3523,11 @@ def announcement_edit(announcement_id: int):
 
         # Update personal recipients
         try:
-            AnnouncementRecipient.query.filter_by(announcement_id_fk=a.announcement_id).delete()
+            db.session.execute(delete(AnnouncementRecipient).filter_by(announcement_id_fk=a.announcement_id))
             tokens = [t.strip() for t in (recipients_raw.replace("\n", " ").replace(",", " ") or "").split(" ")]
             enr_list = [t for t in tokens if t]
             if enr_list:
-                st_q = Student.query
+                st_q = select(Student)
                 try:
                     _role = (getattr(current_user, "role", "") or "").strip().lower()
                     if _role in ("principal", "faculty"):
@@ -3526,7 +3536,7 @@ def announcement_edit(announcement_id: int):
                             st_q = st_q.filter_by(program_id_fk=pid)
                 except Exception:
                     pass
-                st_rows = st_q.filter(Student.enrollment_no.in_(enr_list)).all()
+                st_rows = db.session.execute(st_q.filter(Student.enrollment_no.in_(enr_list))).scalars().all()
                 valid_enrs = {s.enrollment_no for s in st_rows}
                 for enr in valid_enrs:
                     db.session.add(AnnouncementRecipient(announcement_id_fk=a.announcement_id, student_id_fk=enr))
@@ -3585,7 +3595,7 @@ def announcement_edit(announcement_id: int):
                 pass
 
         try:
-            ver = (db.session.query(func.max(AnnouncementRevision.version)).filter(AnnouncementRevision.announcement_id_fk == a.announcement_id).scalar() or 0) + 1
+            ver = (db.session.execute(select(func.max(AnnouncementRevision.version)).filter(AnnouncementRevision.announcement_id_fk == a.announcement_id)).scalar() or 0) + 1
             db.session.add(AnnouncementRevision(announcement_id_fk=a.announcement_id, version=ver, title=a.title, message=a.message, severity=a.severity, is_active=a.is_active, program_id_fk=a.program_id_fk, start_at=a.start_at, end_at=a.end_at, actor_user_id_fk=getattr(current_user, "user_id", None)))
             db.session.commit()
             flash("Announcement updated.", "success")
@@ -3687,7 +3697,7 @@ def announcement_dismiss(announcement_id: int):
     try:
         user_id = getattr(current_user, "user_id", None)
         if user_id:
-            existing = AnnouncementDismissal.query.filter_by(announcement_id_fk=announcement_id, user_id_fk=user_id).first()
+            existing = db.session.execute(select(AnnouncementDismissal).filter_by(announcement_id_fk=announcement_id, user_id_fk=user_id)).scalars().first()
             if not existing:
                 db.session.add(AnnouncementDismissal(announcement_id_fk=announcement_id, user_id_fk=user_id))
                 db.session.commit()
@@ -3708,7 +3718,7 @@ def notice_board():
     to_raw = (request.args.get("to") or "").strip()
 
     # Build base query: active and within time window
-    ann_q = Announcement.query.filter(Announcement.is_active == True)
+    ann_q = select(Announcement).filter(Announcement.is_active == True)
     ann_q = ann_q.filter(or_(Announcement.start_at == None, Announcement.start_at <= (now + timedelta(hours=12))))
     ann_q = ann_q.filter(or_(Announcement.end_at == None, Announcement.end_at >= (now - timedelta(hours=12))))
 
@@ -3752,10 +3762,10 @@ def notice_board():
         per_page = 10
     if show_all:
         try:
-            total = base_rows.count()
+            total = db.session.scalar(select(func.count()).select_from(ann_q.subquery()))
         except Exception:
             total = 0
-        latest_rows = base_rows.offset((page - 1) * per_page).limit(per_page).all()
+        latest_rows = db.session.execute(base_rows.offset((page - 1) * per_page).limit(per_page)).scalars().all()
         pages = max(math.ceil((total or 1) / per_page), 1)
         pagination = {
             "page": page,
@@ -3766,7 +3776,7 @@ def notice_board():
             "has_next": page < pages,
         }
     else:
-        latest_rows = base_rows.limit(10).all()
+        latest_rows = db.session.execute(base_rows.limit(10)).scalars().all()
         pagination = None
 
     # Prefetch creator names
@@ -3774,7 +3784,7 @@ def notice_board():
         creator_ids = {a.created_by for a in latest_rows if getattr(a, "created_by", None)}
         users = []
         if creator_ids:
-            users = User.query.filter(User.user_id.in_(list(creator_ids))).all()
+            users = db.session.execute(select(User).filter(User.user_id.in_(list(creator_ids)))).scalars().all()
         users_map = {u.user_id: (u.username or f"User #{u.user_id}") for u in users}
     except Exception:
         users_map = {}
@@ -3793,7 +3803,7 @@ def notice_board():
                 include = True
             elif role == "student" and current_user.is_authenticated:
                 try:
-                    st = Student.query.filter_by(user_id_fk=current_user.user_id).first()
+                    st = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
                     if st and st.enrollment_no in recips:
                         include = True
                 except Exception:
@@ -3841,7 +3851,7 @@ def notice_archive():
     page_raw = (request.args.get("page") or "1").strip()
     per_page_raw = (request.args.get("per_page") or "10").strip()
 
-    ann_q = Announcement.query
+    ann_q = select(Announcement)
     # Date filter by created_at
     def _parse_date(s):
         try:
@@ -3877,10 +3887,10 @@ def notice_archive():
     except Exception:
         per_page = 10
     try:
-        total = base_rows.count()
+        total = db.session.scalar(select(func.count()).select_from(ann_q.subquery()))
     except Exception:
         total = 0
-    rows = base_rows.offset((page - 1) * per_page).limit(per_page).all()
+    rows = db.session.execute(base_rows.offset((page - 1) * per_page).limit(per_page)).scalars().all()
     pages = max(math.ceil((total or 1) / per_page), 1)
     pagination = {
         "page": page,
@@ -3896,7 +3906,7 @@ def notice_archive():
         creator_ids = {a.created_by for a in rows if getattr(a, "created_by", None)}
         users = []
         if creator_ids:
-            users = User.query.filter(User.user_id.in_(list(creator_ids))).all()
+            users = db.session.execute(select(User).filter(User.user_id.in_(list(creator_ids)))).scalars().all()
         users_map = {u.user_id: (u.username or f"User #{u.user_id}") for u in users}
     except Exception:
         users_map = {}
@@ -3915,7 +3925,7 @@ def notice_archive():
                 include = True
             elif role == "student" and current_user.is_authenticated:
                 try:
-                    st = Student.query.filter_by(user_id_fk=current_user.user_id).first()
+                    st = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
                     if st and st.enrollment_no in recips:
                         include = True
                 except Exception:
@@ -3978,7 +3988,7 @@ def forgot_password():
         except Exception:
             pass
         username = (request.form.get("username") or "").strip()
-        user = User.query.filter_by(username=username).first()
+        user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
         if user:
             s = _get_serializer()
             token = s.dumps({"user_id": user.user_id}, salt="password-reset")
@@ -3994,7 +4004,7 @@ def forgot_password():
                 pass
             # Prefer linked faculty email if available
             if not email_to:
-                f = Faculty.query.filter_by(user_id_fk=user.user_id).first()
+                f = db.session.execute(select(Faculty).filter_by(user_id_fk=user.user_id)).scalars().first()
                 if f and f.email:
                     email_to = f.email
             if email_to:
@@ -4004,7 +4014,7 @@ def forgot_password():
                 sent = send_email(subj, email_to, text, html)
                 # Also notify all clerks with the reset info
                 try:
-                    clerks = User.query.filter_by(role="Clerk").all()
+                    clerks = db.session.execute(select(User).filter_by(role="Clerk")).scalars().all()
                     for clerk in clerks:
                         clerk_email = None
                         try:
@@ -4014,7 +4024,7 @@ def forgot_password():
                         except Exception:
                             pass
                         if not clerk_email:
-                            lf_c = Faculty.query.filter_by(user_id_fk=clerk.user_id).first()
+                            lf_c = db.session.execute(select(Faculty).filter_by(user_id_fk=clerk.user_id)).scalars().first()
                             if lf_c and lf_c.email:
                                 clerk_email = lf_c.email
                         if clerk_email:
@@ -4093,7 +4103,7 @@ def account_settings():
 
     # Resolve linked faculty for profile editing and email
     try:
-        linked_faculty = Faculty.query.filter_by(user_id_fk=current_user.user_id).first()
+        linked_faculty = db.session.execute(select(Faculty).filter_by(user_id_fk=current_user.user_id)).scalars().first()
     except Exception:
         linked_faculty = None
 
@@ -4283,7 +4293,7 @@ def faculty_list():
     current_role = ((getattr(current_user, "role", "") or "").strip().lower() if getattr(current_user, "is_authenticated", False) else "")
 
     query = (
-        User.query
+        select(User)
         .filter(func.lower(func.trim(User.role)).in_(allowed_roles))
         .outerjoin(Faculty, Faculty.user_id_fk == User.user_id)
     )
@@ -4304,7 +4314,7 @@ def faculty_list():
     if selected_program_id:
         query = query.filter(User.program_id_fk == selected_program_id)
 
-    users = query.distinct().order_by(User.username.asc()).all()
+    users = db.session.execute(query.distinct().order_by(User.username.asc())).scalars().all()
     program_list = _ctx.get("program_list", [])
 
     rows = []
@@ -4319,7 +4329,7 @@ def faculty_list():
         # Try to display Faculty profile details if linked
         fac = None
         try:
-            fac = Faculty.query.filter_by(user_id_fk=u.user_id).first()
+            fac = db.session.execute(select(Faculty).filter_by(user_id_fk=u.user_id)).scalars().first()
         except Exception:
             fac = None
 
@@ -4342,7 +4352,9 @@ def faculty_list():
 def faculty_profile(faculty_id):
     import json
     import re
-    f = Faculty.query.get_or_404(faculty_id)
+    f = db.session.get(Faculty, faculty_id)
+    if not f:
+        abort(404)
     # Resolve program name if available
     try:
         from ..models import Program
@@ -4497,7 +4509,8 @@ def faculty_new():
         if emp_id:
             import json as _json
             EMPID_KEYS = {"emp id", "employee id", "empid", "employee code", "id"}
-            for existing in Faculty.query.all():
+            all_fac = db.session.execute(select(Faculty)).scalars().all()
+            for existing in all_fac:
                 try:
                     ed = _json.loads(existing.extra_data or "{}")
                 except Exception:
@@ -4565,7 +4578,7 @@ def faculty_new():
                     errors.append("Failed to save photo. Please try again.")
 
         if errors:
-            programs = Program.query.order_by(Program.program_name).all()
+            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
             # Scope program options for principals
             try:
                 _role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -4642,7 +4655,7 @@ def faculty_new():
 
             if create_user_flag:
                 # Try to find existing user by username; else create new
-                u = User.query.filter_by(username=user_username).first()
+                u = db.session.execute(select(User).filter_by(username=user_username)).scalars().first()
                 if not u:
                     # Generate a temporary password if missing
                     if not user_password:
@@ -4673,7 +4686,7 @@ def faculty_new():
         except Exception:
             db.session.rollback()
             errors.append("Failed to create faculty. Please try again.")
-            programs = Program.query.order_by(Program.program_name).all()
+            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
             # Scope program options for principals
             try:
                 _role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -4720,7 +4733,7 @@ def faculty_new():
         return redirect(url_for("main.faculty_list"))
 
     # GET
-    programs = Program.query.order_by(Program.program_name).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
     # Scope program options for principals
     try:
         _role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -4745,7 +4758,9 @@ def faculty_new():
 def faculty_edit(faculty_id: int):
     from ..models import Program, Faculty
     import json as _json
-    f = Faculty.query.get_or_404(faculty_id)
+    f = db.session.get(Faculty, faculty_id)
+    if not f:
+        abort(404)
     errors = []
     # Access control: Admins, Principals (scoped to program), Clerks (scoped to program), or the Faculty themselves
     try:
@@ -4838,7 +4853,8 @@ def faculty_edit(faculty_id: int):
         # Emp ID uniqueness check (excluding current record)
         if emp_id:
             EMPID_KEYS = {"emp id", "employee id", "empid", "employee code", "id"}
-            for existing in Faculty.query.all():
+            all_fac = db.session.execute(select(Faculty)).scalars().all()
+            for existing in all_fac:
                 if existing.faculty_id == faculty_id:
                     continue
                 try:
@@ -4903,14 +4919,14 @@ def faculty_edit(faculty_id: int):
             pass
         elif link_username:
             try:
-                target_user = User.query.filter_by(username=link_username).first()
+                target_user = db.session.execute(select(User).filter_by(username=link_username)).scalars().first()
                 if not target_user:
                     errors.append("No user found with that username/email to link.")
             except Exception:
                 errors.append("Failed to look up user for linking.")
 
         if errors:
-            programs = Program.query.order_by(Program.program_name).all()
+            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
             # Determine current linked username for display
             try:
                 current_user_link = db.session.get(User, f.user_id_fk) if f.user_id_fk else None
@@ -4988,7 +5004,7 @@ def faculty_edit(faculty_id: int):
         except Exception:
             db.session.rollback()
             errors.append("Failed to update faculty. Please try again.")
-            programs = Program.query.order_by(Program.program_name).all()
+            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
             try:
                 current_user_link = db.session.get(User, f.user_id_fk) if f.user_id_fk else None
                 linked_username = current_user_link.username if current_user_link else ""
@@ -5022,7 +5038,7 @@ def faculty_edit(faculty_id: int):
         return redirect(url_for("main.faculty_profile", faculty_id=faculty_id))
 
     # GET
-    programs = Program.query.order_by(Program.program_name).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
     try:
         extra = _json.loads(f.extra_data or "{}")
     except Exception:
@@ -5059,7 +5075,9 @@ def faculty_edit(faculty_id: int):
 @role_required("admin", "principal")
 def faculty_delete(faculty_id: int):
     from ..models import Faculty
-    f = Faculty.query.get_or_404(faculty_id)
+    f = db.session.get(Faculty, faculty_id)
+    if not f:
+        abort(404)
     # If a principal removes a Faculty/Clerk from their program, delete the linked user too
     user_to_delete = None
     try:
@@ -5097,13 +5115,15 @@ def faculty_delete(faculty_id: int):
 @role_required("admin", "principal", "clerk")
 def faculty_link_user(faculty_id: int):
     from ..models import Faculty
-    f = Faculty.query.get_or_404(faculty_id)
+    f = db.session.get(Faculty, faculty_id)
+    if not f:
+        abort(404)
     username = (request.form.get("username") or "").strip()
     if not username:
         flash("Please enter a username/email to link.", "warning")
         return redirect(url_for("main.faculty_list"))
     try:
-        target_user = User.query.filter_by(username=username).first()
+        target_user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
         if not target_user:
             flash("No user found with that username/email.", "danger")
             return redirect(url_for("main.faculty_list"))
@@ -5120,7 +5140,9 @@ def faculty_link_user(faculty_id: int):
 @role_required("admin", "principal", "clerk")
 def faculty_unlink_user(faculty_id: int):
     from ..models import Faculty
-    f = Faculty.query.get_or_404(faculty_id)
+    f = db.session.get(Faculty, faculty_id)
+    if not f:
+        abort(404)
     try:
         f.user_id_fk = None
         db.session.commit()
@@ -5176,7 +5198,7 @@ def students():
         except Exception:
             pass
 
-    query = Student.query
+    query = select(Student)
     if selected_program_id:
         query = query.filter(Student.program_id_fk == selected_program_id)
     if selected_semester not in ("all", ""):
@@ -5207,17 +5229,16 @@ def students():
         )
 
     # Show students ordered by semester (desc) then enrollment
-    total_count = query.count()
-    items = (
+    total_count = db.session.scalar(select(func.count()).select_from(query.subquery()))
+    items = db.session.execute(
         query
         .order_by(Student.current_semester.desc(), Student.enrollment_no)
         .offset((selected_page - 1) * selected_limit)
         .limit(selected_limit)
-        .all()
-    )
+    ).scalars().all()
     # Fetch mapping helpers
-    program_map = {p.program_id: p.program_name for p in Program.query.all()}
-    division_map = {d.division_id: (d.semester, d.division_code) for d in Division.query.all()}
+    program_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
+    division_map = {d.division_id: (d.semester, d.division_code) for d in db.session.execute(select(Division)).scalars().all()}
     # Build program list for dropdown via helper
     program_list = _ctx.get("program_list", [])
 
@@ -5248,7 +5269,7 @@ def api_students_search():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
-    query = Student.query
+    query = select(Student)
     # Enforce program scoping for clerk/principal; admin can search globally
     role = (getattr(current_user, "role", "") or "").strip().lower()
     pid_scope = None
@@ -5301,10 +5322,10 @@ def api_students_search():
     except Exception:
         is_name_like = False
     if is_name_like:
-        rows = query.order_by(Student.surname.asc(), Student.student_name.asc(), Student.enrollment_no.asc()).limit(10).all()
+        rows = db.session.execute(query.order_by(Student.surname.asc(), Student.student_name.asc(), Student.enrollment_no.asc()).limit(10)).scalars().all()
     else:
-        rows = query.order_by(Student.enrollment_no.asc()).limit(10).all()
-    program_map = {p.program_id: p.program_name for p in Program.query.all()}
+        rows = db.session.execute(query.order_by(Student.enrollment_no.asc()).limit(10)).scalars().all()
+    program_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
     data = [
         {
             "enrollment_no": s.enrollment_no,
@@ -5424,7 +5445,7 @@ def students_new():
         if errors:
             # Show a general flash along with inline errors
             flash("Please fix the highlighted errors before submission.", "danger")
-            programs = Program.query.order_by(Program.program_name).all()
+            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
             # Restrict dropdown to generic BCom only
             try:
                 def _is_generic_bcom(name: str) -> bool:
@@ -5434,7 +5455,7 @@ def students_new():
                 programs = [p for p in programs if _is_generic_bcom(p.program_name)]
             except Exception:
                 pass
-            divisions = Division.query.order_by(Division.semester, Division.division_code).all()
+            divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
             return render_template(
                 "students_new.html",
                 programs=programs,
@@ -5487,7 +5508,7 @@ def students_new():
         return redirect(url_for("main.students"))
 
     # GET: render form
-    programs = Program.query.order_by(Program.program_name).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
     # Restrict dropdown to generic BCom only
     try:
         def _is_generic_bcom(name: str) -> bool:
@@ -5497,7 +5518,7 @@ def students_new():
         programs = [p for p in programs if _is_generic_bcom(p.program_name)]
     except Exception:
         pass
-    divisions = Division.query.order_by(Division.semester, Division.division_code).all()
+    divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
     return render_template("students_new.html", programs=programs, divisions=divisions, errors=[], form_data={})
 
 
@@ -5625,7 +5646,7 @@ def students_edit(enrollment_no):
 
         if errors:
             flash("Please fix the highlighted errors before submission.", "danger")
-            programs = Program.query.order_by(Program.program_name).all()
+            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
             # Restrict dropdown to generic BCom only
             try:
                 def _is_generic_bcom(name: str) -> bool:
@@ -5635,7 +5656,7 @@ def students_edit(enrollment_no):
                 programs = [p for p in programs if _is_generic_bcom(p.program_name)]
             except Exception:
                 pass
-            divisions = Division.query.order_by(Division.semester, Division.division_code).all()
+            divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
             return render_template(
                 "students_edit.html",
                 programs=programs,
@@ -5671,7 +5692,7 @@ def students_edit(enrollment_no):
         return redirect(url_for("main.students"))
 
     # GET: render form with existing values
-    programs = Program.query.order_by(Program.program_name).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
     # Restrict dropdown to generic BCom only
     try:
         def _is_generic_bcom(name: str) -> bool:
@@ -5681,7 +5702,7 @@ def students_edit(enrollment_no):
         programs = [p for p in programs if _is_generic_bcom(p.program_name)]
     except Exception:
         pass
-    divisions = Division.query.order_by(Division.semester, Division.division_code).all()
+    divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
     form_data = {
         "enrollment_no": s.enrollment_no,
         "program_id_fk": s.program_id_fk,
@@ -5736,7 +5757,7 @@ def students_show(enrollment_no):
         a_subject_id = int(a_subject_raw) if a_subject_raw else None
     except ValueError:
         a_subject_id = None
-    attendance_query = Attendance.query.filter_by(student_id_fk=enrollment_no)
+    attendance_query = select(Attendance).filter_by(student_id_fk=enrollment_no)
     sd = _parse_date(a_start)
     ed = _parse_date(a_end)
     if sd:
@@ -5757,17 +5778,16 @@ def students_show(enrollment_no):
     else:
         a_key = Attendance.date_marked
     a_order = a_key.desc() if a_dir == "desc" else a_key.asc()
-    attendance_total = attendance_query.count()
-    attendance_present = attendance_query.filter(Attendance.status == "P").count()
-    attendance_absent = attendance_query.filter(Attendance.status == "A").count()
-    attendance_late = attendance_query.filter(Attendance.status == "L").count()
-    attendance_rows = (
+    attendance_total = db.session.scalar(select(func.count()).select_from(attendance_query.subquery()))
+    attendance_present = db.session.scalar(select(func.count()).select_from(attendance_query.filter(Attendance.status == "P").subquery()))
+    attendance_absent = db.session.scalar(select(func.count()).select_from(attendance_query.filter(Attendance.status == "A").subquery()))
+    attendance_late = db.session.scalar(select(func.count()).select_from(attendance_query.filter(Attendance.status == "L").subquery()))
+    attendance_rows = db.session.execute(
         attendance_query
         .order_by(a_order)
         .offset(max(0, (a_page - 1) * a_per))
         .limit(a_per)
-        .all()
-    )
+    ).scalars().all()
     a_has_prev = a_page > 1
     a_has_next = attendance_total > a_page * a_per
     a_total_pages = (attendance_total + a_per - 1) // a_per if a_per > 0 else 1
@@ -5793,9 +5813,9 @@ def students_show(enrollment_no):
         g_subject_id = int(g_subject_raw) if g_subject_raw else None
     except ValueError:
         g_subject_id = None
-    grade_query = Grade.query.filter_by(student_id_fk=enrollment_no)
+    grade_query = select(Grade).filter_by(student_id_fk=enrollment_no)
     if g_sem is not None:
-        subject_ids_sem = [sid for (sid,) in Subject.query.with_entities(Subject.subject_id).filter(Subject.semester == g_sem).all()]
+        subject_ids_sem = db.session.execute(select(Subject.subject_id).filter(Subject.semester == g_sem)).scalars().all()
         if subject_ids_sem:
             grade_query = grade_query.filter(Grade.subject_id_fk.in_(subject_ids_sem))
         else:
@@ -5814,15 +5834,14 @@ def students_show(enrollment_no):
     else:
         g_key = Grade.grade_id
     g_order = g_key.desc() if g_dir == "desc" else g_key.asc()
-    grade_total = grade_query.count()
-    grade_rows = (
+    grade_total = db.session.scalar(select(func.count()).select_from(grade_query.subquery()))
+    grade_rows = db.session.execute(
         grade_query
         .order_by(g_order)
         .offset(max(0, (g_page - 1) * g_per))
         .limit(g_per)
-        .all()
-    )
-    all_grades = grade_query.all()
+    ).scalars().all()
+    all_grades = db.session.execute(grade_query).scalars().all()
     g_has_prev = g_page > 1
     g_has_next = grade_total > g_page * g_per
     g_total_pages = (grade_total + g_per - 1) // g_per if g_per > 0 else 1
@@ -5835,7 +5854,7 @@ def students_show(enrollment_no):
     subject_ids = {r.subject_id_fk for r in attendance_rows if r.subject_id_fk} | {g.subject_id_fk for g in all_grades if g.subject_id_fk}
     subject_map = {}
     if subject_ids:
-        subjects = Subject.query.filter(Subject.subject_id.in_(list(subject_ids))).all()
+        subjects = db.session.execute(select(Subject).filter(Subject.subject_id.in_(list(subject_ids)))).scalars().all()
         subject_map = {sub.subject_id: sub.subject_name for sub in subjects}
 
     # Aggregate GPA per subject for chart
@@ -5858,13 +5877,13 @@ def students_show(enrollment_no):
         grade_chart_subject_ids.append(sid)
 
     # Subject options for pickers (union of subjects in attendance and grades for this student)
-    sid_att_all = [sid for (sid,) in Attendance.query.with_entities(Attendance.subject_id_fk).filter_by(student_id_fk=enrollment_no).distinct().all() if sid]
-    sid_grade_all = [sid for (sid,) in Grade.query.with_entities(Grade.subject_id_fk).filter_by(student_id_fk=enrollment_no).distinct().all() if sid]
+    sid_att_all = [sid for sid in db.session.execute(select(Attendance.subject_id_fk).filter_by(student_id_fk=enrollment_no).distinct()).scalars().all() if sid]
+    sid_grade_all = [sid for sid in db.session.execute(select(Grade.subject_id_fk).filter_by(student_id_fk=enrollment_no).distinct()).scalars().all() if sid]
     sid_all = list({*sid_att_all, *sid_grade_all})
     subject_options = []
     subject_semester_map = {}
     if sid_all:
-        subs_all = Subject.query.filter(Subject.subject_id.in_(sid_all)).order_by(Subject.semester, Subject.subject_name).all()
+        subs_all = db.session.execute(select(Subject).filter(Subject.subject_id.in_(sid_all)).order_by(Subject.semester, Subject.subject_name)).scalars().all()
         subject_options = [{"id": sub.subject_id, "name": sub.subject_name, "semester": sub.semester} for sub in subs_all]
         subject_semester_map = {sub.subject_id: sub.semester for sub in subs_all}
 
@@ -5945,7 +5964,7 @@ def students_attendance(enrollment_no):
         a_subject_id = int(a_subject_raw) if a_subject_raw else None
     except ValueError:
         a_subject_id = None
-    query = Attendance.query.filter_by(student_id_fk=enrollment_no)
+    query = select(Attendance).filter_by(student_id_fk=enrollment_no)
     sd = _parse_date(a_start)
     ed = _parse_date(a_end)
     if sd:
@@ -5956,18 +5975,17 @@ def students_attendance(enrollment_no):
         query = query.filter(Attendance.semester == a_sem)
     if a_subject_id is not None:
         query = query.filter(Attendance.subject_id_fk == a_subject_id)
-    total = query.count()
-    rows = (
+    total = db.session.scalar(select(func.count()).select_from(query.subquery()))
+    rows = db.session.execute(
         query.order_by(Attendance.date_marked.desc())
         .offset(max(0, (a_page - 1) * a_per))
         .limit(a_per)
-        .all()
-    )
+    ).scalars().all()
     # Subject names
     sid_set = {r.subject_id_fk for r in rows if r.subject_id_fk}
     subject_map = {}
     if sid_set:
-        subs = Subject.query.filter(Subject.subject_id.in_(list(sid_set))).all()
+        subs = db.session.execute(select(Subject).filter(Subject.subject_id.in_(list(sid_set)))).scalars().all()
         subject_map = {sub.subject_id: sub.subject_name for sub in subs}
     return render_template(
         "students_attendance.html",
@@ -6004,7 +6022,7 @@ def students_attendance_export(enrollment_no):
         a_subject_id = int(a_subject_raw) if a_subject_raw else None
     except ValueError:
         a_subject_id = None
-    query = Attendance.query.filter_by(student_id_fk=enrollment_no)
+    query = select(Attendance).filter_by(student_id_fk=enrollment_no)
     sd = _parse_date(a_start)
     ed = _parse_date(a_end)
     if sd:
@@ -6015,7 +6033,7 @@ def students_attendance_export(enrollment_no):
         query = query.filter(Attendance.semester == a_sem)
     if a_subject_id is not None:
         query = query.filter(Attendance.subject_id_fk == a_subject_id)
-    rows = query.order_by(Attendance.date_marked.desc()).all()
+    rows = db.session.execute(query.order_by(Attendance.date_marked.desc())).scalars().all()
     # Build CSV
     import csv
     import io
@@ -6049,26 +6067,25 @@ def students_grades(enrollment_no):
         g_subject_id = int(g_subject_raw) if g_subject_raw else None
     except ValueError:
         g_subject_id = None
-    query = Grade.query.filter_by(student_id_fk=enrollment_no)
+    query = select(Grade).filter_by(student_id_fk=enrollment_no)
     if g_sem is not None:
-        subject_ids_sem = [sid for (sid,) in Subject.query.with_entities(Subject.subject_id).filter(Subject.semester == g_sem).all()]
+        subject_ids_sem = db.session.execute(select(Subject.subject_id).filter(Subject.semester == g_sem)).scalars().all()
         if subject_ids_sem:
             query = query.filter(Grade.subject_id_fk.in_(subject_ids_sem))
         else:
             query = query.filter(Grade.subject_id_fk == -1)
     if g_subject_id is not None:
         query = query.filter(Grade.subject_id_fk == g_subject_id)
-    total = query.count()
-    rows = (
+    total = db.session.scalar(select(func.count()).select_from(query.subquery()))
+    rows = db.session.execute(
         query.order_by(Grade.grade_id.desc())
         .offset(max(0, (g_page - 1) * g_per))
         .limit(g_per)
-        .all()
-    )
+    ).scalars().all()
     sid_set = {r.subject_id_fk for r in rows if r.subject_id_fk}
     subject_map = {}
     if sid_set:
-        subs = Subject.query.filter(Subject.subject_id.in_(list(sid_set))).all()
+        subs = db.session.execute(select(Subject).filter(Subject.subject_id.in_(list(sid_set)))).scalars().all()
         subject_map = {sub.subject_id: sub.subject_name for sub in subs}
     return render_template(
         "students_grades.html",
@@ -6097,16 +6114,16 @@ def students_grades_export(enrollment_no):
         g_subject_id = int(g_subject_raw) if g_subject_raw else None
     except ValueError:
         g_subject_id = None
-    query = Grade.query.filter_by(student_id_fk=enrollment_no)
+    query = select(Grade).filter_by(student_id_fk=enrollment_no)
     if g_sem is not None:
-        subject_ids_sem = [sid for (sid,) in Subject.query.with_entities(Subject.subject_id).filter(Subject.semester == g_sem).all()]
+        subject_ids_sem = db.session.execute(select(Subject.subject_id).filter(Subject.semester == g_sem)).scalars().all()
         if subject_ids_sem:
             query = query.filter(Grade.subject_id_fk.in_(subject_ids_sem))
         else:
             query = query.filter(Grade.subject_id_fk == -1)
     if g_subject_id is not None:
         query = query.filter(Grade.subject_id_fk == g_subject_id)
-    rows = query.order_by(Grade.grade_id.desc()).all()
+    rows = db.session.execute(query.order_by(Grade.grade_id.desc())).scalars().all()
     import csv
     import io
     buf = io.StringIO()
@@ -6139,10 +6156,10 @@ def students_delete(enrollment_no):
         pass
     # Enforce safeguards: block delete if dependent records exist
     deps = {
-        "attendance": Attendance.query.filter_by(student_id_fk=enrollment_no).count(),
-        "grades": Grade.query.filter_by(student_id_fk=enrollment_no).count(),
-        "credit_log": StudentCreditLog.query.filter_by(student_id_fk=enrollment_no).count(),
-        "fees": FeesRecord.query.filter_by(student_id_fk=enrollment_no).count(),
+        "attendance": db.session.scalar(select(func.count()).select_from(Attendance).filter_by(student_id_fk=enrollment_no)),
+        "grades": db.session.scalar(select(func.count()).select_from(Grade).filter_by(student_id_fk=enrollment_no)),
+        "credit_log": db.session.scalar(select(func.count()).select_from(StudentCreditLog).filter_by(student_id_fk=enrollment_no)),
+        "fees": db.session.scalar(select(func.count()).select_from(FeesRecord).filter_by(student_id_fk=enrollment_no)),
     }
     total_deps = sum(deps.values())
     if total_deps > 0:
@@ -6178,13 +6195,15 @@ def students_delete(enrollment_no):
 @login_required
 @role_required("admin", "principal", "clerk")
 def students_link_user(enrollment_no):
-    s = Student.query.get_or_404(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
+    if not s:
+        abort(404)
     username = (request.form.get("username") or "").strip()
     if not username:
         flash("Please enter a username/email to link.", "warning")
         return redirect(url_for("main.students_show", enrollment_no=enrollment_no))
     try:
-        target_user = User.query.filter_by(username=username).first()
+        target_user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
         if not target_user:
             flash("No user found with that username/email.", "danger")
             return redirect(url_for("main.students_show", enrollment_no=enrollment_no))
@@ -6200,7 +6219,9 @@ def students_link_user(enrollment_no):
 @login_required
 @role_required("admin", "principal", "clerk")
 def students_unlink_user(enrollment_no):
-    s = Student.query.get_or_404(enrollment_no)
+    s = db.session.get(Student, enrollment_no)
+    if not s:
+        abort(404)
     try:
         s.user_id_fk = None
         db.session.commit()
@@ -6214,7 +6235,7 @@ def students_unlink_user(enrollment_no):
 @login_required
 def subjects_list():
     # Programs for filter
-    programs = Program.query.order_by(Program.program_name).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
     # Determine selected program
     program_id_raw = request.args.get("program_id")
     sem_raw = request.args.get("semester")
@@ -6227,7 +6248,7 @@ def subjects_list():
         except Exception:
             selected_program = None
     if not selected_program:
-        selected_program = Program.query.filter_by(program_name="BCA").first() or (programs[0] if programs else None)
+        selected_program = db.session.execute(select(Program).filter_by(program_name="BCA")).scalars().first() or (programs[0] if programs else None)
     semester = None
     try:
         semester = int(sem_raw) if sem_raw else 1
@@ -6256,32 +6277,31 @@ def subjects_list():
     rows = []
     total_count = 0
     if selected_program and semester:
-        q = Subject.query.filter_by(program_id_fk=selected_program.program_id, semester=semester)
+        q = select(Subject).filter_by(program_id_fk=selected_program.program_id, semester=semester)
         if selected_medium:
             q = q.filter(Subject.medium_tag == selected_medium)
-        total_count = q.count()
-        subs = (
+        total_count = db.session.scalar(select(func.count()).select_from(q.subquery()))
+        subs = db.session.execute(
             q.order_by(Subject.subject_name)
             .offset((selected_page - 1) * selected_limit)
             .limit(selected_limit)
-            .all()
-        )
+        ).scalars().all()
         # Build rows with type code and credit split
         # Cache subject types for fewer queries
-        st_map = {st.type_id: st.type_code for st in SubjectType.query.all()}
+        st_map = {st.type_id: st.type_code for st in db.session.execute(select(SubjectType)).scalars().all()}
         # Compute current academic year string (e.g., 2025-26)
         now = datetime.now()
         start_year = now.year if now.month >= 6 else (now.year - 1)
         end_year_short = str((start_year + 1))[-2:]
         academic_year = f"{start_year}-{end_year_short}"
         for s in subs:
-            cs = CreditStructure.query.filter_by(subject_id_fk=s.subject_id).first()
+            cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=s.subject_id)).scalars().first()
             # Count active enrollments for this subject in the current academic year
-            enrolled_count = StudentSubjectEnrollment.query.filter_by(
+            enrolled_count = db.session.scalar(select(func.count()).select_from(StudentSubjectEnrollment).filter_by(
                 subject_id_fk=s.subject_id,
                 academic_year=academic_year,
                 is_active=True,
-            ).count()
+            ))
             rows.append({
                 "subject_id": s.subject_id,
                 "subject_code": s.subject_code or "",
@@ -6329,21 +6349,21 @@ def subjects_export_csv():
         m = medium_raw.capitalize()
         if m in {"English", "Gujarati"}:
             selected_medium = m
-    q = Subject.query
+    q = select(Subject)
     if program_id:
         q = q.filter(Subject.program_id_fk == program_id)
     if semester:
         q = q.filter(Subject.semester == semester)
     if selected_medium:
         q = q.filter(Subject.medium_tag == selected_medium)
-    subs = q.order_by(Subject.subject_name.asc()).limit(5000).all()
-    st_map = {st.type_id: st.type_code for st in SubjectType.query.all()}
+    subs = db.session.execute(q.order_by(Subject.subject_name.asc()).limit(5000)).scalars().all()
+    st_map = {st.type_id: st.type_code for st in db.session.execute(select(SubjectType)).scalars().all()}
     import io, csv as _csv
     buf = io.StringIO()
     w = _csv.writer(buf)
     w.writerow(["SubjectCode", "PaperCode", "SubjectName", "Type", "Semester", "Medium", "Theory", "Practical", "Total"]) 
     for s in subs:
-        cs = CreditStructure.query.filter_by(subject_id_fk=s.subject_id).first()
+        cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=s.subject_id)).scalars().first()
         w.writerow([
             s.subject_code or "",
             s.paper_code or "",
@@ -6367,7 +6387,7 @@ def offer_electives():
     from ..models import StudentSubjectEnrollment
 
     # Programs for filter
-    programs = Program.query.order_by(Program.program_name).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
     # Determine selected program (default BCA or first)
     program_id_raw = request.args.get("program_id")
     sem_raw = request.args.get("semester")
@@ -6386,7 +6406,7 @@ def offer_electives():
     except Exception:
         pass
     if not selected_program:
-        selected_program = Program.query.filter_by(program_name="BCA").first() or (programs[0] if programs else None)
+        selected_program = db.session.execute(select(Program).filter_by(program_name="BCA")).scalars().first() or (programs[0] if programs else None)
     try:
         semester = int(sem_raw) if sem_raw else 1
     except Exception:
@@ -6410,7 +6430,7 @@ def offer_electives():
         electives_count = 0
         try:
             pid = selected_program.program_id if selected_program else None
-            electives_count = Subject.query.filter_by(program_id_fk=pid, semester=semester, is_elective=True).count()
+            electives_count = db.session.scalar(select(func.count()).select_from(Subject).filter_by(program_id_fk=pid, semester=semester, is_elective=True))
         except Exception:
             electives_count = 0
         if electives_count > 0 and not subject_ids:
@@ -6424,26 +6444,23 @@ def offer_electives():
 
         # Re-render with errors
         if errors:
-            subjects_core = (
-                Subject.query
+            subjects_core = db.session.execute(
+                select(Subject)
                 .filter_by(program_id_fk=selected_program.program_id, semester=semester, is_elective=False)
                 .order_by(Subject.subject_name)
-                .all()
-            )
-            subjects_electives = (
-                Subject.query
+            ).scalars().all()
+            subjects_electives = db.session.execute(
+                select(Subject)
                 .filter_by(program_id_fk=selected_program.program_id, semester=semester, is_elective=True)
                 .order_by(Subject.subject_name)
-                .all()
-            )
-            students = (
-                Student.query
+            ).scalars().all()
+            students = db.session.execute(
+                select(Student)
                 .filter_by(program_id_fk=selected_program.program_id)
                 .filter(Student.current_semester == semester)
                 .order_by(Student.enrollment_no)
-                .all()
-            )
-            division_map = {d.division_id: (d.semester, d.division_code) for d in Division.query.filter_by(program_id_fk=selected_program.program_id).all()}
+            ).scalars().all()
+            division_map = {d.division_id: (d.semester, d.division_code) for d in db.session.execute(select(Division).filter_by(program_id_fk=selected_program.program_id)).scalars().all()}
             return render_template(
                 "subject_offering.html",
                 programs=programs,
@@ -6474,12 +6491,12 @@ def offer_electives():
                 if not stu:
                     continue
                 # Avoid duplicates for same academic year
-                exists = StudentSubjectEnrollment.query.filter_by(
+                exists = db.session.execute(select(StudentSubjectEnrollment).filter_by(
                     student_id_fk=enr,
                     subject_id_fk=sid,
                     academic_year=academic_year,
                     is_active=True,
-                ).first()
+                )).scalars().first()
                 if exists:
                     skipped += 1
                     continue
@@ -6503,27 +6520,24 @@ def offer_electives():
         return redirect(url_for("main.offer_electives", program_id=(selected_program.program_id if selected_program else None), semester=semester))
 
     # GET: load subjects and students with defaults
-    subjects_core = (
-        Subject.query
+    subjects_core = db.session.execute(
+        select(Subject)
         .filter_by(program_id_fk=(selected_program.program_id if selected_program else None), semester=semester, is_elective=False)
         .order_by(Subject.subject_name)
-        .all()
-    )
-    subjects_electives = (
-        Subject.query
+    ).scalars().all()
+    subjects_electives = db.session.execute(
+        select(Subject)
         .filter_by(program_id_fk=(selected_program.program_id if selected_program else None), semester=semester, is_elective=True)
         .order_by(Subject.subject_name)
-        .all()
-    )
+    ).scalars().all()
     electives_count = len(subjects_electives)
-    students = (
-        Student.query
+    students = db.session.execute(
+        select(Student)
         .filter_by(program_id_fk=(selected_program.program_id if selected_program else None))
         .filter(Student.current_semester == semester)
         .order_by(Student.enrollment_no)
-        .all()
-    )
-    division_map = {d.division_id: (d.semester, d.division_code) for d in Division.query.filter_by(program_id_fk=(selected_program.program_id if selected_program else None)).all()}
+    ).scalars().all()
+    division_map = {d.division_id: (d.semester, d.division_code) for d in db.session.execute(select(Division).filter_by(program_id_fk=(selected_program.program_id if selected_program else None))).scalars().all()}
     return render_template(
         "subject_offering.html",
         programs=programs,
@@ -6545,7 +6559,9 @@ def offer_electives():
 @login_required
 @role_required("admin", "principal")
 def subject_assign(subject_id):
-    subj = Subject.query.get_or_404(subject_id)
+    subj = db.session.get(Subject, subject_id)
+    if not subj:
+        abort(404)
     program = db.session.get(Program, subj.program_id_fk)
 
     # Principal scope restriction: only allow assignment within assigned program
@@ -6584,8 +6600,8 @@ def subject_assign(subject_id):
 
         if errors:
             # Reload lists
-            faculties = Faculty.query.filter_by(program_id_fk=subj.program_id_fk).order_by(Faculty.full_name).all()
-            divisions = Division.query.filter_by(program_id_fk=subj.program_id_fk, semester=subj.semester).order_by(Division.division_code).all()
+            faculties = db.session.execute(select(Faculty).filter_by(program_id_fk=subj.program_id_fk).order_by(Faculty.full_name)).scalars().all()
+            divisions = db.session.execute(select(Division).filter_by(program_id_fk=subj.program_id_fk, semester=subj.semester).order_by(Division.division_code)).scalars().all()
             return render_template(
                 "subject_assign.html",
                 subject=subj,
@@ -6601,20 +6617,20 @@ def subject_assign(subject_id):
             )
 
         if assign_all:
-            divisions_all = Division.query.filter_by(program_id_fk=subj.program_id_fk, semester=subj.semester).order_by(Division.division_code).all()
+            divisions_all = db.session.execute(select(Division).filter_by(program_id_fk=subj.program_id_fk, semester=subj.semester).order_by(Division.division_code)).scalars().all()
             if not divisions_all:
                 flash("No divisions found for this semester.", "danger")
                 return redirect(url_for("main.subjects_list", program_id=subj.program_id_fk, semester=subj.semester))
             created_cnt = 0
             skipped_cnt = 0
             for d in divisions_all:
-                existing = CourseAssignment.query.filter_by(
+                existing = db.session.execute(select(CourseAssignment).filter_by(
                     faculty_id_fk=faculty_user_id,
                     subject_id_fk=subj.subject_id,
                     division_id_fk=d.division_id,
                     academic_year=academic_year,
                     is_active=True,
-                ).first()
+                )).scalars().first()
                 if existing:
                     skipped_cnt += 1
                     continue
@@ -6635,13 +6651,13 @@ def subject_assign(subject_id):
                 flash("Failed to save assignments.", "danger")
         else:
             # Avoid duplicate active assignment for same triplet
-            existing = CourseAssignment.query.filter_by(
+            existing = db.session.execute(select(CourseAssignment).filter_by(
                 faculty_id_fk=faculty_user_id,
                 subject_id_fk=subj.subject_id,
                 division_id_fk=division_id,
                 academic_year=academic_year,
                 is_active=True,
-            ).first()
+            )).scalars().first()
             if existing:
                 flash("Assignment already exists and is active.", "warning")
                 return redirect(url_for("main.subjects_list", program_id=subj.program_id_fk, semester=subj.semester))
@@ -6664,8 +6680,8 @@ def subject_assign(subject_id):
         return redirect(url_for("main.subjects_list", program_id=subj.program_id_fk, semester=subj.semester))
 
     # GET: build lists
-    faculties = Faculty.query.filter_by(program_id_fk=subj.program_id_fk).order_by(Faculty.full_name).all()
-    divisions = Division.query.filter_by(program_id_fk=subj.program_id_fk, semester=subj.semester).order_by(Division.division_code).all()
+    faculties = db.session.execute(select(Faculty).filter_by(program_id_fk=subj.program_id_fk).order_by(Faculty.full_name)).scalars().all()
+    divisions = db.session.execute(select(Division).filter_by(program_id_fk=subj.program_id_fk, semester=subj.semester).order_by(Division.division_code)).scalars().all()
     return render_template(
         "subject_assign.html",
         subject=subj,
@@ -6682,9 +6698,11 @@ def subject_assign(subject_id):
 @login_required
 @role_required("admin", "principal", "clerk")
 def subject_edit(subject_id: int):
-    subj = Subject.query.get_or_404(subject_id)
+    subj = db.session.get(Subject, subject_id)
+    if not subj:
+        abort(404)
     program = db.session.get(Program, subj.program_id_fk)
-    subject_types = SubjectType.query.order_by(SubjectType.type_code).all()
+    subject_types = db.session.execute(select(SubjectType).order_by(SubjectType.type_code)).scalars().all()
 
     # Scope restriction: principals/clerks can only edit within assigned program
     try:
@@ -6748,7 +6766,7 @@ def subject_edit(subject_id: int):
             errors.append("Medium is required.")
 
         if errors:
-            cs = CreditStructure.query.filter_by(subject_id_fk=subj.subject_id).first()
+            cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=subj.subject_id)).scalars().first()
             return render_template(
                 "subject_edit.html",
                 subject=subj,
@@ -6775,7 +6793,7 @@ def subject_edit(subject_id: int):
         subj.semester = semester
         subj.medium_tag = medium_tag
 
-        cs = CreditStructure.query.filter_by(subject_id_fk=subj.subject_id).first()
+        cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=subj.subject_id)).scalars().first()
         if not cs:
             cs = CreditStructure(
                 subject_id_fk=subj.subject_id,
@@ -6795,7 +6813,7 @@ def subject_edit(subject_id: int):
         except Exception:
             db.session.rollback()
             flash("Failed to update subject. Please try again.", "danger")
-            cs = CreditStructure.query.filter_by(subject_id_fk=subj.subject_id).first()
+            cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=subj.subject_id)).scalars().first()
             return render_template(
                 "subject_edit.html",
                 subject=subj,
@@ -6816,7 +6834,7 @@ def subject_edit(subject_id: int):
         return redirect(url_for("main.subjects_list", program_id=subj.program_id_fk, semester=subj.semester))
 
     # GET
-    cs = CreditStructure.query.filter_by(subject_id_fk=subj.subject_id).first()
+    cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=subj.subject_id)).scalars().first()
     form_data = {
         "subject_name": subj.subject_name or "",
         "subject_code": subj.subject_code or "",
@@ -6852,7 +6870,7 @@ def subject_new():
     except Exception:
         semester = 1
 
-    subject_types = SubjectType.query.order_by(SubjectType.type_code).all()
+    subject_types = db.session.execute(select(SubjectType).order_by(SubjectType.type_code)).scalars().all()
     errors = []
 
     if request.method == "POST":
@@ -7021,7 +7039,7 @@ def subject_new():
 @login_required
 @role_required("principal", "clerk")
 def enroll_core():
-    programs = Program.query.order_by(Program.program_name).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
     program_id_raw = request.args.get("program_id") or request.form.get("program_id")
     sem_raw = request.args.get("semester") or request.form.get("semester")
 
@@ -7040,7 +7058,7 @@ def enroll_core():
     except Exception:
         pass
     if not selected_program:
-        selected_program = Program.query.filter_by(program_name="BCA").first() or (programs[0] if programs else None)
+        selected_program = db.session.execute(select(Program).filter_by(program_name="BCA")).scalars().first() or (programs[0] if programs else None)
 
     try:
         semester = int(sem_raw) if sem_raw else 1
@@ -7048,19 +7066,17 @@ def enroll_core():
         semester = 1
 
     # Build lists
-    subjects_core = (
-        Subject.query
+    subjects_core = db.session.execute(
+        select(Subject)
         .filter_by(program_id_fk=(selected_program.program_id if selected_program else None), semester=semester, is_elective=False)
         .order_by(Subject.subject_name)
-        .all()
-    )
-    students = (
-        Student.query
+    ).scalars().all()
+    students = db.session.execute(
+        select(Student)
         .filter_by(program_id_fk=(selected_program.program_id if selected_program else None))
         .filter(Student.current_semester == semester)
         .order_by(Student.enrollment_no)
-        .all()
-    )
+    ).scalars().all()
 
     # Compute academic year string (e.g., 2025-26)
     now = datetime.now()
@@ -7074,11 +7090,11 @@ def enroll_core():
         for stu in students:
             for subj in subjects_core:
                 # Find any enrollment for this student+subject+year (active or inactive)
-                existing = StudentSubjectEnrollment.query.filter_by(
+                existing = db.session.execute(select(StudentSubjectEnrollment).filter_by(
                     student_id_fk=stu.enrollment_no,
                     subject_id_fk=subj.subject_id,
                     academic_year=academic_year,
-                ).first()
+                )).scalars().first()
                 if existing:
                     # Update existing record to reflect current semester/division and reactivate
                     existing.semester = semester
@@ -7122,7 +7138,9 @@ def enroll_core():
 @login_required
 @role_required("admin", "principal", "clerk")
 def subject_delete(subject_id: int):
-    subj = Subject.query.get_or_404(subject_id)
+    subj = db.session.get(Subject, subject_id)
+    if not subj:
+        abort(404)
     # Scope restriction: principals/clerks can only delete within assigned program
     try:
         user_role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -7133,10 +7151,10 @@ def subject_delete(subject_id: int):
     except Exception:
         pass
     # Prevent deletion if referenced by other records
-    assignment_cnt = CourseAssignment.query.filter_by(subject_id_fk=subject_id).count()
-    attendance_cnt = Attendance.query.filter_by(subject_id_fk=subject_id).count()
-    grade_cnt = Grade.query.filter_by(subject_id_fk=subject_id).count()
-    creditlog_cnt = StudentCreditLog.query.filter_by(subject_id_fk=subject_id).count()
+    assignment_cnt = db.session.scalar(select(func.count()).select_from(CourseAssignment).filter_by(subject_id_fk=subject_id))
+    attendance_cnt = db.session.scalar(select(func.count()).select_from(Attendance).filter_by(subject_id_fk=subject_id))
+    grade_cnt = db.session.scalar(select(func.count()).select_from(Grade).filter_by(subject_id_fk=subject_id))
+    creditlog_cnt = db.session.scalar(select(func.count()).select_from(StudentCreditLog).filter_by(subject_id_fk=subject_id))
 
     if assignment_cnt or attendance_cnt or grade_cnt or creditlog_cnt:
         msgs = []
@@ -7152,7 +7170,7 @@ def subject_delete(subject_id: int):
         return redirect(url_for("main.subjects_list", program_id=subj.program_id_fk, semester=subj.semester))
 
     # Remove credit structure first, then subject
-    cs = CreditStructure.query.filter_by(subject_id_fk=subject_id).first()
+    cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=subject_id)).scalars().first()
     try:
         if cs:
             db.session.delete(cs)
@@ -7168,7 +7186,9 @@ def subject_delete(subject_id: int):
 @login_required
 @role_required("admin", "principal", "clerk")
 def subject_toggle_elective(subject_id: int):
-    s = Subject.query.get_or_404(subject_id)
+    s = db.session.get(Subject, subject_id)
+    if not s:
+        abort(404)
     # Principals/clerks can only act within their program
     role_lower = (getattr(current_user, "role", "") or "").strip().lower()
     if role_lower in ("principal", "clerk"):
@@ -7208,7 +7228,7 @@ def users_list():
     q_role = (request.args.get("role") or "").strip()
     q_username = (request.args.get("username") or "").strip()
     q_program_raw = (request.args.get("program_id") or "").strip()
-    query = User.query
+    query = select(User)
     current_role = (getattr(current_user, "role", "") or "").strip().lower()
     if q_role:
         query = query.filter(User.role == q_role)
@@ -7219,7 +7239,7 @@ def users_list():
     selected_program_id = _ctx.get("selected_program_id")
     if selected_program_id:
         query = query.filter(User.program_id_fk == selected_program_id)
-    users = query.order_by(User.role.asc(), User.username.asc()).all()
+    users = db.session.execute(query.order_by(User.role.asc(), User.username.asc())).scalars().all()
     program_list = _ctx.get("program_list", [])
     programs = {p.program_id: p.program_name for p in program_list}
     roles = ["Admin", "Principal", "Faculty", "Clerk", "Student"]
@@ -7232,7 +7252,7 @@ def users_list():
 def user_new():
     errors = []
     roles = ["Admin", "Principal", "Faculty", "Clerk", "Student"]
-    programs = Program.query.order_by(Program.program_name).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
     current_role = (getattr(current_user, "role", "") or "").strip().lower()
     # Principals can only create Faculty/Clerk/Student in their own program
     if current_role == "principal":
@@ -7257,7 +7277,7 @@ def user_new():
             errors.append("Password is required.")
         if role not in roles:
             errors.append("Invalid role selected.")
-        if User.query.filter_by(username=username).first():
+        if db.session.execute(select(User).filter_by(username=username)).scalars().first():
             errors.append("Username already exists.")
 
         program_id_fk = None
@@ -7293,10 +7313,12 @@ def user_new():
 @login_required
 @role_required("admin", "principal", "clerk")
 def user_edit(user_id):
-    u = User.query.get_or_404(user_id)
+    u = db.session.get(User, user_id)
+    if not u:
+        abort(404)
     errors = []
     roles = ["Admin", "Principal", "Faculty", "Clerk", "Student"]
-    programs = Program.query.order_by(Program.program_name).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
     current_role = (getattr(current_user, "role", "") or "").strip().lower()
     # Principals can only edit users within their program, excluding Admin/Principal accounts
     if current_role == "principal":
@@ -7320,11 +7342,11 @@ def user_edit(user_id):
     back_url = url_for("main.users_list")
     if current_role == "clerk":
         try:
-            fac = Faculty.query.filter_by(user_id_fk=u.user_id).first()
+            fac = db.session.execute(select(Faculty).filter_by(user_id_fk=u.user_id)).scalars().first()
             if fac:
                 back_url = url_for("main.faculty_profile", faculty_id=fac.faculty_id)
             else:
-                s = Student.query.filter_by(user_id_fk=u.user_id).first()
+                s = db.session.execute(select(Student).filter_by(user_id_fk=u.user_id)).scalars().first()
                 if s:
                     back_url = url_for("main.students_show", enrollment_no=s.enrollment_no)
         except Exception:
@@ -7441,7 +7463,9 @@ def user_edit(user_id):
 @login_required
 @role_required("admin", "principal")
 def user_delete(user_id: int):
-    u = User.query.get_or_404(user_id)
+    u = db.session.get(User, user_id)
+    if not u:
+        abort(404)
 
     # Prevent self-deletion
     try:
@@ -7464,14 +7488,14 @@ def user_delete(user_id: int):
 
     # Dependency guards
     deps = {
-        "students": Student.query.filter_by(user_id_fk=u.user_id).count(),
-        "faculty": Faculty.query.filter_by(user_id_fk=u.user_id).count(),
-        "assignments": CourseAssignment.query.filter_by(faculty_id_fk=u.user_id).count(),
-        "materials": SubjectMaterial.query.filter_by(faculty_id_fk=u.user_id).count(),
-        "material_logs": SubjectMaterialLog.query.filter_by(actor_user_id_fk=u.user_id).count(),
-        "announcements": Announcement.query.filter_by(created_by=u.user_id).count(),
-        "announcement_dismissals": AnnouncementDismissal.query.filter_by(user_id_fk=u.user_id).count(),
-        "password_changes": PasswordChangeLog.query.filter_by(user_id_fk=u.user_id).count() + PasswordChangeLog.query.filter_by(changed_by_user_id_fk=u.user_id).count(),
+        "students": db.session.scalar(select(func.count()).select_from(Student).filter_by(user_id_fk=u.user_id)),
+        "faculty": db.session.scalar(select(func.count()).select_from(Faculty).filter_by(user_id_fk=u.user_id)),
+        "assignments": db.session.scalar(select(func.count()).select_from(CourseAssignment).filter_by(faculty_id_fk=u.user_id)),
+        "materials": db.session.scalar(select(func.count()).select_from(SubjectMaterial).filter_by(faculty_id_fk=u.user_id)),
+        "material_logs": db.session.scalar(select(func.count()).select_from(SubjectMaterialLog).filter_by(actor_user_id_fk=u.user_id)),
+        "announcements": db.session.scalar(select(func.count()).select_from(Announcement).filter_by(created_by=u.user_id)),
+        "announcement_dismissals": db.session.scalar(select(func.count()).select_from(AnnouncementDismissal).filter_by(user_id_fk=u.user_id)),
+        "password_changes": db.session.scalar(select(func.count()).select_from(PasswordChangeLog).filter_by(user_id_fk=u.user_id)) + db.session.scalar(select(func.count()).select_from(PasswordChangeLog).filter_by(changed_by_user_id_fk=u.user_id)),
     }
     if sum(deps.values()) > 0:
         msg = (
@@ -7497,7 +7521,9 @@ def user_delete(user_id: int):
 @login_required
 @role_required("admin")
 def user_map_program(user_id: int):
-    user = User.query.get_or_404(user_id)
+    user = db.session.get(User, user_id)
+    if not user:
+        abort(404)
     if (user.role or "").strip().lower() != "principal":
         flash("Program mapping is only applicable to Principal users.", "warning")
         return redirect(url_for("main.users_list"))
@@ -7555,25 +7581,24 @@ def attendance_mark():
             pass
 
     # Resolve current faculty (by user) and their active assignments
-    faculty = Faculty.query.filter_by(user_id_fk=current_user.user_id).first()
+    faculty = db.session.execute(select(Faculty).filter_by(user_id_fk=current_user.user_id)).scalars().first()
     assignments = []
     if faculty and role == 'faculty': # Strict check: admins/principals shouldn't see assignments unless they act as faculty
-        assignments = (
-            CourseAssignment.query
+        assignments = db.session.execute(
+            select(CourseAssignment)
             .filter_by(faculty_id_fk=current_user.user_id, is_active=True)
             .order_by(CourseAssignment.academic_year.desc())
-            .all()
-        )
+        ).scalars().all()
 
     # Build selection options scoped to assignments
-    subj_map = {s.subject_id: s for s in Subject.query.all()}
-    div_map = {d.division_id: d for d in Division.query.all()}
+    subj_map = {s.subject_id: s for s in db.session.execute(select(Subject)).scalars().all()}
+    div_map = {d.division_id: d for d in db.session.execute(select(Division)).scalars().all()}
     options = []
     
     # Pre-fetch programs for admin selector
     programs = []
     if role in ["admin", "principal"]:
-        programs = Program.query.order_by(Program.program_name).all()
+        programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
 
     for a in assignments:
         s = subj_map.get(a.subject_id_fk)
@@ -7593,10 +7618,10 @@ def attendance_mark():
 
     # Fallback: for principal/admin or when no assignments, expose subjects by program scope
     if (role in ["principal", "admin"]) or (not options):
-        subj_q = Subject.query
+        subj_q = select(Subject)
         if selected_program_id:
             subj_q = subj_q.filter_by(program_id_fk=selected_program_id)
-        subjects_all = subj_q.order_by(Subject.semester.asc(), Subject.subject_name.asc()).all()
+        subjects_all = db.session.execute(subj_q.order_by(Subject.semester.asc(), Subject.subject_name.asc())).scalars().all()
         existing_subject_ids = {opt.get("subject_id") for opt in options if opt.get("subject_id")}
         for s in subjects_all:
             # Only add if not already in options (though for admin we might want to clear options if program changed)
@@ -7629,10 +7654,10 @@ def attendance_mark():
     try:
         needs_program_divisions = (role in ["principal", "admin"]) or (not options)
         if needs_program_divisions:
-            div_q = Division.query
+            div_q = select(Division)
             if selected_program_id:
                 div_q = div_q.filter_by(program_id_fk=selected_program_id)
-            divs_all = div_q.order_by(Division.semester.asc(), Division.division_code.asc()).all()
+            divs_all = db.session.execute(div_q.order_by(Division.semester.asc(), Division.division_code.asc())).scalars().all()
             existing_div_ids = {opt.get("division_id") for opt in options if opt.get("division_id")}
             program_divisions = [d for d in divs_all if (d.division_id and d.division_id not in existing_div_ids)]
     except Exception:
@@ -7688,15 +7713,14 @@ def attendance_mark():
     if selected_subject_id and selected_year:
         # Do NOT rely on enrollment.division_id_fk (can be stale after rebalancing)
         # Instead, fetch all active enrollments and filter by the student's current division
-        enr_rows = (
-            StudentSubjectEnrollment.query
+        enr_rows = db.session.execute(
+            select(StudentSubjectEnrollment)
             .filter_by(subject_id_fk=selected_subject_id, academic_year=selected_year, is_active=True)
             .order_by(StudentSubjectEnrollment.student_id_fk)
-            .all()
-        )
+        ).scalars().all()
         student_ids = [r.student_id_fk for r in enr_rows]
         if student_ids:
-            students = Student.query.filter(Student.enrollment_no.in_(student_ids)).order_by(Student.enrollment_no).all()
+            students = db.session.execute(select(Student).filter(Student.enrollment_no.in_(student_ids)).order_by(Student.enrollment_no)).scalars().all()
             for stu in students:
                 # If a division is selected, include only students currently in that division
                 if selected_division_id and stu.division_id_fk != selected_division_id:
@@ -7708,7 +7732,7 @@ def attendance_mark():
                 })
     elif selected_division_id:
         # Fallback: all students in division
-        stu_rows = Student.query.filter_by(division_id_fk=selected_division_id).order_by(Student.enrollment_no).all()
+        stu_rows = db.session.execute(select(Student).filter_by(division_id_fk=selected_division_id).order_by(Student.enrollment_no)).scalars().all()
         roster = [{"enrollment_no": s.enrollment_no, "name": f"{s.surname or ''} {s.student_name or ''}".strip(), "division_id": s.division_id_fk} for s in stu_rows]
 
     # Compute Roll No for roster (sequential by enrollment within loaded scope)
@@ -7731,13 +7755,12 @@ def attendance_mark():
                     key = (pid, sem)
                     if key not in cont_map_cache:
                         try:
-                            rows = (
-                                Student.query
+                            rows = db.session.execute(
+                                select(Student)
                                 .filter_by(program_id_fk=pid)
                                 .filter_by(current_semester=sem)
                                 .order_by(Student.enrollment_no.asc())
-                                .all()
-                            )
+                            ).scalars().all()
                             m = {}
                             for idx2, s in enumerate(rows, start=1):
                                 m[s.enrollment_no] = idx2
@@ -7796,21 +7819,20 @@ def attendance_mark():
     try:
         if selected_subject_id and selected_division_id and selected_year:
             # Current students in the selected division, scoped to relevant semester
-            div_students_q = Student.query.filter_by(division_id_fk=selected_division_id)
+            div_students_q = select(Student).filter_by(division_id_fk=selected_division_id)
             sem_val = (division.semester if division else (subject.semester if subject else None))
             if sem_val:
                 div_students_q = div_students_q.filter(Student.current_semester == sem_val)
             # Total students currently in division
-            total_students_in_div = div_students_q.count()
+            total_students_in_div = db.session.scalar(select(func.count()).select_from(div_students_q.subquery()))
             # Active enrollments for selected subject/year among these students
-            stu_ids = [enr for (enr,) in div_students_q.with_entities(Student.enrollment_no).all()]
+            stu_ids = [enr for (enr,) in db.session.execute(div_students_q.with_only_columns(Student.enrollment_no)).all()]
             enrolled_count = 0
             if stu_ids:
-                enrolled_count = (
-                    StudentSubjectEnrollment.query
+                enrolled_count = db.session.scalar(
+                    select(func.count()).select_from(StudentSubjectEnrollment)
                     .filter_by(subject_id_fk=selected_subject_id, academic_year=selected_year, is_active=True)
                     .filter(StudentSubjectEnrollment.student_id_fk.in_(stu_ids))
-                    .count()
                 )
             missing = max(total_students_in_div - enrolled_count, 0)
             if missing > 0:
@@ -7868,19 +7890,18 @@ def attendance_show():
             prog = db.session.get(Program, student.program_id_fk)
             is_bca = bool(prog and ((prog.program_name or "").strip().upper() == "BCA"))
             if is_bca and student.current_semester:
-                rows = (
-                    Student.query
+                rows = db.session.execute(
+                    select(Student)
                     .filter_by(program_id_fk=student.program_id_fk)
                     .filter_by(current_semester=student.current_semester)
                     .order_by(Student.enrollment_no.asc())
-                    .all()
-                )
+                ).scalars().all()
                 for idx, s in enumerate(rows, start=1):
                     if s.enrollment_no == student.enrollment_no:
                         student_roll_no = (idx if idx <= 200 else 200)
                         break
             elif student.division_id_fk:
-                div_students = Student.query.filter_by(division_id_fk=student.division_id_fk).order_by(Student.enrollment_no).all()
+                div_students = db.session.execute(select(Student).filter_by(division_id_fk=student.division_id_fk).order_by(Student.enrollment_no)).scalars().all()
                 for idx, s in enumerate(div_students, start=1):
                     if s.enrollment_no == student.enrollment_no:
                         student_roll_no = idx
@@ -7891,14 +7912,13 @@ def attendance_show():
     # Per-student daily report: list of lectures and statuses
     student_daily = []
     if student:
-        rows = (
-            Attendance.query
+        rows = db.session.execute(
+            select(Attendance)
             .filter_by(student_id_fk=student.enrollment_no)
             .filter(Attendance.date_marked == selected_date)
             .order_by(Attendance.period_no.asc())
-            .all()
-        )
-        subj_map = {s.subject_id: s.subject_name for s in Subject.query.all()}
+        ).scalars().all()
+        subj_map = {s.subject_id: s.subject_name for s in db.session.execute(select(Subject)).scalars().all()}
         for r in rows:
             student_daily.append({
                 "period_no": r.period_no,
@@ -7917,19 +7937,18 @@ def attendance_show():
         except Exception:
             program_id_fk = None
     # Build subject list scoped by program if needed
-    subj_q = Subject.query
+    subj_q = select(Subject)
     if program_id_fk:
         subj_q = subj_q.filter_by(program_id_fk=program_id_fk)
-    subj_all = subj_q.all()
+    subj_all = db.session.execute(subj_q).scalars().all()
     subj_ids = [s.subject_id for s in subj_all]
     status_counts = {sid: {"P": 0, "A": 0, "L": 0} for sid in subj_ids}
     if subj_ids:
-        att_rows = (
-            Attendance.query
+        att_rows = db.session.execute(
+            select(Attendance)
             .filter(Attendance.subject_id_fk.in_(subj_ids))
             .filter(Attendance.date_marked == selected_date)
-            .all()
-        )
+        ).scalars().all()
         for r in att_rows:
             if r.subject_id_fk in status_counts and (r.status or "") in status_counts[r.subject_id_fk]:
                 status_counts[r.subject_id_fk][r.status] += 1
@@ -8018,7 +8037,7 @@ def attendance_report_admin():
         division_id = None
 
     # Subject scope — bound by Program > Semester > Division when provided
-    subj_q = Subject.query
+    subj_q = select(Subject)
     if program_id_fk:
         subj_q = subj_q.filter_by(program_id_fk=program_id_fk)
     if semester is not None:
@@ -8027,27 +8046,28 @@ def attendance_report_admin():
     if division_id:
         try:
             from ..models import CourseAssignment, StudentSubjectEnrollment
-            assigned_sids = [a.subject_id_fk for a in CourseAssignment.query.filter_by(division_id_fk=division_id, is_active=True).all()]
+            assigned_sids = [a.subject_id_fk for a in db.session.execute(select(CourseAssignment).filter_by(division_id_fk=division_id, is_active=True)).scalars().all()]
             if assigned_sids:
                 subj_q = subj_q.filter(Subject.subject_id.in_(assigned_sids))
             else:
                 # Fallback: subjects with active enrollments in this division
-                enr_sids = [sid for (sid,) in db.session.query(StudentSubjectEnrollment.subject_id_fk)
-                            .filter_by(division_id_fk=division_id, is_active=True)
-                            .distinct()
-                            .all()]
+                enr_sids = [sid for (sid,) in db.session.execute(
+                    select(StudentSubjectEnrollment.subject_id_fk)
+                    .filter_by(division_id_fk=division_id, is_active=True)
+                    .distinct()
+                ).all()]
                 if enr_sids:
                     subj_q = subj_q.filter(Subject.subject_id.in_(enr_sids))
         except Exception:
             pass
     if subject_id:
         subj_q = subj_q.filter(Subject.subject_id == subject_id)
-    subjects = subj_q.order_by(Subject.subject_name).all()
+    subjects = db.session.execute(subj_q.order_by(Subject.subject_name)).scalars().all()
     subj_ids = [s.subject_id for s in subjects]
     subj_name_map = {s.subject_id: s.subject_name for s in subjects}
 
     # Attendance query scoped
-    q = Attendance.query
+    q = select(Attendance)
     if subj_ids:
         q = q.filter(Attendance.subject_id_fk.in_(subj_ids))
     if start_date:
@@ -8056,7 +8076,7 @@ def attendance_report_admin():
         q = q.filter(Attendance.date_marked <= end_date)
     if division_id:
         q = q.filter(Attendance.division_id_fk == division_id)
-    rows = q.order_by(Attendance.date_marked.asc()).all()
+    rows = db.session.execute(q.order_by(Attendance.date_marked.asc())).scalars().all()
 
     # Aggregations
     totals_by_subject = {}
@@ -8065,7 +8085,7 @@ def attendance_report_admin():
     subject_trackers = {}
     # Track per-division unique students by status for reach metrics
     div_trackers = {}
-    div_map = {d.division_id: d for d in Division.query.all()}
+    div_map = {d.division_id: d for d in db.session.execute(select(Division)).scalars().all()}
     for r in rows:
         sid = r.subject_id_fk
         sname = subj_name_map.get(sid, str(sid))
@@ -8126,10 +8146,10 @@ def attendance_report_admin():
         unique_present = len((tracker.get("present_students", set()) | tracker.get("late_students", set())))
         unique_absent = len(tracker.get("absent_students", set()))
         # Count enrolled students (scope division if filtered)
-        q_enr = StudentSubjectEnrollment.query.filter_by(subject_id_fk=sid, is_active=True)
+        q_enr = select(func.count()).select_from(StudentSubjectEnrollment).filter_by(subject_id_fk=sid, is_active=True)
         if division_id:
             q_enr = q_enr.filter(StudentSubjectEnrollment.division_id_fk == division_id)
-        enrolled_count = q_enr.count()
+        enrolled_count = db.session.scalar(q_enr)
         # Reach percentages (handle edge case: enrolled=0 => None)
         reach_present_pct = round((unique_present * 100.0 / enrolled_count), 1) if enrolled_count else None
         reach_absent_pct = round((unique_absent * 100.0 / enrolled_count), 1) if enrolled_count else None
@@ -8158,16 +8178,16 @@ def attendance_report_admin():
         unique_present = len(dtracker.get("present_students", set()) | dtracker.get("late_students", set()))
         unique_absent = len(dtracker.get("absent_students", set()))
         # Enrolled students in this division (distinct student ids across active enrollments)
-        q_enr_div = StudentSubjectEnrollment.query.filter_by(is_active=True)
+        q_enr_div = select(StudentSubjectEnrollment.student_id_fk).filter_by(is_active=True)
         if did:
             q_enr_div = q_enr_div.filter(StudentSubjectEnrollment.division_id_fk == did)
         else:
             q_enr_div = q_enr_div.filter(StudentSubjectEnrollment.division_id_fk.is_(None))
         try:
-            enrolled_div_distinct = q_enr_div.with_entities(StudentSubjectEnrollment.student_id_fk).distinct().count()
+            enrolled_div_distinct = db.session.scalar(select(func.count()).select_from(q_enr_div.distinct().subquery()))
         except Exception:
             # Fallback: compute via Python sets
-            enrolled_div_distinct = len({e.student_id_fk for e in q_enr_div.all()})
+            enrolled_div_distinct = len(set(db.session.scalars(q_enr_div).all()))
         reach_present_pct = round((unique_present * 100.0 / enrolled_div_distinct), 1) if enrolled_div_distinct else None
         reach_absent_pct = round((unique_absent * 100.0 / enrolled_div_distinct), 1) if enrolled_div_distinct else None
         # Attach metrics
@@ -8183,7 +8203,7 @@ def attendance_report_admin():
     if export_raw == "csv":
         # Build student name map for readability
         stu_ids = {r.student_id_fk for r in rows}
-        stu_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in Student.query.filter(Student.enrollment_no.in_(list(stu_ids))).all()}
+        stu_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in db.session.execute(select(Student).filter(Student.enrollment_no.in_(list(stu_ids)))).scalars().all()}
         import csv
         from io import StringIO
         buf = StringIO()
@@ -8203,7 +8223,7 @@ def attendance_report_admin():
             ])
         return Response(buf.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=attendance_report.csv"})
 
-    programs = Program.query.order_by(Program.program_name).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
     # Precompute chart arrays for template (older Jinja compatibility)
     chart_subject_labels = [v.get("name", "") for v in totals_by_subject.values()]
     chart_subject_P = [int(v.get("P", 0)) for v in totals_by_subject.values()]
@@ -8235,7 +8255,7 @@ def attendance_report_admin():
             ps["total"] += 1
         # Build student name map and compute percentages
         stu_ids = list(per_student.keys())
-        students_for_roll = Student.query.filter(Student.enrollment_no.in_(stu_ids)).all() if stu_ids else []
+        students_for_roll = db.session.execute(select(Student).filter(Student.enrollment_no.in_(stu_ids))).scalars().all() if stu_ids else []
         stu_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in students_for_roll} if students_for_roll else {}
         # Compute roll numbers
         # Continuous policy (flagged): per-program+semester mapping 1..N
@@ -8252,11 +8272,12 @@ def attendance_report_admin():
                     key = (pid, sem)
                     if key not in cont_cache:
                         rows = (
-                            Student.query
-                            .filter_by(program_id_fk=pid)
-                            .filter_by(current_semester=sem)
-                            .order_by(Student.enrollment_no.asc())
-                            .all()
+                            db.session.execute(
+                                select(Student)
+                                .filter_by(program_id_fk=pid)
+                                .filter_by(current_semester=sem)
+                                .order_by(Student.enrollment_no.asc())
+                            ).scalars().all()
                         )
                         m = {}
                         for idx, ss in enumerate(rows, start=1):
@@ -8266,7 +8287,7 @@ def attendance_report_admin():
                 else:
                     did = s.division_id_fk
                     if did and (did not in div_cache):
-                        rows = Student.query.filter_by(division_id_fk=did).order_by(Student.enrollment_no).all()
+                        rows = db.session.execute(select(Student).filter_by(division_id_fk=did).order_by(Student.enrollment_no)).scalars().all()
                         m2 = {}
                         for idx, ss in enumerate(rows, start=1):
                             m2[ss.enrollment_no] = idx
@@ -8307,18 +8328,19 @@ def attendance_report_admin():
     )
     # Build dropdown options for semesters and divisions (scoped to program + semester for admin)
     try:
-        div_q = Division.query
+        div_q = select(Division)
         if program_id_fk:
             div_q = div_q.filter_by(program_id_fk=program_id_fk)
         # Semesters list should reflect selected program
-        semesters = sorted({d.semester for d in div_q.all()})
+        semesters = sorted({d.semester for d in db.session.execute(div_q).scalars().all()})
         # Divisions list mounted to program > semester; show only when both are selected
         if program_id_fk and semester:
             divisions = (
-                Division.query
-                .filter_by(program_id_fk=program_id_fk, semester=semester)
-                .order_by(Division.division_code)
-                .all()
+                db.session.execute(
+                    select(Division)
+                    .filter_by(program_id_fk=program_id_fk, semester=semester)
+                    .order_by(Division.division_code)
+                ).scalars().all()
             )
         else:
             divisions = []
@@ -8366,20 +8388,21 @@ def attendance_report_faculty():
     from ..models import Subject, Division, Attendance, CourseAssignment, Student
     # Resolve current faculty assignments
     assignments = (
-        CourseAssignment.query
-        .filter_by(faculty_id_fk=current_user.user_id, is_active=True)
-        .order_by(CourseAssignment.academic_year.desc())
-        .all()
+        db.session.execute(
+            select(CourseAssignment)
+            .filter_by(faculty_id_fk=current_user.user_id, is_active=True)
+            .order_by(CourseAssignment.academic_year.desc())
+        ).scalars().all()
     )
     subj_ids = sorted({a.subject_id_fk for a in assignments if a.subject_id_fk})
     div_ids = sorted({a.division_id_fk for a in assignments if a.division_id_fk})
-    subj_map = {s.subject_id: s for s in Subject.query.filter(Subject.subject_id.in_(subj_ids)).all()} if subj_ids else {}
+    subj_map = {s.subject_id: s for s in db.session.execute(select(Subject).filter(Subject.subject_id.in_(subj_ids))).scalars().all()} if subj_ids else {}
     # If assignment is ALL divisions, include all divisions for those semesters
     if div_ids:
-        div_map_query = Division.query.filter(Division.division_id.in_(div_ids))
-        div_map = {d.division_id: d for d in div_map_query.all()}
+        div_map_query = select(Division).filter(Division.division_id.in_(div_ids))
+        div_map = {d.division_id: d for d in db.session.execute(div_map_query).scalars().all()}
     else:
-        div_map = {d.division_id: d for d in Division.query.all()}
+        div_map = {d.division_id: d for d in db.session.execute(select(Division)).scalars().all()}
 
     # Filters
     start_str = (request.args.get("start") or "").strip()
@@ -8406,7 +8429,7 @@ def attendance_report_faculty():
         division_id = None
 
     # Attendance scoped by faculty subjects/divisions
-    q = Attendance.query
+    q = select(Attendance)
     if subj_ids:
         q = q.filter(Attendance.subject_id_fk.in_(subj_ids))
     if div_ids:
@@ -8419,7 +8442,7 @@ def attendance_report_faculty():
         q = q.filter(Attendance.date_marked >= start_date)
     if end_date:
         q = q.filter(Attendance.date_marked <= end_date)
-    rows = q.order_by(Attendance.date_marked.asc()).all()
+    rows = db.session.execute(q.order_by(Attendance.date_marked.asc())).scalars().all()
 
     totals_by_subject = {}
     totals_by_division = {}
@@ -8441,7 +8464,7 @@ def attendance_report_faculty():
 
     if export_raw == "csv":
         stu_ids = {r.student_id_fk for r in rows}
-        stu_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in Student.query.filter(Student.enrollment_no.in_(list(stu_ids))).all()}
+        stu_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in db.session.execute(select(Student).filter(Student.enrollment_no.in_(list(stu_ids)))).scalars().all()}
         import csv
         from io import StringIO
         buf = StringIO()
@@ -8481,7 +8504,7 @@ def attendance_report_faculty():
             ps[s] += 1
         ps["total"] += 1
     stu_ids = list(per_student.keys())
-    students_for_roll = Student.query.filter(Student.enrollment_no.in_(stu_ids)).all() if stu_ids else []
+    students_for_roll = db.session.execute(select(Student).filter(Student.enrollment_no.in_(stu_ids))).scalars().all() if stu_ids else []
     stu_name_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in students_for_roll}
     stu_div_map = {s.enrollment_no: s.division_id_fk for s in students_for_roll}
     # Compute roll numbers based on policy
@@ -8494,20 +8517,19 @@ def attendance_report_faculty():
             for key in cohort_keys:
                 pid, sem = key
                 if pid and sem:
-                    rows2 = (
-                        Student.query
+                    rows2 = db.session.execute(
+                        select(Student)
                         .filter_by(program_id_fk=pid)
                         .filter_by(current_semester=sem)
                         .order_by(Student.enrollment_no)
-                        .all()
-                    )
+                    ).scalars().all()
                     for idx, ss in enumerate(rows2, start=1):
                         roll_map[ss.enrollment_no] = idx
         else:
             # Per-division sequential as fallback
             div_set = {d for d in stu_div_map.values() if d}
             for did in div_set:
-                all_stu = Student.query.filter_by(division_id_fk=did).order_by(Student.enrollment_no).all()
+                all_stu = db.session.execute(select(Student).filter_by(division_id_fk=did).order_by(Student.enrollment_no)).scalars().all()
                 for idx, ss in enumerate(all_stu, start=1):
                     roll_map[ss.enrollment_no] = idx
     except Exception:
@@ -8619,13 +8641,13 @@ def attendance_search():
     students = []
     if q:
         try:
-            students = Student.query.filter(
+            students = db.session.execute(select(Student).filter(
                 or_(
                     Student.enrollment_no.ilike(f"%{q}%"),
                     Student.student_name.ilike(f"%{q}%"),
                     Student.surname.ilike(f"%{q}%"),
                 )
-            ).order_by(Student.enrollment_no.asc()).all()
+            ).order_by(Student.enrollment_no.asc())).scalars().all()
         except Exception:
             students = []
 
@@ -8635,13 +8657,13 @@ def attendance_search():
             div = db.session.get(Division, s.division_id_fk) if s.division_id_fk else None
             sem = s.current_semester or (div.semester if div else None)
             div_code = div.division_code if div else ""
-            att_rows = Attendance.query.filter(
+            att_rows = db.session.execute(select(Attendance).filter(
                 and_(
                     Attendance.student_id_fk == s.enrollment_no,
                     Attendance.date_marked >= start_date,
                     Attendance.date_marked <= end_date,
                 )
-            ).all()
+            )).scalars().all()
             total = len(att_rows)
             present = sum(1 for a in att_rows if (a.status or "").upper() in ("P", "L"))
             absent = sum(1 for a in att_rows if (a.status or "").upper() == "A")
@@ -8691,7 +8713,7 @@ def module_students():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     try:
         from ..models import Program
-        programs = Program.query.order_by(Program.program_name.asc()).all()
+        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     except Exception:
         programs = []
     medium_program_ids = []
@@ -8755,14 +8777,14 @@ def module_admin():
 @role_required("admin", "principal")
 def programs_list():
     from ..models import Program, Division, Subject, Student, Faculty
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     rows = []
     for p in programs:
         try:
-            div_cnt = Division.query.filter_by(program_id_fk=p.program_id).count()
-            subj_cnt = Subject.query.filter_by(program_id_fk=p.program_id).count()
-            stu_cnt = Student.query.filter_by(program_id_fk=p.program_id).count()
-            fac_cnt = Faculty.query.filter_by(program_id_fk=p.program_id).count()
+            div_cnt = db.session.scalar(select(func.count()).select_from(Division).filter_by(program_id_fk=p.program_id))
+            subj_cnt = db.session.scalar(select(func.count()).select_from(Subject).filter_by(program_id_fk=p.program_id))
+            stu_cnt = db.session.scalar(select(func.count()).select_from(Student).filter_by(program_id_fk=p.program_id))
+            fac_cnt = db.session.scalar(select(func.count()).select_from(Faculty).filter_by(program_id_fk=p.program_id))
         except Exception:
             div_cnt = subj_cnt = stu_cnt = fac_cnt = 0
         rows.append({
@@ -8787,7 +8809,7 @@ def program_new():
             errors.append("Program name is required.")
         # Unique name check
         try:
-            existing = Program.query.filter(Program.program_name.ilike(name)).first()
+            existing = db.session.execute(select(Program).filter(Program.program_name.ilike(name))).scalars().first()
             if existing:
                 errors.append("A program with this name already exists.")
         except Exception:
@@ -8824,7 +8846,9 @@ def program_new():
 @role_required("admin")
 def program_edit(program_id: int):
     from ..models import Program
-    p = Program.query.get_or_404(program_id)
+    p = db.session.get(Program, program_id)
+    if not p:
+        abort(404)
     if request.method == "POST":
         name = (request.form.get("program_name") or "").strip()
         duration_raw = (request.form.get("program_duration_years") or "").strip()
@@ -8833,7 +8857,7 @@ def program_edit(program_id: int):
             errors.append("Program name is required.")
         # Unique name check (excluding self)
         try:
-            existing = Program.query.filter(Program.program_name.ilike(name)).first()
+            existing = db.session.execute(select(Program).filter(Program.program_name.ilike(name))).scalars().first()
             if existing and existing.program_id != p.program_id:
                 errors.append("Another program with this name already exists.")
         except Exception:
@@ -8875,17 +8899,19 @@ def program_delete(program_id: int):
         from ..models import ProgramDivisionPlan
     except Exception:
         ProgramDivisionPlan = None
-    p = Program.query.get_or_404(program_id)
+    p = db.session.get(Program, program_id)
+    if not p:
+        abort(404)
     # Enforce dependency checks
     try:
         deps = {
-            "divisions": Division.query.filter_by(program_id_fk=p.program_id).count(),
-            "subjects": Subject.query.filter_by(program_id_fk=p.program_id).count(),
-            "students": Student.query.filter_by(program_id_fk=p.program_id).count(),
-            "faculty": Faculty.query.filter_by(program_id_fk=p.program_id).count(),
-            "fees": FeeStructure.query.filter_by(program_id_fk=p.program_id).count(),
-            "announcements": Announcement.query.filter_by(program_id_fk=p.program_id).count(),
-            "plans": (ProgramDivisionPlan.query.filter_by(program_id_fk=p.program_id).count() if ProgramDivisionPlan else 0),
+            "divisions": db.session.scalar(select(func.count()).select_from(Division).filter_by(program_id_fk=p.program_id)),
+            "subjects": db.session.scalar(select(func.count()).select_from(Subject).filter_by(program_id_fk=p.program_id)),
+            "students": db.session.scalar(select(func.count()).select_from(Student).filter_by(program_id_fk=p.program_id)),
+            "faculty": db.session.scalar(select(func.count()).select_from(Faculty).filter_by(program_id_fk=p.program_id)),
+            "fees": db.session.scalar(select(func.count()).select_from(FeeStructure).filter_by(program_id_fk=p.program_id)),
+            "announcements": db.session.scalar(select(func.count()).select_from(Announcement).filter_by(program_id_fk=p.program_id)),
+            "plans": (db.session.scalar(select(func.count()).select_from(ProgramDivisionPlan).filter_by(program_id_fk=p.program_id)) if ProgramDivisionPlan else 0),
         }
     except Exception:
         deps = {k: 0 for k in ["divisions","subjects","students","faculty","fees","announcements","plans"]}
@@ -9296,7 +9322,7 @@ def admin_program_import():
     }
 
     status_messages = []
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
 
     if request.method == "POST":
         action = (request.form.get("action") or "").strip()
@@ -9309,7 +9335,7 @@ def admin_program_import():
             if action == "import_programs":
                 # Create core programs; template parsing can be added later
                 for name in ["BBA", "BCom (English)", "BCom (Gujarati)"]:
-                    p = Program.query.filter_by(program_name=name).first()
+                    p = db.session.execute(select(Program).filter_by(program_name=name)).scalars().first()
                     if not p:
                         p = Program(program_name=name, program_duration_years=3)
                         db.session.add(p)
@@ -9432,7 +9458,7 @@ def module_fees():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     # Compute Semester 1 totals per program from DB-backed fee structure
     from ..models import FeeStructure, Program
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     prog_map = {p.program_id: (p.program_name or "").strip() for p in programs}
 
     # Components included for totals (normalized, case-insensitive)
@@ -9454,10 +9480,11 @@ def module_fees():
     }
 
     rows = (
-        FeeStructure.query
-        .filter(FeeStructure.semester == 1)
-        .order_by(FeeStructure.program_id_fk.asc(), FeeStructure.component_name.asc())
-        .all()
+        db.session.execute(
+            select(FeeStructure)
+            .filter(FeeStructure.semester == 1)
+            .order_by(FeeStructure.program_id_fk.asc(), FeeStructure.component_name.asc())
+        ).scalars().all()
     )
     totals_by_program = {}
     for r in rows:
@@ -9501,7 +9528,7 @@ def fees_list():
     page = int(request.args.get("page") or 1)
     per = int(request.args.get("per") or 20)
 
-    q = FeesRecord.query
+    q = select(FeesRecord)
     if en_raw:
         q = q.filter(FeesRecord.student_id_fk.like(f"%{en_raw}%"))
     semester = None
@@ -9526,18 +9553,19 @@ def fees_list():
         key = FeesRecord.date_paid
     order = key.desc() if direction == "desc" else key.asc()
 
-    total = q.count()
+    total = db.session.scalar(select(func.count()).select_from(q.subquery()))
     rows = (
-        q.order_by(order)
-        .offset(max(0, (page - 1) * per))
-        .limit(per)
-        .all()
+        db.session.execute(
+            q.order_by(order)
+            .offset(max(0, (page - 1) * per))
+            .limit(per)
+        ).scalars().all()
     )
     # Resolve student names for display
     sid_set = {r.student_id_fk for r in rows if r.student_id_fk}
     student_map = {}
     if sid_set:
-        students = Student.query.filter(Student.enrollment_no.in_(list(sid_set))).all()
+        students = db.session.execute(select(Student).filter(Student.enrollment_no.in_(list(sid_set)))).scalars().all()
         student_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in students}
 
     return render_template(
@@ -9670,7 +9698,7 @@ def fees_student(enrollment_no):
     if not s:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.fees_list"))
-    rows = FeesRecord.query.filter_by(student_id_fk=enrollment_no).order_by(FeesRecord.date_paid.desc()).all()
+    rows = db.session.execute(select(FeesRecord).filter_by(student_id_fk=enrollment_no).order_by(FeesRecord.date_paid.desc())).scalars().all()
     total_due = sum([(r.amount_due or 0.0) for r in rows])
     total_paid = sum([(r.amount_paid or 0.0) for r in rows])
     balance = total_due - total_paid
@@ -9696,7 +9724,7 @@ def fees_export():
     en_raw = (request.args.get("enrollment_no") or "").strip()
     sem_raw = (request.args.get("semester") or "").strip()
     status = (request.args.get("status") or "").strip().lower()
-    q = FeesRecord.query
+    q = select(FeesRecord)
     if en_raw:
         q = q.filter(FeesRecord.student_id_fk.like(f"%{en_raw}%"))
     semester = None
@@ -9710,7 +9738,7 @@ def fees_export():
         q = q.filter(FeesRecord.amount_due > FeesRecord.amount_paid)
     elif status == "paid":
         q = q.filter(FeesRecord.amount_paid >= FeesRecord.amount_due)
-    rows = q.order_by(FeesRecord.date_paid.desc()).all()
+    rows = db.session.execute(q.order_by(FeesRecord.date_paid.desc())).scalars().all()
     import csv, io
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -9773,7 +9801,7 @@ def fees_structure_view():
             except Exception:
                 pass
     else:
-        programs = Program.query.order_by(Program.program_name.asc()).all()
+        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     prog_map = {p.program_id: (p.program_name or "").strip() for p in programs}
     # Enforce program scope for clerks
     if role in ("clerk") and pid_scope:
@@ -9787,12 +9815,12 @@ def fees_structure_view():
         medium_raw = ""
 
     # Fetch fee rows scoped to filters
-    q = FeeStructure.query
+    q = select(FeeStructure)
     if program_id:
         q = q.filter(FeeStructure.program_id_fk == program_id)
     if semester is not None and semester != 0:
         q = q.filter(FeeStructure.semester == semester)
-    components = q.order_by(FeeStructure.semester.asc(), FeeStructure.component_name.asc()).all()
+    components = db.session.execute(q.order_by(FeeStructure.semester.asc(), FeeStructure.component_name.asc())).scalars().all()
 
     # Canonical components normalized for matching
     canon_norms = {_slugify_component(h) for h in FEE_COMPONENTS}
@@ -9923,7 +9951,7 @@ def fees_heads():
             except Exception:
                 pass
     else:
-        programs = Program.query.order_by(Program.program_name.asc()).all()
+        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     program_id_raw = (request.values.get("program_id") or "").strip()
     semester_raw = (request.values.get("semester") or "").strip()
     program_id = int(program_id_raw) if program_id_raw.isdigit() else None
@@ -9953,9 +9981,10 @@ def fees_heads():
             else:
                 # Avoid duplicates by slug
                 existing_rows = (
-                    FeeStructure.query
-                    .filter_by(program_id_fk=selected_program.program_id, semester=semester)
-                    .all()
+                    db.session.execute(
+                        select(FeeStructure)
+                        .filter_by(program_id_fk=selected_program.program_id, semester=semester)
+                    ).scalars().all()
                 )
                 exists = False
                 for r in existing_rows:
@@ -9987,9 +10016,10 @@ def fees_heads():
             else:
                 try:
                     rows = (
-                        FeeStructure.query
-                        .filter_by(program_id_fk=selected_program.program_id, semester=semester)
-                        .all()
+                        db.session.execute(
+                            select(FeeStructure)
+                            .filter_by(program_id_fk=selected_program.program_id, semester=semester)
+                        ).scalars().all()
                     )
                     changed = 0
                     for r in rows:
@@ -10012,9 +10042,10 @@ def fees_heads():
             else:
                 try:
                     rows = (
-                        FeeStructure.query
-                        .filter_by(program_id_fk=selected_program.program_id, semester=semester)
-                        .all()
+                        db.session.execute(
+                            select(FeeStructure)
+                            .filter_by(program_id_fk=selected_program.program_id, semester=semester)
+                        ).scalars().all()
                     )
                     changed = 0
                     for r in rows:
@@ -10037,9 +10068,10 @@ def fees_heads():
         rows = []
         try:
             rows = (
-                FeeStructure.query
-                .filter_by(program_id_fk=selected_program.program_id, semester=semester)
-                .all()
+                db.session.execute(
+                    select(FeeStructure)
+                    .filter_by(program_id_fk=selected_program.program_id, semester=semester)
+                ).scalars().all()
             )
         except Exception:
             errors.append("Failed to load heads from database; showing defaults.")
@@ -10083,16 +10115,17 @@ def fees_heads_seed_all():
     from ..models import Program, FeeStructure
     errors = []
     try:
-        programs = Program.query.order_by(Program.program_name.asc()).all()
+        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
         # Assume up to 8 semesters (4 years) unless program has fewer
         total_created = 0
         for p in programs:
             max_sem = max(2 * int(getattr(p, "program_duration_years", 3) or 3), 2)
             for s in range(1, max_sem + 1):
                 existing_rows = (
-                    FeeStructure.query
-                    .filter_by(program_id_fk=p.program_id, semester=s)
-                    .all()
+                    db.session.execute(
+                        select(FeeStructure)
+                        .filter_by(program_id_fk=p.program_id, semester=s)
+                    ).scalars().all()
                 )
                 existing_norms = {_slugify_component((r.component_name or "").strip()) for r in existing_rows}
                 for comp in FEE_COMPONENTS:
@@ -10143,7 +10176,7 @@ def fees_import():
             except Exception:
                 pass
     else:
-        programs = Program.query.order_by(Program.program_name.asc()).all()
+        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     program_id_raw = (request.values.get("program_id") or "").strip()
     semester_raw = (request.values.get("semester") or "").strip()
     medium_raw = (request.values.get("medium") or "").strip()
@@ -10229,12 +10262,12 @@ def fees_import():
                             unknown_heads.append(desc)
                             continue
                         target_name = match_name
-                        q = FeeStructure.query.filter_by(program_id_fk=selected_program.program_id, component_name=target_name, semester=semester)
+                        q = select(FeeStructure).filter_by(program_id_fk=selected_program.program_id, component_name=target_name, semester=semester)
                         if medium:
                             q = q.filter(FeeStructure.medium_tag == medium)
                         else:
                             q = q.filter(FeeStructure.medium_tag.is_(None))
-                        fs = q.first()
+                        fs = db.session.execute(q).scalars().first()
                         if not fs:
                             fs = FeeStructure(program_id_fk=selected_program.program_id, component_name=target_name, semester=semester, amount=amount, is_active=True, medium_tag=medium)
                             db.session.add(fs)
@@ -10388,17 +10421,17 @@ def module_divisions():
         selected_program_id = None
     if role in ("principal", "clerk"):
         selected_program_id = user_program_id
-    q = Division.query
+    q = select(Division)
     if selected_program_id:
         q = q.filter_by(program_id_fk=selected_program_id)
-    divisions = q.all()
+    divisions = db.session.execute(q).scalars().all()
     total_capacity = 0
     total_enrolled = 0
     for d in divisions:
         cap = int(d.capacity or 0)
         total_capacity += cap
         try:
-            enrolled = Student.query.filter_by(division_id_fk=d.division_id).count()
+            enrolled = db.session.scalar(select(func.count()).select_from(Student).filter_by(division_id_fk=d.division_id))
         except Exception:
             enrolled = 0
         total_enrolled += enrolled
@@ -10410,10 +10443,11 @@ def module_divisions():
     if selected_program_id:
         selected_program = db.session.get(Program, selected_program_id)
         plans = (
-            ProgramDivisionPlan.query
-            .filter_by(program_id_fk=selected_program_id)
-            .order_by(ProgramDivisionPlan.semester.asc())
-            .all()
+            db.session.execute(
+                select(ProgramDivisionPlan)
+                .filter_by(program_id_fk=selected_program_id)
+                .order_by(ProgramDivisionPlan.semester.asc())
+            ).scalars().all()
         )
     return render_template(
         "module_divisions.html",
@@ -10475,7 +10509,7 @@ def divisions_planning_save():
         return redirect(url_for("main.module_divisions", program_id=program_id))
 
     # Upsert plan
-    plan = ProgramDivisionPlan.query.filter_by(program_id_fk=program_id, semester=semester).first()
+    plan = db.session.execute(select(ProgramDivisionPlan).filter_by(program_id_fk=program_id, semester=semester)).scalars().first()
     if plan:
         plan.capacity_per_division = capacity
         plan.num_divisions = num_divisions
@@ -10544,7 +10578,7 @@ def divisions_rebalance():
         return redirect(url_for("main.module_divisions"))
 
     # Group students by semester for this program
-    students = Student.query.filter_by(program_id_fk=program_id).order_by(Student.enrollment_no.asc()).all()
+    students = db.session.execute(select(Student).filter_by(program_id_fk=program_id).order_by(Student.enrollment_no.asc())).scalars().all()
     by_sem = {}
     for s in students:
         sem = int(getattr(s, "current_semester", None) or 0)
@@ -10557,7 +10591,7 @@ def divisions_rebalance():
     for semester, stu_list in sorted(by_sem.items()):
         if not stu_list:
             continue
-        plan = ProgramDivisionPlan.query.filter_by(program_id_fk=program_id, semester=semester).first()
+        plan = db.session.execute(select(ProgramDivisionPlan).filter_by(program_id_fk=program_id, semester=semester)).scalars().first()
         capacity = None
         num_divisions = None
         roll_max = 200
@@ -10589,10 +10623,11 @@ def divisions_rebalance():
         # Ensure divisions exist with planned capacity
         codes = _generate_codes(num_divisions)
         existing = (
-            Division.query
-            .filter_by(program_id_fk=program_id, semester=semester)
-            .order_by(Division.division_code.asc())
-            .all()
+            db.session.execute(
+                select(Division)
+                .filter_by(program_id_fk=program_id, semester=semester)
+                .order_by(Division.division_code.asc())
+            ).scalars().all()
         )
         # Map codes to divisions; create missing
         existing_map = {d.division_code: d for d in existing}
@@ -10647,29 +10682,31 @@ def divisions_rebalance():
     if program_id:
         programs = [db.session.get(Program, program_id)] if db.session.get(Program, program_id) else []
     else:
-        programs = Program.query.all() if role == "admin" else ([db.session.get(Program, user_program_id)] if user_program_id else [])
+        programs = db.session.execute(select(Program)).scalars().all() if role == "admin" else ([db.session.get(Program, user_program_id)] if user_program_id else [])
 
     total_updated = 0
     for p in programs:
         if not p:
             continue
         # Semesters present for this program
-        semesters = sorted({s.current_semester for s in Student.query.filter_by(program_id_fk=p.program_id).all() if s.current_semester})
+        semesters = sorted({s.current_semester for s in db.session.execute(select(Student).filter_by(program_id_fk=p.program_id)).scalars().all() if s.current_semester})
         for sem in semesters:
             students = (
-                Student.query
-                .filter_by(program_id_fk=p.program_id)
-                .filter_by(current_semester=sem)
-                .order_by(Student.enrollment_no.asc())
-                .all()
+                db.session.execute(
+                    select(Student)
+                    .filter_by(program_id_fk=p.program_id)
+                    .filter_by(current_semester=sem)
+                    .order_by(Student.enrollment_no.asc())
+                ).scalars().all()
             )
             required_n = max(math.ceil(len(students) / CAPACITY), 1)
             # Ensure divisions and capacity
             existing = (
-                Division.query
-                .filter_by(program_id_fk=p.program_id, semester=sem)
-                .order_by(Division.division_code.asc())
-                .all()
+                db.session.execute(
+                    select(Division)
+                    .filter_by(program_id_fk=p.program_id, semester=sem)
+                    .order_by(Division.division_code.asc())
+                ).scalars().all()
             )
             for d in existing:
                 if d.capacity != CAPACITY:
@@ -10683,7 +10720,7 @@ def divisions_rebalance():
                 db.session.add(div)
             db.session.commit()
             # Refresh map
-            div_map = {d.division_code: d for d in Division.query.filter_by(program_id_fk=p.program_id, semester=sem).order_by(Division.division_code.asc()).all()}
+            div_map = {d.division_code: d for d in db.session.execute(select(Division).filter_by(program_id_fk=p.program_id, semester=sem).order_by(Division.division_code.asc())).scalars().all()}
             codes = sorted(list(div_map.keys()))
             # Assign students in chunks of CAPACITY
             for idx, s in enumerate(students):
@@ -10730,12 +10767,12 @@ def divisions_list():
     except Exception:
         semester = None
 
-    q = Division.query
+    q = select(Division)
     if program_id:
         q = q.filter_by(program_id_fk=program_id)
     if semester:
         q = q.filter_by(semester=semester)
-    divisions = q.order_by(Division.program_id_fk.asc(), Division.semester.asc(), Division.division_code.asc()).all()
+    divisions = db.session.execute(q.order_by(Division.program_id_fk.asc(), Division.semester.asc(), Division.division_code.asc())).scalars().all()
 
     # Usage metrics (capacity vs enrolled)
     usage = {}
@@ -10743,7 +10780,7 @@ def divisions_list():
     total_enrolled = 0
     for d in divisions:
         try:
-            enrolled = Student.query.filter_by(division_id_fk=d.division_id).count()
+            enrolled = db.session.scalar(select(func.count()).select_from(Student).filter_by(division_id_fk=d.division_id))
         except Exception:
             enrolled = 0
         cap = int(d.capacity or 0)
@@ -10757,7 +10794,7 @@ def divisions_list():
         }
     overall_pct = round((total_enrolled * 100.0 / total_capacity), 1) if total_capacity else None
 
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     return render_template(
         "divisions.html",
         divisions=divisions,
@@ -10824,12 +10861,12 @@ def division_new():
 
         # Uniqueness check
         if not errors and program_id and code:
-            existing = Division.query.filter_by(program_id_fk=program_id, semester=semester, division_code=code).first()
+            existing = db.session.execute(select(Division).filter_by(program_id_fk=program_id, semester=semester, division_code=code)).scalars().first()
             if existing:
                 errors.append("A division with the same Program, Semester, and Code already exists.")
 
         if errors:
-            programs = Program.query.order_by(Program.program_name.asc()).all()
+            programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
             return render_template(
                 "division_new.html",
                 errors=errors,
@@ -10852,7 +10889,7 @@ def division_new():
         return redirect(url_for("main.divisions_list", program_id=program_id, semester=semester))
 
     # GET: show form
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     return render_template("division_new.html", programs=programs, role=role, user_program_id=user_program_id, form_data={})
 
 
@@ -10910,16 +10947,17 @@ def division_edit(division_id: int):
         # Uniqueness check excluding current record
         if not errors and program_id and code:
             existing = (
-                Division.query
-                .filter_by(program_id_fk=program_id, semester=semester, division_code=code)
-                .filter(Division.division_id != division_id)
-                .first()
+                db.session.execute(
+                    select(Division)
+                    .filter_by(program_id_fk=program_id, semester=semester, division_code=code)
+                    .filter(Division.division_id != division_id)
+                ).scalars().first()
             )
             if existing:
                 errors.append("A division with the same Program, Semester, and Code already exists.")
 
         if errors:
-            programs = Program.query.order_by(Program.program_name.asc()).all()
+            programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
             return render_template(
                 "division_edit.html",
                 errors=errors,
@@ -10944,7 +10982,7 @@ def division_edit(division_id: int):
         flash("Division updated.", "success")
         return redirect(url_for("main.divisions_list", program_id=program_id, semester=semester))
 
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     return render_template("division_edit.html", division=d, programs=programs, role=role, user_program_id=user_program_id, form_data={})
 
 
@@ -10960,16 +10998,18 @@ def chart_students_by_program():
         role = (getattr(current_user, "role", "") or "").strip().lower()
         
         if role == "admin":
-            counts = db.session.query(Program.program_name, func.count(Student.enrollment_no))\
-                .join(Student, Student.program_id_fk == Program.program_id)\
-                .group_by(Program.program_name).all()
+            counts = db.session.execute(
+                select(Program.program_name, func.count(Student.enrollment_no))
+                .join(Student, Student.program_id_fk == Program.program_id)
+                .group_by(Program.program_name)
+            ).all()
             data = [{"label": name, "value": cnt, "color": f"hsl({hash(name) % 360}, 70%, 60%)"} for name, cnt in counts if cnt > 0]
         else:
             # Principal sees only their program
             program_id = getattr(current_user, "program_id_fk", None)
             if program_id:
                 program = db.session.get(Program, program_id)
-                count = db.session.query(func.count(Student.enrollment_no)).filter(Student.program_id_fk == program_id).scalar() or 0
+                count = db.session.scalar(select(func.count(Student.enrollment_no)).filter(Student.program_id_fk == program_id)) or 0
                 data = [{"label": (program.program_name if program else "Unknown"), "value": count, "color": "hsl(200, 70%, 60%)"}]
             else:
                 data = []
@@ -10990,11 +11030,11 @@ def chart_students_by_semester():
         program_id = getattr(current_user, "program_id_fk", None) if role == "principal" else request.args.get("program_id")
         
         # Get divisions for the program to determine semesters
-        q = db.session.query(Division.semester, func.count(Student.enrollment_no))\
+        q = select(Division.semester, func.count(Student.enrollment_no))\
             .join(Student, Student.division_id_fk == Division.division_id)
         if program_id:
             q = q.filter(Division.program_id_fk == int(program_id))
-        rows = q.group_by(Division.semester).all()
+        rows = db.session.execute(q.group_by(Division.semester)).all()
         semester_counts = {sem: cnt for sem, cnt in rows}
         
         data = []
@@ -11022,16 +11062,18 @@ def chart_staff_by_program():
         role = (getattr(current_user, "role", "") or "").strip().lower()
         
         if role == "admin":
-            counts = db.session.query(Program.program_name, func.count(Faculty.faculty_id))\
-                .join(Faculty, Faculty.program_id_fk == Program.program_id)\
-                .group_by(Program.program_name).all()
+            counts = db.session.execute(
+                select(Program.program_name, func.count(Faculty.faculty_id))
+                .join(Faculty, Faculty.program_id_fk == Program.program_id)
+                .group_by(Program.program_name)
+            ).all()
             data = [{"label": name, "value": cnt, "color": f"hsl({hash(name) % 360}, 70%, 50%)"} for name, cnt in counts]
         else:
             # Principal sees only their program
             program_id = getattr(current_user, "program_id_fk", None)
             if program_id:
                 program = db.session.get(Program, program_id)
-                count = db.session.query(func.count(Faculty.faculty_id)).filter(Faculty.program_id_fk == program_id).scalar() or 0
+                count = db.session.scalar(select(func.count(Faculty.faculty_id)).filter(Faculty.program_id_fk == program_id)) or 0
                 data = [{"label": (program.program_name if program else "Unknown"), "value": count, "color": "hsl(120, 70%, 50%)"}]
             else:
                 data = []
@@ -11058,17 +11100,19 @@ def chart_fees_collection():
         end_date = datetime(start_year + 1, 5, 31).date()
         
         if role == "admin":
-            programs = Program.query.all()
+            programs = db.session.execute(select(Program)).scalars().all()
             data = []
             for program in programs:
                 # Get total fees collected for this program
-                total_collected = db.session.query(db.func.sum(FeesRecord.amount_paid))\
-                    .join(Student, Student.enrollment_no == FeesRecord.student_id_fk)\
+                total_collected = db.session.scalar(
+                    select(func.sum(FeesRecord.amount_paid))
+                    .join(Student, Student.enrollment_no == FeesRecord.student_id_fk)
                     .filter(
                         Student.program_id_fk == program.program_id,
                         FeesRecord.date_paid >= start_date,
                         FeesRecord.date_paid <= end_date
-                    ).scalar() or 0
+                    )
+                ) or 0
                 
                 data.append({
                     "label": program.program_name,
@@ -11080,13 +11124,15 @@ def chart_fees_collection():
             program_id = getattr(current_user, "program_id_fk", None)
             if program_id:
                 program = db.session.get(Program, program_id)
-                total_collected = db.session.query(db.func.sum(FeesRecord.amount_paid))\
-                    .join(Student, Student.enrollment_no == FeesRecord.student_id_fk)\
+                total_collected = db.session.scalar(
+                    select(func.sum(FeesRecord.amount_paid))
+                    .join(Student, Student.enrollment_no == FeesRecord.student_id_fk)
                     .filter(
                         Student.program_id_fk == program_id,
                         FeesRecord.date_paid >= start_date,
                         FeesRecord.date_paid <= end_date
-                    ).scalar() or 0
+                    )
+                ) or 0
                 
                 data = [{
                     "label": program.program_name if program else "Unknown",
@@ -11120,7 +11166,7 @@ def chart_revenue_expenses():
         end_date = datetime(start_year + 1, 5, 31).date()
         
         # Calculate revenue (fees collected)
-        revenue_query = db.session.query(db.func.sum(FeesRecord.amount_paid)).filter(
+        revenue_query = select(func.sum(FeesRecord.amount_paid)).filter(
             FeesRecord.date_paid >= start_date,
             FeesRecord.date_paid <= end_date
         )
@@ -11129,15 +11175,15 @@ def chart_revenue_expenses():
                 Student.program_id_fk == int(program_id)
             )
         
-        total_revenue = revenue_query.scalar() or 0
+        total_revenue = db.session.scalar(revenue_query) or 0
         
         # For expenses, we'll use a simplified calculation based on faculty salaries
         # This is a placeholder - in a real system, you'd have an expenses table
-        faculty_query = Faculty.query
+        faculty_query = select(func.count()).select_from(Faculty)
         if program_id:
             faculty_query = faculty_query.filter_by(program_id_fk=int(program_id))
         
-        faculty_count = faculty_query.count()
+        faculty_count = db.session.scalar(faculty_query) or 0
         # Estimate monthly expenses (salary + overhead) per faculty member
         estimated_monthly_expense_per_faculty = 50000  # INR
         estimated_expenses = faculty_count * estimated_monthly_expense_per_faculty * 12  # Annual
@@ -11168,7 +11214,7 @@ def api_docs():
 @main_bp.route("/api/announcements/<int:announcement_id>/revisions", methods=["GET"])
 @login_required
 def api_announcement_revisions(announcement_id: int):
-    rows = AnnouncementRevision.query.filter_by(announcement_id_fk=announcement_id).order_by(AnnouncementRevision.version.desc()).all()
+    rows = db.session.execute(select(AnnouncementRevision).filter_by(announcement_id_fk=announcement_id).order_by(AnnouncementRevision.version.desc())).scalars().all()
     data = [{"version": r.version, "title": r.title, "message": r.message, "severity": r.severity, "is_active": r.is_active, "program_id_fk": r.program_id_fk, "start_at": (r.start_at.isoformat() if r.start_at else None), "end_at": (r.end_at.isoformat() if r.end_at else None), "created_at": r.created_at.isoformat()} for r in rows]
     return api_success({"items": data})
 
@@ -11176,8 +11222,10 @@ def api_announcement_revisions(announcement_id: int):
 @login_required
 @csrf_required
 def announcement_restore(announcement_id: int, version: int):
-    a = Announcement.query.get_or_404(announcement_id)
-    r = AnnouncementRevision.query.filter_by(announcement_id_fk=announcement_id, version=version).first()
+    a = db.session.get(Announcement, announcement_id)
+    if not a:
+        abort(404)
+    r = db.session.execute(select(AnnouncementRevision).filter_by(announcement_id_fk=announcement_id, version=version)).scalars().first()
     if not r:
         flash("Revision not found.", "warning")
         return redirect(url_for("main.announcement_edit", announcement_id=announcement_id))
@@ -11188,7 +11236,7 @@ def announcement_restore(announcement_id: int, version: int):
     a.program_id_fk = r.program_id_fk
     a.start_at = r.start_at
     a.end_at = r.end_at
-    ver = (db.session.query(func.max(AnnouncementRevision.version)).filter(AnnouncementRevision.announcement_id_fk == a.announcement_id).scalar() or 0) + 1
+    ver = (db.session.scalar(select(func.max(AnnouncementRevision.version)).filter(AnnouncementRevision.announcement_id_fk == a.announcement_id)) or 0) + 1
     db.session.add(AnnouncementRevision(announcement_id_fk=a.announcement_id, version=ver, title=a.title, message=a.message, severity=a.severity, is_active=a.is_active, program_id_fk=a.program_id_fk, start_at=a.start_at, end_at=a.end_at, actor_user_id_fk=getattr(current_user, "user_id", None)))
     db.session.commit()
     flash("Announcement restored.", "info")
@@ -11197,7 +11245,7 @@ def announcement_restore(announcement_id: int, version: int):
 @main_bp.route("/api/materials/<int:material_id>/revisions", methods=["GET"])
 @login_required
 def api_material_revisions(material_id: int):
-    rows = MaterialRevision.query.filter_by(material_id_fk=material_id).order_by(MaterialRevision.version.desc()).all()
+    rows = db.session.execute(select(MaterialRevision).filter_by(material_id_fk=material_id).order_by(MaterialRevision.version.desc())).scalars().all()
     data = [{"version": r.version, "title": r.title, "description": r.description, "kind": r.kind, "file_path": r.file_path, "external_url": r.external_url, "created_at": r.created_at.isoformat()} for r in rows]
     return api_success({"items": data})
 
@@ -11205,8 +11253,10 @@ def api_material_revisions(material_id: int):
 @login_required
 @csrf_required
 def material_restore(material_id: int, version: int):
-    m = SubjectMaterial.query.get_or_404(material_id)
-    r = MaterialRevision.query.filter_by(material_id_fk=material_id, version=version).first()
+    m = db.session.get(SubjectMaterial, material_id)
+    if not m:
+        abort(404)
+    r = db.session.execute(select(MaterialRevision).filter_by(material_id_fk=material_id, version=version)).scalars().first()
     if not r:
         flash("Revision not found.", "warning")
         return redirect(url_for("main.subject_material_edit", material_id=material_id))
@@ -11215,7 +11265,7 @@ def material_restore(material_id: int, version: int):
     m.kind = r.kind
     m.file_path = r.file_path
     m.external_url = r.external_url
-    ver = (db.session.query(func.max(MaterialRevision.version)).filter(MaterialRevision.material_id_fk == m.material_id).scalar() or 0) + 1
+    ver = (db.session.scalar(select(func.max(MaterialRevision.version)).filter(MaterialRevision.material_id_fk == m.material_id)) or 0) + 1
     db.session.add(MaterialRevision(material_id_fk=m.material_id, version=ver, title=m.title, description=m.description, kind=m.kind, file_path=m.file_path, external_url=m.external_url, actor_user_id_fk=getattr(current_user, "user_id", None)))
     db.session.commit()
     flash("Material restored.", "info")
@@ -11228,7 +11278,7 @@ def students_export_csv():
     q_enrollment_no = (request.args.get("enrollment_no") or "").strip()
     q_name = (request.args.get("name") or "").strip()
     selected_medium = (request.args.get("medium") or "").strip().lower()
-    query = Student.query
+    query = select(Student)
     if program_id_raw:
         try:
             pid = int(program_id_raw)
@@ -11250,8 +11300,8 @@ def students_export_csv():
         query = query.filter(Student.enrollment_no.ilike(f"%{q_enrollment_no}%"))
     if q_name:
         query = query.filter(or_(Student.student_name.ilike(f"%{q_name}%"), Student.surname.ilike(f"%{q_name}%")))
-    rows = query.order_by(Student.enrollment_no.asc()).limit(5000).all()
-    program_map = {p.program_id: p.program_name for p in Program.query.all()}
+    rows = db.session.execute(query.order_by(Student.enrollment_no.asc()).limit(5000)).scalars().all()
+    program_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
     import io
     import csv as _csv
     buf = io.StringIO()
@@ -11282,7 +11332,7 @@ def admin_import_logs():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     dry_run_raw = (request.args.get("dry_run") or "").strip().lower()
-    q = ImportLog.query.order_by(ImportLog.created_at.desc())
+    q = select(ImportLog).order_by(ImportLog.created_at.desc())
     if kind in ("students", "subjects", "fees"):
         q = q.filter(ImportLog.kind == kind)
     try:
@@ -11299,9 +11349,9 @@ def admin_import_logs():
         q = q.filter(ImportLog.semester == sem)
     if dry_run_raw in ("1", "true", "yes"):
         q = q.filter(ImportLog.dry_run == True)
-    programs = Program.query.order_by(Program.program_name.asc()).all()
-    users = {u.user_id: u for u in User.query.all()}
-    rows = q.limit(500).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    users = {u.user_id: u for u in db.session.execute(select(User)).scalars().all()}
+    rows = db.session.execute(q.limit(500)).scalars().all()
     return render_template("import_logs.html", rows=rows, programs=programs, users=users, filters={"kind": kind, "program_id": pid, "semester": sem, "dry_run": dry_run_raw})
 
 @main_bp.route("/admin/system-status")
@@ -11313,7 +11363,7 @@ def admin_system_status():
     email_ok = False
     storage_ok = False
     try:
-        db.session.execute("SELECT 1")
+        db.session.execute(text("SELECT 1"))
         db_ok = True
     except Exception:
         db_ok = False
@@ -11341,7 +11391,7 @@ def api_reports_enrollment_summary():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
-    q = Student.query
+    q = select(Student)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -11358,23 +11408,30 @@ def api_reports_enrollment_summary():
         mv = {"english": "English", "gujarati": "Gujarati"}.get(medium_raw)
         if mv:
             q = q.filter(Student.medium_tag == mv)
-    total = q.count()
+    total = db.session.scalar(select(func.count()).select_from(q.subquery()))
     # Group by semester
-    sem_counts = (
-        db.session.query(Student.current_semester, func.count("*"))
-        .filter(*(q._criterion,) if hasattr(q, "_criterion") and q._criterion is not None else [])
-    )
+    try:
+        subq = q.subquery()
+        sem_counts = (
+            db.session.execute(
+                select(subq.c.current_semester, func.count("*"))
+                .group_by(subq.c.current_semester)
+            ).all()
+        )
+    except Exception:
+        sem_counts = []
     try:
         # Fallback: manual aggregation when above fails
         rows = (
-            q.with_entities(Student.current_semester, func.count("*").label("c"))
-            .group_by(Student.current_semester)
-            .order_by(Student.current_semester)
-            .all()
+            db.session.execute(
+                q.with_only_columns(Student.current_semester, func.count("*").label("c"))
+                .group_by(Student.current_semester)
+                .order_by(Student.current_semester)
+            ).all()
         )
         by_semester = [{"semester": (r[0] or 0), "count": int(r[1] or 0)} for r in rows]
     except Exception:
-        students = q.all()
+        students = db.session.execute(q).scalars().all()
         m = {}
         for s in students:
             v = int(getattr(s, "current_semester", 0) or 0)
@@ -11391,7 +11448,7 @@ def api_reports_fees_summary():
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
     status_raw = (request.args.get("status") or "").strip().lower()
-    q = FeePayment.query
+    q = select(FeePayment)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -11411,21 +11468,22 @@ def api_reports_fees_summary():
     if status_raw in ("submitted", "verified", "rejected"):
         q = q.filter(FeePayment.status == status_raw)
     # Aggregations
-    total_count = q.count()
+    total_count = db.session.scalar(select(func.count()).select_from(q.subquery()))
     try:
-        total_amount = float(sum([float(p.amount or 0.0) for p in q.all()]))
+        total_amount = float(db.session.scalar(select(func.sum(FeePayment.amount)).select_from(q.subquery())) or 0.0)
     except Exception:
         total_amount = 0.0
     by_status = {}
     try:
         rows = (
-            q.with_entities(FeePayment.status, func.count("*").label("c"))
-            .group_by(FeePayment.status)
-            .all()
+            db.session.execute(
+                q.with_only_columns(FeePayment.status, func.count("*").label("c"))
+                .group_by(FeePayment.status)
+            ).all()
         )
         by_status = {str(r[0] or ""): int(r[1] or 0) for r in rows}
     except Exception:
-        for p in q.all():
+        for p in db.session.execute(q).scalars().all():
             by_status[p.status or "submitted"] = by_status.get(p.status or "submitted", 0) + 1
     return api_success({"total_count": total_count, "total_amount": round(total_amount, 2), "by_status": by_status}, {"program_id": pid, "semester": sem, "medium": medium_raw, "status": status_raw})
 
@@ -11448,20 +11506,20 @@ def api_reports_fees_program_status():
         sem = None
     med = medium_raw if medium_raw else None
     prog = db.session.get(Program, pid) if pid else None
-    sq = Student.query
+    sq = select(Student)
     if pid:
         sq = sq.filter(Student.program_id_fk == pid)
     if sem:
         sq = sq.filter(Student.current_semester == sem)
-    students = sq.all()
+    students = db.session.execute(sq).scalars().all()
     st_index = {s.enrollment_no: s for s in students}
     # Preload fee structure components and compute common + per-medium sums
-    fsq = FeeStructure.query
+    fsq = select(FeeStructure)
     if pid:
         fsq = fsq.filter(FeeStructure.program_id_fk == pid)
     if sem is not None:
         fsq = fsq.filter((FeeStructure.semester == sem) | (FeeStructure.semester.is_(None)))
-    comps_all = fsq.all()
+    comps_all = db.session.execute(fsq).scalars().all()
     common_sum = float(sum([(c.amount or 0.0) for c in comps_all if not getattr(c, "medium_tag", None)]))
     medium_sum_map = {}
     for c in comps_all:
@@ -11478,7 +11536,7 @@ def api_reports_fees_program_status():
     buckets = {"full": [], "partial": [], "none": []}
     bucket_sums = {"full": {"count": 0, "paid_sum": 0.0, "due_sum": 0.0}, "partial": {"count": 0, "paid_sum": 0.0, "due_sum": 0.0}, "none": {"count": 0, "paid_sum": 0.0, "due_sum": 0.0}}
     for enr, st in st_index.items():
-        pq = FeePayment.query.filter(FeePayment.enrollment_no == enr)
+        pq = select(FeePayment).filter(FeePayment.enrollment_no == enr)
         if pid:
             pq = pq.filter(FeePayment.program_id_fk == pid)
         if sem:
@@ -11489,15 +11547,24 @@ def api_reports_fees_program_status():
             pq = pq.filter(FeePayment.status.in_(["verified", "submitted"]))
         else:
             pq = pq.filter(FeePayment.status == "verified")
-        payments = pq.all()
+        payments = db.session.execute(pq).scalars().all()
         paid_sum = float(sum([(p.amount or 0.0) for p in payments]))
         # Compute per-student due from common + student's medium components; fallback to FeesRecord when structure empty
         due_amt = common_sum + medium_sum_map.get((getattr(st, "medium_tag", "") or "").strip(), 0.0)
         if (due_amt <= 0.0):
-            fr = FeesRecord.query.filter(FeesRecord.student_id_fk == enr)
+            fr = db.session.execute(select(FeesRecord).filter(FeesRecord.student_id_fk == enr)).scalars().first()
+            if fr:
+                if sem and fr.semester != sem:
+                     # Since we can't filter by semester on first(), we might need to filter before first()
+                     # Let's rebuild the query
+                     pass
+            
+            # Correct logic:
+            fr_query = select(FeesRecord).filter(FeesRecord.student_id_fk == enr)
             if sem:
-                fr = fr.filter(FeesRecord.semester == sem)
-            fr = fr.first()
+                fr_query = fr_query.filter(FeesRecord.semester == sem)
+            fr = db.session.execute(fr_query).scalars().first()
+
             if fr and (float(fr.amount_due or 0.0) > 0.0):
                 due_amt = float(fr.amount_due or 0.0)
         bucket = "none"
@@ -11557,18 +11624,18 @@ def fees_program_status_export_csv():
         sem = None
     med = medium_raw if medium_raw else None
     prog = db.session.get(Program, pid) if pid else None
-    sq = Student.query
+    sq = select(Student)
     if pid:
         sq = sq.filter(Student.program_id_fk == pid)
     if sem:
         sq = sq.filter(Student.current_semester == sem)
-    students = sq.all()
-    fsq = FeeStructure.query
+    students = db.session.execute(sq).scalars().all()
+    fsq = select(FeeStructure)
     if pid:
         fsq = fsq.filter(FeeStructure.program_id_fk == pid)
     if sem is not None:
         fsq = fsq.filter((FeeStructure.semester == sem) | (FeeStructure.semester.is_(None)))
-    comps_all = fsq.all()
+    comps_all = db.session.execute(fsq).scalars().all()
     common_sum = float(sum([(c.amount or 0.0) for c in comps_all if not getattr(c, "medium_tag", None)]))
     medium_sum_map = {}
     for c in comps_all:
@@ -11591,7 +11658,7 @@ def fees_program_status_export_csv():
         enr = getattr(st, "enrollment_no", None)
         if not enr:
             continue
-        pq = FeePayment.query.filter(FeePayment.enrollment_no == enr)
+        pq = select(FeePayment).filter(FeePayment.enrollment_no == enr)
         if pid:
             pq = pq.filter(FeePayment.program_id_fk == pid)
         if sem:
@@ -11602,15 +11669,15 @@ def fees_program_status_export_csv():
             pq = pq.filter(FeePayment.status.in_(["verified", "submitted"]))
         else:
             pq = pq.filter(FeePayment.status == "verified")
-        paid_sum = float(sum([(p.amount or 0.0) for p in pq.all()]))
+        paid_sum = float(sum([(p.amount or 0.0) for p in db.session.execute(pq).scalars().all()]))
         # Per-student due computed from common + student's medium components; fallback to FeesRecord when structure empty
         st_med = (getattr(st, "medium_tag", "") or "").strip()
         due_amt = common_sum + medium_sum_map.get(st_med, 0.0)
         if due_amt <= 0.0:
-            fr = FeesRecord.query.filter(FeesRecord.student_id_fk == enr)
+            fr_query = select(FeesRecord).filter(FeesRecord.student_id_fk == enr)
             if sem:
-                fr = fr.filter(FeesRecord.semester == sem)
-            fr = fr.first()
+                fr_query = fr_query.filter(FeesRecord.semester == sem)
+            fr = db.session.execute(fr_query).scalars().first()
             if fr and (float(fr.amount_due or 0.0) > 0.0):
                 due_amt = float(fr.amount_due or 0.0)
         bucket = "none"
@@ -11685,7 +11752,7 @@ def api_reports_subject_lectures():
         dt = datetime.strptime(date_to_raw, "%Y-%m-%d").date() if date_to_raw else None
     except Exception:
         dt = None
-    aq = Attendance.query
+    aq = select(Attendance)
     if sid:
         aq = aq.filter(Attendance.subject_id_fk == sid)
     if did:
@@ -11695,16 +11762,16 @@ def api_reports_subject_lectures():
     if dt:
         aq = aq.filter(Attendance.date_marked <= dt)
     if pid or sem:
-        sq = Student.query
+        sq = select(Student)
         if pid:
             sq = sq.filter(Student.program_id_fk == pid)
         if sem:
             sq = sq.filter(Student.current_semester == sem)
-        srows = sq.all()
+        srows = db.session.execute(sq).scalars().all()
         sids = [getattr(s, "enrollment_no", None) for s in srows]
         if sids:
             aq = aq.filter(Attendance.student_id_fk.in_(sids))
-    recs = aq.all()
+    recs = db.session.execute(aq).scalars().all()
     sessions = {}
     for a in recs:
         k = (getattr(a, "subject_id_fk", None), getattr(a, "division_id_fk", None), getattr(a, "date_marked", None), int(getattr(a, "period_no", 0) or 0))
@@ -11713,7 +11780,7 @@ def api_reports_subject_lectures():
     items = list(sessions.values())
     items.sort(key=lambda x: ((x.get("date") or datetime.utcnow().date()), int(x.get("period") or 0)))
     subj = db.session.get(Subject, sid) if sid else None
-    div_map = {d.division_id: d.division_code for d in Division.query.all()}
+    div_map = {d.division_id: d.division_code for d in db.session.execute(select(Division)).scalars().all()}
     for it in items:
         it["division_code"] = div_map.get(it.get("division_id"))
         it["subject_name"] = getattr(subj, "subject_name", "") if subj else ""
@@ -11771,7 +11838,7 @@ def subject_lectures_export_csv():
         dt = datetime.strptime(date_to_raw, "%Y-%m-%d").date() if date_to_raw else None
     except Exception:
         dt = None
-    aq = Attendance.query
+    aq = select(Attendance)
     if sid:
         aq = aq.filter(Attendance.subject_id_fk == sid)
     if did:
@@ -11781,16 +11848,16 @@ def subject_lectures_export_csv():
     if dt:
         aq = aq.filter(Attendance.date_marked <= dt)
     if pid or sem:
-        sq = Student.query
+        sq = select(Student)
         if pid:
             sq = sq.filter(Student.program_id_fk == pid)
         if sem:
             sq = sq.filter(Student.current_semester == sem)
-        srows = sq.all()
+        srows = db.session.execute(sq).scalars().all()
         sids = [getattr(s, "enrollment_no", None) for s in srows]
         if sids:
             aq = aq.filter(Attendance.student_id_fk.in_(sids))
-    recs = aq.all()
+    recs = db.session.execute(aq).scalars().all()
     sessions = {}
     for a in recs:
         k = (getattr(a, "subject_id_fk", None), getattr(a, "division_id_fk", None), getattr(a, "date_marked", None), int(getattr(a, "period_no", 0) or 0))
@@ -11806,7 +11873,7 @@ def subject_lectures_export_csv():
     summary_line = f"Program: {(getattr(prog, 'program_name', '') or 'All')} • Semester: {(sem if sem is not None else 'All')} • Subject: {(getattr(subj, 'subject_name', '') or 'All')} • Date: {(date_from_raw or '')} to {(date_to_raw or '')} • Total Lectures: {len(items)}"
     w.writerow([summary_line])
     w.writerow(["Date", "Period", "Timing", "Division"])
-    div_map = {d.division_id: d.division_code for d in Division.query.all()}
+    div_map = {d.division_id: d.division_code for d in db.session.execute(select(Division)).scalars().all()}
     for it in items:
         p = int(it.get("period") or 0)
         timing_map = {1: "09:00-10:00", 2: "10:00-11:00", 3: "11:00-12:00", 4: "12:00-13:00", 5: "14:00-15:00", 6: "15:00-16:00"}
@@ -11836,7 +11903,7 @@ def api_reports_attendance_summary():
         pid = None
     if (not pid) and program_name_raw:
         try:
-            p0 = Program.query.filter(Program.program_name.ilike(program_name_raw)).first()
+            p0 = db.session.execute(select(Program).filter(Program.program_name.ilike(program_name_raw))).scalars().first()
             pid = p0.program_id if p0 else None
         except Exception:
             pid = None
@@ -11850,17 +11917,17 @@ def api_reports_attendance_summary():
         sid = None
     if (not sid) and subject_name_raw:
         try:
-            qn = Subject.query
+            qn = select(Subject)
             if pid:
                 qn = qn.filter(Subject.program_id_fk == pid)
             if sem:
                 qn = qn.filter(Subject.semester == sem)
-            s0 = qn.filter(Subject.subject_name.ilike(subject_name_raw)).first()
+            s0 = db.session.execute(qn.filter(Subject.subject_name.ilike(subject_name_raw))).scalars().first()
             sid = s0.subject_id if s0 else None
         except Exception:
             sid = None
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    subjects_q = Subject.query
+    subjects_q = select(Subject)
     if pid:
         subjects_q = subjects_q.filter(Subject.program_id_fk == pid)
     if sem:
@@ -11869,17 +11936,17 @@ def api_reports_attendance_summary():
         subjects_q = subjects_q.filter(Subject.subject_id == sid)
     if faculty_only_raw in ("1", "true", "yes") or role == "faculty":
         try:
-            assigned_ids = [a.subject_id_fk for a in CourseAssignment.query.filter_by(faculty_id_fk=current_user.user_id, is_active=True).all()]
+            assigned_ids = [a.subject_id_fk for a in db.session.execute(select(CourseAssignment).filter_by(faculty_id_fk=current_user.user_id, is_active=True)).scalars().all()]
         except Exception:
             assigned_ids = []
         if assigned_ids:
             subjects_q = subjects_q.filter(Subject.subject_id.in_(assigned_ids))
         else:
             return api_success({"items": [], "total": 0}, {"program_id": pid, "semester": sem, "faculty_only": True})
-    subjects = subjects_q.order_by(Subject.subject_name.asc()).all()
+    subjects = db.session.execute(subjects_q.order_by(Subject.subject_name.asc())).scalars().all()
     items = []
     for s in subjects:
-        att = Attendance.query.filter_by(subject_id_fk=s.subject_id).all()
+        att = db.session.execute(select(Attendance).filter_by(subject_id_fk=s.subject_id)).scalars().all()
         total = len(att)
         present = 0
         try:
@@ -11902,12 +11969,12 @@ def api_reports_materials_summary():
         sid = int(subject_id_raw) if subject_id_raw else None
     except ValueError:
         sid = None
-    q = SubjectMaterial.query
+    q = select(SubjectMaterial)
     if role == "faculty":
         q = q.filter(SubjectMaterial.faculty_id_fk == current_user.user_id)
     if sid:
         q = q.filter(SubjectMaterial.subject_id_fk == sid)
-    mats = q.order_by(SubjectMaterial.created_at.desc()).all()
+    mats = db.session.execute(q.order_by(SubjectMaterial.created_at.desc())).scalars().all()
     total = len(mats)
     published = len([m for m in mats if bool(getattr(m, "is_published", False))])
     flagged = len([m for m in mats if bool(getattr(m, "is_flagged", False))])
@@ -11937,26 +12004,27 @@ def api_reports_division_capacity():
         sem = int(semester_raw) if semester_raw else None
     except ValueError:
         sem = None
-    dq = Division.query
+    dq = select(Division)
     if pid:
         dq = dq.filter(Division.program_id_fk == pid)
     if sem:
         dq = dq.filter(Division.semester == sem)
-    divs = dq.order_by(Division.semester.asc(), Division.division_code.asc()).all()
+    divs = db.session.execute(dq.order_by(Division.semester.asc(), Division.division_code.asc())).scalars().all()
     items = []
     total_capacity = 0
     total_enrolled = 0
     for d in divs:
-        sc = Student.query.filter(Student.division_id_fk == d.division_id).count()
+        sc = db.session.scalar(select(func.count()).filter(Student.division_id_fk == d.division_id))
         total_capacity += int(getattr(d, "capacity", 0) or 0)
         total_enrolled += sc
         medium_counts = {}
         try:
             rows = (
-                Student.query.with_entities(Student.medium_tag, func.count("*").label("c"))
-                .filter(Student.division_id_fk == d.division_id)
-                .group_by(Student.medium_tag)
-                .all()
+                db.session.execute(
+                    select(Student.medium_tag, func.count("*").label("c"))
+                    .filter(Student.division_id_fk == d.division_id)
+                    .group_by(Student.medium_tag)
+                ).all()
             )
             for r in rows:
                 k = r[0] or ""
@@ -11990,17 +12058,17 @@ def api_reports_absentees():
         days = 7
     role = (getattr(current_user, "role", "") or "").strip().lower()
     if role == "faculty" and sid is None:
-        assigned = CourseAssignment.query.filter_by(faculty_id_fk=current_user.user_id, is_active=True).first()
+        assigned = db.session.execute(select(CourseAssignment).filter_by(faculty_id_fk=current_user.user_id, is_active=True)).scalars().first()
         sid = assigned.subject_id_fk if assigned else None
     if not sid:
         return api_success({"items": [], "total": 0}, {"subject_id": None})
     cutoff_date = (datetime.utcnow() - timedelta(days=days)).date()
-    q = Attendance.query.filter(Attendance.subject_id_fk == sid)
+    q = select(Attendance).filter(Attendance.subject_id_fk == sid)
     try:
         q = q.filter(Attendance.date_marked >= cutoff_date)
     except Exception:
         pass
-    records = q.all()
+    records = db.session.execute(q).scalars().all()
     counts = {}
     for a in records:
         status = (getattr(a, "status", "") or "").upper()
@@ -12035,12 +12103,12 @@ def absentees_export_csv():
     if not sid:
         return Response(b"", headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=absentees.csv"})
     cutoff_date = (datetime.utcnow() - timedelta(days=days)).date()
-    q = Attendance.query.filter(Attendance.subject_id_fk == sid)
+    q = select(Attendance).filter(Attendance.subject_id_fk == sid)
     try:
         q = q.filter(Attendance.date_marked >= cutoff_date)
     except Exception:
         pass
-    records = q.all()
+    records = db.session.execute(q).scalars().all()
     counts = {}
     for a in records:
         status = (getattr(a, "status", "") or "").upper()
@@ -12082,20 +12150,20 @@ def api_reports_attendance_students():
         thr = max(0, min(100, int(threshold_raw)))
     except ValueError:
         thr = 50
-    sq = Student.query
+    sq = select(Student)
     if pid:
         sq = sq.filter(Student.program_id_fk == pid)
     if sem:
         sq = sq.filter(Student.current_semester == sem)
-    students = sq.all()
+    students = db.session.execute(sq).scalars().all()
     st_index = {getattr(s, 'enrollment_no', None): s for s in students}
     st_ids = list(st_index.keys())
-    aq = Attendance.query
+    aq = select(Attendance)
     if st_ids:
         aq = aq.filter(Attendance.student_id_fk.in_(st_ids))
     if subj:
         aq = aq.filter(Attendance.subject_id_fk == subj)
-    recs = aq.all()
+    recs = db.session.execute(aq).scalars().all()
     counts = {}
     for a in recs:
         sid = getattr(a, "student_id_fk", None)
@@ -12107,7 +12175,7 @@ def api_reports_attendance_students():
     items = []
     # map program_id to program_name
     try:
-        program_map = {p.program_id: p.program_name for p in Program.query.all()}
+        program_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
     except Exception:
         program_map = {}
     for sid, c in counts.items():
@@ -12138,7 +12206,7 @@ def api_reports_attendance_students():
 @role_required("admin", "principal")
 @cache.cached(timeout=60, key_prefix=lambda: f"nep_report_{getattr(current_user, 'user_id', 'anon')}_{request.full_path}", unless=lambda: session.get("_flashes"))
 def nep_exit_report():
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     program_id_raw = (request.args.get("program_id") or "").strip()
     selected_program = None
     report_data = []
@@ -12149,11 +12217,11 @@ def nep_exit_report():
             selected_program = db.session.get(Program, pid)
             if selected_program:
                 # 1. Fetch all students for this program
-                students = Student.query.filter_by(program_id_fk=pid).order_by(Student.enrollment_no.asc()).all()
+                students = db.session.execute(select(Student).filter_by(program_id_fk=pid).order_by(Student.enrollment_no.asc())).scalars().all()
                 
                 # 2. Bulk fetch Credit Structure for all subjects in this program
                 # Map subject_id -> total_credits
-                subjects = Subject.query.filter_by(program_id_fk=pid).all()
+                subjects = db.session.execute(select(Subject).filter_by(program_id_fk=pid)).scalars().all()
                 subject_credits = {}
                 for s in subjects:
                     # If explicit structure exists
@@ -12168,7 +12236,7 @@ def nep_exit_report():
                 if student_ids:
                     # We want all grades for these students where they 'passed'
                     # Assuming GPA >= 4.0 is pass for now
-                    grades = Grade.query.filter(Grade.student_id_fk.in_(student_ids), Grade.gpa_for_subject >= 4.0).all()
+                    grades = db.session.execute(select(Grade).filter(Grade.student_id_fk.in_(student_ids), Grade.gpa_for_subject >= 4.0)).scalars().all()
                     
                     # 4. Calculate total credits per student
                     student_credit_map = {sid: 0 for sid in student_ids}
@@ -12226,20 +12294,20 @@ def attendance_students_export_csv():
         thr = max(0, min(100, int(threshold_raw)))
     except ValueError:
         thr = 50
-    sq = Student.query
+    sq = select(Student)
     if pid:
         sq = sq.filter(Student.program_id_fk == pid)
     if sem:
         sq = sq.filter(Student.current_semester == sem)
-    students = sq.all()
+    students = db.session.execute(sq).scalars().all()
     st_index = {getattr(s, 'enrollment_no', None): s for s in students}
     st_ids = list(st_index.keys())
-    aq = Attendance.query
+    aq = select(Attendance)
     if st_ids:
         aq = aq.filter(Attendance.student_id_fk.in_(st_ids))
     if subj:
         aq = aq.filter(Attendance.subject_id_fk == subj)
-    recs = aq.all()
+    recs = db.session.execute(aq).scalars().all()
     counts = {}
     for a in recs:
         sid = getattr(a, "student_id_fk", None)
@@ -12252,7 +12320,7 @@ def attendance_students_export_csv():
     buf = io.StringIO()
     w = _csv.writer(buf)
     try:
-        program_map = {p.program_id: p.program_name for p in Program.query.all()}
+        program_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
     except Exception:
         program_map = {}
     try:
@@ -12295,7 +12363,7 @@ def fees_export_csv():
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
     status_raw = (request.args.get("status") or "").strip().lower()
-    q = FeePayment.query
+    q = select(FeePayment)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -12314,8 +12382,8 @@ def fees_export_csv():
             q = q.filter(FeePayment.medium_tag == mv)
     if status_raw in ("submitted", "verified", "rejected"):
         q = q.filter(FeePayment.status == status_raw)
-    rows = q.order_by(FeePayment.created_at.desc()).limit(5000).all()
-    prog_map = {p.program_id: p.program_name for p in Program.query.all()}
+    rows = db.session.execute(q.order_by(FeePayment.created_at.desc()).limit(5000)).scalars().all()
+    prog_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
     import io, csv as _csv
     buf = io.StringIO()
     w = _csv.writer(buf)
@@ -12340,7 +12408,7 @@ def fees_export_csv():
 @cache.cached(timeout=120, key_prefix=lambda: f"reports_hub_{getattr(current_user, 'role', 'unknown')}", unless=lambda: session.get("_flashes"))
 def reports_hub():
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    programs = Program.query.order_by(Program.program_name.asc()).all()
+    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     return render_template("reports.html", role=role, programs=programs)
 
 # Documents section: manuals and brochure
@@ -12397,12 +12465,12 @@ def api_subjects():
         sem = int(semester_raw) if semester_raw else None
     except ValueError:
         sem = None
-    q = Subject.query
+    q = select(Subject)
     if pid:
         q = q.filter(Subject.program_id_fk == pid)
     if sem:
         q = q.filter(Subject.semester == sem)
-    subs = q.order_by(Subject.subject_name.asc()).all()
+    subs = db.session.execute(q.order_by(Subject.subject_name.asc())).scalars().all()
     items = [{"subject_id": s.subject_id, "subject_name": s.subject_name, "semester": s.semester, "program_id": s.program_id_fk} for s in subs]
     return api_success({"items": items})
 
@@ -12419,12 +12487,12 @@ def api_program_mediums():
         sem = int(semester_raw) if semester_raw else None
     except ValueError:
         sem = None
-    q = FeeStructure.query
+    q = select(FeeStructure)
     if pid:
         q = q.filter(FeeStructure.program_id_fk == pid)
     if sem is not None:
         q = q.filter((FeeStructure.semester == sem) | (FeeStructure.semester.is_(None)))
-    mediums = sorted({(getattr(c, "medium_tag", "") or "").strip() for c in q.all() if getattr(c, "medium_tag", None)})
+    mediums = sorted({(getattr(c, "medium_tag", "") or "").strip() for c in db.session.execute(q).scalars().all() if getattr(c, "medium_tag", None)})
     return api_success({"items": mediums})
 @main_bp.route("/api/divisions", methods=["GET"])
 @login_required
@@ -12439,12 +12507,12 @@ def api_divisions():
         sem = int(semester_raw) if semester_raw else None
     except ValueError:
         sem = None
-    q = Division.query
+    q = select(Division)
     if pid:
         q = q.filter(Division.program_id_fk == pid)
     if sem:
         q = q.filter(Division.semester == sem)
-    rows = q.order_by(Division.division_code.asc()).all()
+    rows = db.session.execute(q.order_by(Division.division_code.asc())).scalars().all()
     items = [{"division_id": d.division_id, "division_code": d.division_code, "semester": d.semester} for d in rows]
     return api_success({"items": items})
 @main_bp.route("/admin/seed-attendance-mock", methods=["GET", "POST"])
@@ -12454,16 +12522,16 @@ def admin_seed_attendance_mock():
     from ..models import Program, Subject, Student, Attendance
     from datetime import datetime, timedelta
     created = {"students": 0, "attendance": 0}
-    p = Program.query.filter(Program.program_name.ilike("BCA")).first()
+    p = db.session.execute(select(Program).filter(Program.program_name.ilike("BCA"))).scalars().first()
     if not p:
         p = Program(program_name="BCA", program_duration_years=3)
         db.session.add(p)
         db.session.commit()
-    s = Subject.query.filter(Subject.program_id_fk == p.program_id, Subject.subject_name.ilike("Web Development using PHP%")) .first()
+    s = db.session.execute(select(Subject).filter(Subject.program_id_fk == p.program_id, Subject.subject_name.ilike("Web Development using PHP%"))).scalars().first()
     if not s:
-        s = Subject.query.filter(Subject.program_id_fk == p.program_id).order_by(Subject.semester.asc()).first()
+        s = db.session.execute(select(Subject).filter(Subject.program_id_fk == p.program_id).order_by(Subject.semester.asc())).scalars().first()
     semester = getattr(s, "semester", 3) if s else 3
-    students = Student.query.filter(Student.program_id_fk == p.program_id, Student.current_semester == semester).limit(10).all()
+    students = db.session.execute(select(Student).filter(Student.program_id_fk == p.program_id, Student.current_semester == semester).limit(10)).scalars().all()
     if len(students) < 10:
         need = 10 - len(students)
         for i in range(need):
@@ -12471,7 +12539,7 @@ def admin_seed_attendance_mock():
             db.session.add(st)
             created["students"] += 1
         db.session.commit()
-        students = Student.query.filter(Student.program_id_fk == p.program_id, Student.current_semester == semester).limit(10).all()
+        students = db.session.execute(select(Student).filter(Student.program_id_fk == p.program_id, Student.current_semester == semester).limit(10)).scalars().all()
     subj_id = getattr(s, "subject_id", None)
     base_time = datetime.utcnow()
     for idx, st in enumerate(students):
@@ -12497,7 +12565,7 @@ def module_analytics():
     
     # 1. Daily Logs (Today)
     today = date.today()
-    q_daily = db.session.query(
+    q_daily = select(
         Attendance, 
         Faculty.faculty_name, 
         Faculty.designation, 
@@ -12521,7 +12589,7 @@ def module_analytics():
     if role == "principal" and user_pid:
         q_daily = q_daily.filter(Program.program_id == user_pid)
         
-    daily_rows = q_daily.all()
+    daily_rows = db.session.execute(q_daily).all()
     
     daily_logs = []
     # Since we are fetching individual attendance records (one per student),
@@ -12571,7 +12639,7 @@ def module_analytics():
     # We need a more aggregated query or post-process.
     
     # Improved Weekly Query: Group by Lecture Unique Keys
-    q_week_agg = db.session.query(
+    q_week_agg = select(
         Faculty.faculty_name,
         Attendance.date_marked,
         Attendance.period_no,
@@ -12599,7 +12667,7 @@ def module_analytics():
         Attendance.subject_id_fk
     )
     
-    week_lectures = q_week_agg.all()
+    week_lectures = db.session.execute(q_week_agg).all()
 
     faculty_map = defaultdict(lambda: {"total": 0, "days": defaultdict(int)})
     
@@ -12620,7 +12688,7 @@ def module_analytics():
     # 3. Performance Alerts
     performance_alerts = {"high": [], "low": []}
     
-    fac_ids = db.session.query(Faculty.faculty_id, Faculty.faculty_name).all()
+    fac_ids = db.session.execute(select(Faculty.faculty_id, Faculty.faculty_name)).all()
     fac_lookup = {f.faculty_name: f.faculty_id for f in fac_ids}
 
     for item in weekly_grid:
@@ -12657,7 +12725,9 @@ def analytics_notify():
     fid = request.form.get("faculty_id")
     notif_type = request.form.get("type") # 'warning' or 'appreciation'
     
-    faculty = Faculty.query.get_or_404(fid)
+    faculty = db.session.get(Faculty, fid)
+    if not faculty:
+        abort(404)
     
     if not faculty.email:
         flash(f"Cannot send notification: {faculty.faculty_name} has no email address.", "danger")

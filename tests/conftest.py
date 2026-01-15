@@ -40,3 +40,11 @@ def app(temp_db_path):
 @pytest.fixture()
 def client(app):
     return app.test_client()
+
+
+@pytest.fixture(autouse=True)
+def patch_cache_app(app):
+    from cms_app import cache
+    if not hasattr(cache, "app"):
+        cache.app = app
+    yield

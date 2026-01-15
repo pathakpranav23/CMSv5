@@ -26,6 +26,7 @@ from cms_app.models import (
     Faculty,
     User,
 )
+from sqlalchemy import select, delete, update
 
 
 # Remove only the language variant programs, keep generic BCOM intact
@@ -38,85 +39,142 @@ def remove_program_and_related(prog: Program):
     print(f"\n=== Removing program {pname} (id={pid}) and related data ===")
 
     # Collect IDs
-    subject_ids = [sid for (sid,) in db.session.query(Subject.subject_id).filter(Subject.program_id_fk == pid).all()]
-    division_ids = [did for (did,) in db.session.query(Division.division_id).filter(Division.program_id_fk == pid).all()]
-    student_ids = [enr for (enr,) in db.session.query(Student.enrollment_no).filter(Student.program_id_fk == pid).all()]
-    material_ids = [mid for (mid,) in db.session.query(SubjectMaterial.material_id).filter(SubjectMaterial.subject_id_fk.in_(subject_ids)).all()] if subject_ids else []
+    subject_ids = db.session.execute(select(Subject.subject_id).where(Subject.program_id_fk == pid)).scalars().all()
+    division_ids = db.session.execute(select(Division.division_id).where(Division.program_id_fk == pid)).scalars().all()
+    student_ids = db.session.execute(select(Student.enrollment_no).where(Student.program_id_fk == pid)).scalars().all()
+    
+    material_ids = []
+    if subject_ids:
+        material_ids = db.session.execute(
+            select(SubjectMaterial.material_id).where(SubjectMaterial.subject_id_fk.in_(subject_ids))
+        ).scalars().all()
 
     print(f"Subjects: {len(subject_ids)}, Divisions: {len(division_ids)}, Students: {len(student_ids)}, Materials: {len(material_ids)}")
 
     # Dependent logs and materials
     if material_ids:
-        deleted_logs = SubjectMaterialLog.query.filter(SubjectMaterialLog.material_id_fk.in_(material_ids)).delete(synchronize_session=False)
+        deleted_logs = db.session.execute(
+            delete(SubjectMaterialLog).where(SubjectMaterialLog.material_id_fk.in_(material_ids))
+        ).rowcount or 0
         print(f"Deleted SubjectMaterialLog: {deleted_logs}")
-        deleted_mats = SubjectMaterial.query.filter(SubjectMaterial.material_id.in_(material_ids)).delete(synchronize_session=False)
+        deleted_mats = db.session.execute(
+            delete(SubjectMaterial).where(SubjectMaterial.material_id.in_(material_ids))
+        ).rowcount or 0
         print(f"Deleted SubjectMaterial: {deleted_mats}")
 
     # Credit structures
     if subject_ids:
-        deleted_cs = CreditStructure.query.filter(CreditStructure.subject_id_fk.in_(subject_ids)).delete(synchronize_session=False)
+        deleted_cs = db.session.execute(
+            delete(CreditStructure).where(CreditStructure.subject_id_fk.in_(subject_ids))
+        ).rowcount or 0
         print(f"Deleted CreditStructure: {deleted_cs}")
 
     # Assignments
-    deleted_ca_sub = CourseAssignment.query.filter(CourseAssignment.subject_id_fk.in_(subject_ids)).delete(synchronize_session=False) if subject_ids else 0
-    deleted_ca_div = CourseAssignment.query.filter(CourseAssignment.division_id_fk.in_(division_ids)).delete(synchronize_session=False) if division_ids else 0
+    deleted_ca_sub = db.session.execute(
+        delete(CourseAssignment).where(CourseAssignment.subject_id_fk.in_(subject_ids))
+    ).rowcount if subject_ids else 0
+    deleted_ca_div = db.session.execute(
+        delete(CourseAssignment).where(CourseAssignment.division_id_fk.in_(division_ids))
+    ).rowcount if division_ids else 0
     print(f"Deleted CourseAssignment (by subject): {deleted_ca_sub}, (by division): {deleted_ca_div}")
 
     # Enrollments, Attendance, Grades, Credit logs
-    deleted_enr_sub = StudentSubjectEnrollment.query.filter(StudentSubjectEnrollment.subject_id_fk.in_(subject_ids)).delete(synchronize_session=False) if subject_ids else 0
-    deleted_enr_div = StudentSubjectEnrollment.query.filter(StudentSubjectEnrollment.division_id_fk.in_(division_ids)).delete(synchronize_session=False) if division_ids else 0
-    deleted_enr_stu = StudentSubjectEnrollment.query.filter(StudentSubjectEnrollment.student_id_fk.in_(student_ids)).delete(synchronize_session=False) if student_ids else 0
+    deleted_enr_sub = db.session.execute(
+        delete(StudentSubjectEnrollment).where(StudentSubjectEnrollment.subject_id_fk.in_(subject_ids))
+    ).rowcount if subject_ids else 0
+    deleted_enr_div = db.session.execute(
+        delete(StudentSubjectEnrollment).where(StudentSubjectEnrollment.division_id_fk.in_(division_ids))
+    ).rowcount if division_ids else 0
+    deleted_enr_stu = db.session.execute(
+        delete(StudentSubjectEnrollment).where(StudentSubjectEnrollment.student_id_fk.in_(student_ids))
+    ).rowcount if student_ids else 0
     print(f"Deleted StudentSubjectEnrollment (sub): {deleted_enr_sub}, (div): {deleted_enr_div}, (stu): {deleted_enr_stu}")
 
-    deleted_att_sub = Attendance.query.filter(Attendance.subject_id_fk.in_(subject_ids)).delete(synchronize_session=False) if subject_ids else 0
-    deleted_att_div = Attendance.query.filter(Attendance.division_id_fk.in_(division_ids)).delete(synchronize_session=False) if division_ids else 0
-    deleted_att_stu = Attendance.query.filter(Attendance.student_id_fk.in_(student_ids)).delete(synchronize_session=False) if student_ids else 0
+    deleted_att_sub = db.session.execute(
+        delete(Attendance).where(Attendance.subject_id_fk.in_(subject_ids))
+    ).rowcount if subject_ids else 0
+    deleted_att_div = db.session.execute(
+        delete(Attendance).where(Attendance.division_id_fk.in_(division_ids))
+    ).rowcount if division_ids else 0
+    deleted_att_stu = db.session.execute(
+        delete(Attendance).where(Attendance.student_id_fk.in_(student_ids))
+    ).rowcount if student_ids else 0
     print(f"Deleted Attendance (sub): {deleted_att_sub}, (div): {deleted_att_div}, (stu): {deleted_att_stu}")
 
-    deleted_gra_sub = Grade.query.filter(Grade.subject_id_fk.in_(subject_ids)).delete(synchronize_session=False) if subject_ids else 0
-    deleted_gra_div = Grade.query.filter(Grade.division_id_fk.in_(division_ids)).delete(synchronize_session=False) if division_ids else 0
-    deleted_gra_stu = Grade.query.filter(Grade.student_id_fk.in_(student_ids)).delete(synchronize_session=False) if student_ids else 0
+    deleted_gra_sub = db.session.execute(
+        delete(Grade).where(Grade.subject_id_fk.in_(subject_ids))
+    ).rowcount if subject_ids else 0
+    deleted_gra_div = db.session.execute(
+        delete(Grade).where(Grade.division_id_fk.in_(division_ids))
+    ).rowcount if division_ids else 0
+    deleted_gra_stu = db.session.execute(
+        delete(Grade).where(Grade.student_id_fk.in_(student_ids))
+    ).rowcount if student_ids else 0
     print(f"Deleted Grade (sub): {deleted_gra_sub}, (div): {deleted_gra_div}, (stu): {deleted_gra_stu}")
 
-    deleted_scl_sub = StudentCreditLog.query.filter(StudentCreditLog.subject_id_fk.in_(subject_ids)).delete(synchronize_session=False) if subject_ids else 0
-    deleted_scl_stu = StudentCreditLog.query.filter(StudentCreditLog.student_id_fk.in_(student_ids)).delete(synchronize_session=False) if student_ids else 0
+    deleted_scl_sub = db.session.execute(
+        delete(StudentCreditLog).where(StudentCreditLog.subject_id_fk.in_(subject_ids))
+    ).rowcount if subject_ids else 0
+    deleted_scl_stu = db.session.execute(
+        delete(StudentCreditLog).where(StudentCreditLog.student_id_fk.in_(student_ids))
+    ).rowcount if student_ids else 0
     print(f"Deleted StudentCreditLog (sub): {deleted_scl_sub}, (stu): {deleted_scl_stu}")
 
     # Fees
-    deleted_fr = FeesRecord.query.filter(FeesRecord.student_id_fk.in_(student_ids)).delete(synchronize_session=False) if student_ids else 0
+    deleted_fr = db.session.execute(
+        delete(FeesRecord).where(FeesRecord.student_id_fk.in_(student_ids))
+    ).rowcount if student_ids else 0
     print(f"Deleted FeesRecord: {deleted_fr}")
-    deleted_fs = FeeStructure.query.filter(FeeStructure.program_id_fk == pid).delete(synchronize_session=False)
+    deleted_fs = db.session.execute(
+        delete(FeeStructure).where(FeeStructure.program_id_fk == pid)
+    ).rowcount or 0
     print(f"Deleted FeeStructure: {deleted_fs}")
 
     # Subjects, Students, Divisions, Plans, Faculty
-    deleted_subj = Subject.query.filter(Subject.program_id_fk == pid).delete(synchronize_session=False)
+    deleted_subj = db.session.execute(
+        delete(Subject).where(Subject.program_id_fk == pid)
+    ).rowcount or 0
     print(f"Deleted Subject: {deleted_subj}")
 
-    deleted_stu = Student.query.filter(Student.program_id_fk == pid).delete(synchronize_session=False)
+    deleted_stu = db.session.execute(
+        delete(Student).where(Student.program_id_fk == pid)
+    ).rowcount or 0
     print(f"Deleted Student: {deleted_stu}")
 
-    deleted_div = Division.query.filter(Division.program_id_fk == pid).delete(synchronize_session=False)
+    deleted_div = db.session.execute(
+        delete(Division).where(Division.program_id_fk == pid)
+    ).rowcount or 0
     print(f"Deleted Division: {deleted_div}")
 
-    deleted_plan = ProgramDivisionPlan.query.filter(ProgramDivisionPlan.program_id_fk == pid).delete(synchronize_session=False)
+    deleted_plan = db.session.execute(
+        delete(ProgramDivisionPlan).where(ProgramDivisionPlan.program_id_fk == pid)
+    ).rowcount or 0
     print(f"Deleted ProgramDivisionPlan: {deleted_plan}")
 
-    deleted_fac = Faculty.query.filter(Faculty.program_id_fk == pid).delete(synchronize_session=False)
+    deleted_fac = db.session.execute(
+        delete(Faculty).where(Faculty.program_id_fk == pid)
+    ).rowcount or 0
     print(f"Deleted Faculty: {deleted_fac}")
 
     # Null out user program references to avoid FK constraint
-    updated_users = User.query.filter(User.program_id_fk == pid).update({User.program_id_fk: None}, synchronize_session=False)
+    updated_users = db.session.execute(
+        update(User).where(User.program_id_fk == pid).values(program_id_fk=None)
+    ).rowcount or 0
     print(f"Unlinked Users from program: {updated_users}")
 
     # Finally delete the Program
-    deleted_prog = Program.query.filter(Program.program_id == pid).delete(synchronize_session=False)
+    deleted_prog = db.session.execute(
+        delete(Program).where(Program.program_id == pid)
+    ).rowcount or 0
     print(f"Deleted Program row: {deleted_prog}")
 
 
 def main():
     app = create_app()
     with app.app_context():
-        targets = Program.query.filter(Program.program_name.in_(TARGET_PROGRAM_NAMES)).order_by(Program.program_name).all()
+        targets = db.session.execute(
+            select(Program).where(Program.program_name.in_(TARGET_PROGRAM_NAMES)).order_by(Program.program_name)
+        ).scalars().all()
         if not targets:
             print("No target programs found. Nothing to remove.")
             return

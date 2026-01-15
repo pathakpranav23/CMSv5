@@ -10,6 +10,7 @@ if BASE_DIR not in sys.path:
 from cms_app import create_app, db
 from cms_app.models import Program, FeeStructure
 from cms_app.main.routes import _slugify_component, _normalize_component_slug, _FEE_NAME_BY_SLUG, _CANON_SLUGS
+from sqlalchemy import select
 
 
 def freeze_program_semester(prog: Program, semester: int) -> Tuple[int, int, int]:
@@ -22,11 +23,9 @@ def freeze_program_semester(prog: Program, semester: int) -> Tuple[int, int, int
 
     Returns: (frozen_count, deactivated_dupe_count, total_rows)
     """
-    rows: List[FeeStructure] = (
-        FeeStructure.query
-        .filter_by(program_id_fk=prog.program_id, semester=semester)
-        .all()
-    )
+    rows: List[FeeStructure] = db.session.execute(
+        select(FeeStructure).filter_by(program_id_fk=prog.program_id, semester=semester)
+    ).scalars().all()
     by_slug: Dict[str, List[FeeStructure]] = {}
     for r in rows:
         nm = (r.component_name or "").strip()
@@ -72,13 +71,20 @@ def freeze_program_semester(prog: Program, semester: int) -> Tuple[int, int, int
 def main():
     app = create_app()
     with app.app_context():
-        programs = Program.query.order_by(Program.program_name.asc()).all()
+        programs = db.session.execute(
+            select(Program).order_by(Program.program_name.asc())
+        ).scalars().all()
         total_frozen = 0
         total_deactivated = 0
         combos = 0
         for prog in programs:
             # Get distinct semesters for this program
-            sems = [s for (s,) in db.session.query(db.distinct(FeeStructure.semester)).filter(FeeStructure.program_id_fk == prog.program_id).all() if s is not None]
+            sems = db.session.execute(
+                select(FeeStructure.semester).distinct().where(
+                    FeeStructure.program_id_fk == prog.program_id,
+                    FeeStructure.semester.is_not(None)
+                )
+            ).scalars().all()
             for sem in sems:
                 f, d, n = freeze_program_semester(prog, sem)
                 combos += 1

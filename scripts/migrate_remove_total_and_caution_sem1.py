@@ -8,7 +8,7 @@ if BASE_DIR not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import FeeStructure
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, select
 import re
 
 
@@ -24,14 +24,18 @@ def main():
         total_fee_targets = ["TOTAL FEE", "TOTAL FEES"]
         caution_target = "CAUTION MANOY (DEPOSIT)"
 
-        # Build base query for semester 1
-        base_q = FeeStructure.query.filter(FeeStructure.semester == 1)
+        # Build base filter for semester 1
 
         # Delete explicit Total Fee/Fees
         deleted_total_exact = 0
         if total_fee_targets:
             conds = [func.upper(func.trim(FeeStructure.component_name)) == t for t in total_fee_targets]
-            rows_total = base_q.filter(or_(*conds)).all()
+            rows_total = db.session.execute(
+                select(FeeStructure).where(
+                    FeeStructure.semester == 1,
+                    or_(*conds),
+                )
+            ).scalars().all()
             for r in rows_total:
                 db.session.delete(r)
             db.session.commit()
@@ -39,7 +43,12 @@ def main():
             print(f"Deleted {deleted_total_exact} rows for explicit Total Fee/Fees in semester 1.")
 
         # Delete any other rows containing 'TOTAL' variants (e.g., GRAND TOTAL, TUTATION FEE TOTAL)
-        rows_total_like = base_q.filter(func.upper(func.trim(FeeStructure.component_name)).like('%TOTAL%')).all()
+        rows_total_like = db.session.execute(
+            select(FeeStructure).where(
+                FeeStructure.semester == 1,
+                func.upper(func.trim(FeeStructure.component_name)).like('%TOTAL%'),
+            )
+        ).scalars().all()
         # Avoid double-counting those already deleted
         deleted_total_like = 0
         for r in rows_total_like:
@@ -53,7 +62,12 @@ def main():
         print(f"Deleted {deleted_total_like} rows for TOTAL variants in semester 1.")
 
         # Delete Caution Manoy (Deposit) exact
-        rows_caution_exact = base_q.filter(func.upper(func.trim(FeeStructure.component_name)) == caution_target).all()
+        rows_caution_exact = db.session.execute(
+            select(FeeStructure).where(
+                FeeStructure.semester == 1,
+                func.upper(func.trim(FeeStructure.component_name)) == caution_target,
+            )
+        ).scalars().all()
         for r in rows_caution_exact:
             db.session.delete(r)
         db.session.commit()
@@ -62,7 +76,12 @@ def main():
 
         # Delete other caution-money misspellings
         pat_caution = re.compile(r"\bCAUTION\b.*\b(MONEY|MANOY|MONOY)\b", re.IGNORECASE)
-        rows_caution_like = base_q.filter(func.upper(FeeStructure.component_name).like('%CAUTION%')).all()
+        rows_caution_like = db.session.execute(
+            select(FeeStructure).where(
+                FeeStructure.semester == 1,
+                func.upper(FeeStructure.component_name).like('%CAUTION%'),
+            )
+        ).scalars().all()
         deleted_caution_like = 0
         for r in rows_caution_like:
             name = (r.component_name or '').strip()

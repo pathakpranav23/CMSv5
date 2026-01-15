@@ -9,6 +9,7 @@ if BASE_DIR not in sys.path:
 from cms_app import create_app, db
 from cms_app.models import Program, FeeStructure
 from cms_app.main.routes import _normalize_component_slug, _slugify_component, _FEE_NAME_BY_SLUG
+from sqlalchemy import select
 
 
 def main():
@@ -20,16 +21,15 @@ def main():
 
     app = create_app()
     with app.app_context():
-        prog = Program.query.get(program_id)
+        prog = db.session.get(Program, program_id)
         if not prog:
             print(f"Program {program_id} not found")
             return
-        rows = (
-            FeeStructure.query
+        rows = db.session.execute(
+            select(FeeStructure)
             .filter_by(program_id_fk=prog.program_id, semester=semester)
             .order_by(FeeStructure.component_name.asc())
-            .all()
-        )
+        ).scalars().all()
         print(f"Program: {prog.program_name} (id={prog.program_id}), Semester={semester}")
         print(f"Rows: {len(rows)}")
         print("")

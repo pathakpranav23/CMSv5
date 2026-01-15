@@ -11,6 +11,7 @@ if BASE_DIR not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import User, Student, Division, Program
+from sqlalchemy import select
 from werkzeug.security import generate_password_hash
 
 
@@ -22,9 +23,19 @@ def gen_password(length: int = 10) -> str:
 def compute_roll_numbers() -> dict:
     """Compute roll numbers per division, ordered by enrollment_no."""
     rolls = {}
-    divisions = Division.query.order_by(Division.program_id_fk.asc(), Division.semester.asc(), Division.division_code.asc()).all()
+    divisions = db.session.execute(
+        select(Division).order_by(
+            Division.program_id_fk.asc(),
+            Division.semester.asc(),
+            Division.division_code.asc(),
+        )
+    ).scalars().all()
     for d in divisions:
-        stu_rows = Student.query.filter_by(division_id_fk=d.division_id).order_by(Student.enrollment_no.asc()).all()
+        stu_rows = db.session.execute(
+            select(Student)
+            .filter_by(division_id_fk=d.division_id)
+            .order_by(Student.enrollment_no.asc())
+        ).scalars().all()
         for idx, s in enumerate(stu_rows, start=1):
             rolls[s.enrollment_no] = idx
     return rolls
@@ -41,7 +52,9 @@ def ensure_student_user(student: Student) -> tuple:
         base = (student.student_name or 'student').replace(' ', '').lower()
         username = f"{base}{random.randint(1000,9999)}"
 
-    user = User.query.filter_by(username=username).first()
+    user = db.session.execute(
+        select(User).filter_by(username=username)
+    ).scalars().first()
     plain_password = gen_password(10)
     password_hash = generate_password_hash(plain_password)
 
@@ -67,12 +80,18 @@ def ensure_student_user(student: Student) -> tuple:
 
 def generate_csv(output_path: str) -> None:
     rolls = compute_roll_numbers()
-    students = Student.query.order_by(Student.program_id_fk.asc(), Student.division_id_fk.asc(), Student.enrollment_no.asc()).all()
+    students = db.session.execute(
+        select(Student).order_by(
+            Student.program_id_fk.asc(),
+            Student.division_id_fk.asc(),
+            Student.enrollment_no.asc(),
+        )
+    ).scalars().all()
 
     rows = []
     for s in students:
         username, plain_password, _u = ensure_student_user(s)
-        division = Division.query.get(s.division_id_fk) if s.division_id_fk else None
+        division = db.session.get(Division, s.division_id_fk) if s.division_id_fk else None
         div_code = division.division_code if division else ''
         semester = s.current_semester or (division.semester if division else None)
         roll_no = rolls.get(s.enrollment_no) or ''

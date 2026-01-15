@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple, Any
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 import xlrd
+from sqlalchemy import select
 
 from cms_app import create_app, db
 from cms_app.models import Program, SubjectType, Subject, CreditStructure
@@ -136,7 +137,7 @@ def detect_program_and_semester(path: str) -> Tuple[str, int]:
 
 def get_or_create_subject_type(code: str) -> SubjectType:
     code_norm = (code or "MAJOR").strip().upper()
-    st = SubjectType.query.filter_by(type_code=code_norm).first()
+    st = db.session.execute(select(SubjectType).filter_by(type_code=code_norm)).scalars().first()
     if not st:
         st = SubjectType(type_code=code_norm, description=None)
         db.session.add(st)
@@ -145,7 +146,7 @@ def get_or_create_subject_type(code: str) -> SubjectType:
 
 
 def upsert_subjects(program_name: str, path: str, default_semester: int, force_default_semester: bool = False, dry_run: bool = False):
-    program = Program.query.filter_by(program_name=program_name).first()
+    program = db.session.execute(select(Program).filter_by(program_name=program_name)).scalars().first()
     if not program:
         program = Program(program_name=program_name, program_duration_years=3)
         db.session.add(program)
@@ -192,9 +193,20 @@ def upsert_subjects(program_name: str, path: str, default_semester: int, force_d
             # Upsert Subject: prefer program + subject_code; fallback to name + semester
             subj = None
             if subject_code:
-                subj = Subject.query.filter_by(program_id_fk=program.program_id, subject_code=subject_code).first()
+                subj = db.session.execute(
+                    select(Subject).filter_by(
+                        program_id_fk=program.program_id,
+                        subject_code=subject_code,
+                    )
+                ).scalars().first()
             if not subj:
-                subj = Subject.query.filter_by(program_id_fk=program.program_id, subject_name=subject_name, semester=semester).first()
+                subj = db.session.execute(
+                    select(Subject).filter_by(
+                        program_id_fk=program.program_id,
+                        subject_name=subject_name,
+                        semester=semester,
+                    )
+                ).scalars().first()
             if not subj:
                 subj = Subject(
                     program_id_fk=program.program_id,
@@ -233,7 +245,9 @@ def upsert_subjects(program_name: str, path: str, default_semester: int, force_d
             if not total:
                 total = th + pr
 
-            cs = CreditStructure.query.filter_by(subject_id_fk=subj.subject_id).first()
+            cs = db.session.execute(
+                select(CreditStructure).filter_by(subject_id_fk=subj.subject_id)
+            ).scalars().first()
             if not cs:
                 cs = CreditStructure(subject_id_fk=subj.subject_id, theory_credits=th, practical_credits=pr, total_credits=total)
                 db.session.add(cs)
@@ -276,9 +290,20 @@ def upsert_subjects(program_name: str, path: str, default_semester: int, force_d
             st = get_or_create_subject_type(subject_type_code)
             subj = None
             if subject_code:
-                subj = Subject.query.filter_by(program_id_fk=program.program_id, subject_code=subject_code).first()
+                subj = db.session.execute(
+                    select(Subject).filter_by(
+                        program_id_fk=program.program_id,
+                        subject_code=subject_code,
+                    )
+                ).scalars().first()
             if not subj:
-                subj = Subject.query.filter_by(program_id_fk=program.program_id, subject_name=subject_name, semester=semester).first()
+                subj = db.session.execute(
+                    select(Subject).filter_by(
+                        program_id_fk=program.program_id,
+                        subject_name=subject_name,
+                        semester=semester,
+                    )
+                ).scalars().first()
             if not subj:
                 subj = Subject(
                     program_id_fk=program.program_id,
@@ -313,7 +338,9 @@ def upsert_subjects(program_name: str, path: str, default_semester: int, force_d
             th = to_int_safe(data.get("theory_credits"))
             pr = to_int_safe(data.get("practical_credits"))
             total = to_int_safe(data.get("total_credits")) or (th + pr)
-            cs = CreditStructure.query.filter_by(subject_id_fk=subj.subject_id).first()
+            cs = db.session.execute(
+                select(CreditStructure).filter_by(subject_id_fk=subj.subject_id)
+            ).scalars().first()
             if not cs:
                 cs = CreditStructure(subject_id_fk=subj.subject_id, theory_credits=th, practical_credits=pr, total_credits=total)
                 db.session.add(cs)

@@ -8,13 +8,16 @@ if BASE_DIR not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import FeeStructure
+from sqlalchemy import select
 
 
 def main():
     app = create_app()
     with app.app_context():
         # Set semester=1 for all fee components where semester is NULL
-        rows = FeeStructure.query.filter(FeeStructure.semester.is_(None)).all()
+        rows = db.session.execute(
+            select(FeeStructure).where(FeeStructure.semester.is_(None))
+        ).scalars().all()
         for r in rows:
             r.semester = 1
         db.session.commit()

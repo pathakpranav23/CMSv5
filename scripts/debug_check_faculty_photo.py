@@ -2,8 +2,9 @@ import sys
 import os
 import json
 
-from cms_app import create_app
+from cms_app import create_app, db
 from cms_app.models import Faculty
+from sqlalchemy import select
 
 PHOTO_KEYS = {"photo", "photo url", "image", "picture", "profile photo", "photo link"}
 EMPID_KEYS = {"emp id", "employee id", "empid", "employee code", "id"}
@@ -28,7 +29,9 @@ def pick_empid(extra: dict):
 def main(empid: str):
     app = create_app()
     with app.app_context():
-        rows = Faculty.query.all()
+        rows = db.session.execute(
+            select(Faculty)
+        ).scalars().all()
         for f in rows:
             try:
                 extra = json.loads(f.extra_data or "{}")

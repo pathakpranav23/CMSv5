@@ -9,10 +9,13 @@ if BASE_DIR not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import User, Program
+from sqlalchemy import select
 
 
 def ensure_user(username: str, password: str, role: str, program_id: int = None):
-    user = User.query.filter_by(username=username).first()
+    user = db.session.execute(
+        select(User).filter_by(username=username)
+    ).scalars().first()
     if user is None:
         user = User(
             username=username,
@@ -36,8 +39,12 @@ def main():
     app = create_app()
     with app.app_context():
         # Prefer scoping principal to BCom (English); fallback to BCA
-        bcom_eng = Program.query.filter_by(program_name="BCom (English)").first()
-        target_prog = bcom_eng or Program.query.filter_by(program_name="BCA").first()
+        bcom_eng = db.session.execute(
+            select(Program).filter_by(program_name="BCom (English)")
+        ).scalars().first()
+        target_prog = bcom_eng or db.session.execute(
+            select(Program).filter_by(program_name="BCA")
+        ).scalars().first()
         target_pid = target_prog.program_id if target_prog else None
 
         admin_user, admin_created, admin_updated = ensure_user(

@@ -124,7 +124,7 @@ def create_app():
                 prog_id = getattr(current_user, "program_id_fk", None)
                 if prog_id:
                     from .models import Program
-                    p = Program.query.get(int(prog_id))
+                    p = db.session.get(Program, int(prog_id))
                     if p:
                         ctx["program_name"] = p.program_name
                         ctx["program_slug"] = _slugify_program(p.program_name)
@@ -294,6 +294,9 @@ def create_app():
     # Blueprints
     from .main.routes import main_bp
     app.register_blueprint(main_bp)
+
+    from .imports import imports_bp
+    app.register_blueprint(imports_bp)
 
     @app.errorhandler(RequestEntityTooLarge)
     def handle_large_upload(e):
