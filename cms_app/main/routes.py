@@ -349,6 +349,38 @@ def _program_dropdown_context(q_program_raw: str = None, *, include_admin_all: b
                     flash("Your account is not mapped to a program. Ask admin to map it from Users.", "warning")
                 except Exception:
                     pass
+    elif role == "faculty":
+        try:
+            assigns = db.session.execute(
+                select(CourseAssignment).filter_by(faculty_id_fk=current_user.user_id, is_active=True)
+            ).scalars().all()
+            subj_ids = sorted({a.subject_id_fk for a in assigns if a.subject_id_fk})
+            prog_ids = set()
+            if subj_ids:
+                subj_rows = db.session.execute(
+                    select(Subject).filter(Subject.subject_id.in_(subj_ids))
+                ).scalars().all()
+                for s in subj_rows:
+                    if s.program_id_fk:
+                        prog_ids.add(s.program_id_fk)
+            if prog_ids:
+                program_list = [p for p in program_list if p.program_id in prog_ids]
+            else:
+                program_list = []
+        except Exception:
+            program_list = []
+        if q_program_raw:
+            try:
+                pid = int(q_program_raw)
+            except Exception:
+                pid = None
+            if pid and any(p.program_id == pid for p in program_list):
+                selected_program_id = pid
+        if selected_program_id is None and program_list:
+            try:
+                selected_program_id = program_list[0].program_id
+            except Exception:
+                selected_program_id = None
     else:
         # Admin/Faculty/Student: honor query arg; otherwise fallback
         if q_program_raw:
@@ -8783,11 +8815,8 @@ def module_announcements():
 @login_required
 def module_students():
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    try:
-        from ..models import Program
-        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
-    except Exception:
-        programs = []
+    ctx = _program_dropdown_context(include_admin_all=True)
+    programs = ctx.get("program_list", [])
     medium_program_ids = []
     default_medium_map = {}
     try:
