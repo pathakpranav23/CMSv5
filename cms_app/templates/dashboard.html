@@ -576,7 +576,19 @@
             data: { source: data, x: 'date', y: 'value' },
             scale: { color: { type: 'linear', range: ['#e6f2ff', '#004085'], domain: [0, 100] } },
             theme: "light"
-        });
+        }, [
+            [
+                Tooltip,
+                {
+                    text: function (date, value, dayRect) {
+                        if (value === null) return "";
+                        const dateObj = new Date(date);
+                        const ts = Math.floor(dateObj.getTime() / 1000);
+                        return `${value}% Attendance`;
+                    },
+                },
+            ],
+        ]);
     }
 
     // Render Heatmap for Faculty (absent % across assigned classes)
