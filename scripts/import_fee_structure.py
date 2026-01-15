@@ -130,7 +130,9 @@ def _import_wide_sheet(ws) -> Tuple[int, int]:
     # Update program duration years by observed max semester
     if current_semester is not None:
         for prog in program_objs.values():
-            max_sem = db.session.query(db.func.max(FeeStructure.semester)).filter(FeeStructure.program_id_fk == prog.program_id).scalar()
+            max_sem = db.session.execute(
+                select(func.max(FeeStructure.semester)).where(FeeStructure.program_id_fk == prog.program_id)
+            ).scalar_one_or_none()
             if max_sem and isinstance(max_sem, int):
                 years = (max_sem + 1) // 2
                 try:

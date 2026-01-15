@@ -149,10 +149,12 @@ def remove_program_and_related(prog: Program):
     print(f"\n=== Removing program {pname} (id={pid}) and related data ===")
 
     # Collect IDs
-    subject_ids = [sid for (sid,) in db.session.query(Subject.subject_id).filter(Subject.program_id_fk == pid).all()]
-    division_ids = [did for (did,) in db.session.query(Division.division_id).filter(Division.program_id_fk == pid).all()]
-    student_ids = [enr for (enr,) in db.session.query(Student.enrollment_no).filter(Student.program_id_fk == pid).all()]
-    material_ids = [mid for (mid,) in db.session.query(SubjectMaterial.material_id).filter(SubjectMaterial.subject_id_fk.in_(subject_ids)).all()] if subject_ids else []
+    subject_ids = db.session.execute(select(Subject.subject_id).where(Subject.program_id_fk == pid)).scalars().all()
+    division_ids = db.session.execute(select(Division.division_id).where(Division.program_id_fk == pid)).scalars().all()
+    student_ids = db.session.execute(select(Student.enrollment_no).where(Student.program_id_fk == pid)).scalars().all()
+    material_ids = db.session.execute(
+        select(SubjectMaterial.material_id).where(SubjectMaterial.subject_id_fk.in_(subject_ids))
+    ).scalars().all() if subject_ids else []
 
     print(f"Subjects: {len(subject_ids)}, Divisions: {len(division_ids)}, Students: {len(student_ids)}, Materials: {len(material_ids)}")
 
