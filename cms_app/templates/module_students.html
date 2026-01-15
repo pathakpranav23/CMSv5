@@ -222,7 +222,8 @@
           if (isMediumProgram(pid) && med && med !== 'all') { url.searchParams.set('medium', med); }
           const resp = await fetch(url.toString());
           const data = await resp.json();
-          renderSuggestions((data && data.items) || [], q, pid, sem, (isMediumProgram(pid) ? med : ''));
+          const items = (data && data.data && Array.isArray(data.data.items)) ? data.data.items : ((data && data.items) || []);
+          renderSuggestions(items, q, pid, sem, (isMediumProgram(pid) ? med : ''));
         } catch (e) {
           suggBox.style.display = 'none';
           suggBox.innerHTML = '';
