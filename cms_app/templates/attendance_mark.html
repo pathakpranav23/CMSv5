@@ -17,6 +17,12 @@
     <div class="alert alert-danger">{{ errors|join(', ') }}</div>
   {% endif %}
 
+  {% if options|length == 0 %}
+    <div class="alert alert-warning">
+      No subjects assigned. Please contact your administrator to assign subjects to you.
+    </div>
+  {% endif %}
+
   <form method="get" action="" class="card mb-3">
     <div class="card-header">Select Context</div>
     <div class="card-body row g-3">

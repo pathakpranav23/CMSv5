@@ -1740,6 +1740,10 @@ def subject_materials(subject_id: int):
     if _user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(subject_id)):
         can_manage = True
 
+    if role == "faculty" and not _user_is_faculty_assigned(subject_id):
+        flash("Access denied. You are not assigned to this subject.", "danger")
+        return redirect(url_for("main.materials_hub"))
+
     q = select(SubjectMaterial).filter_by(subject_id_fk=subject_id)
     if role == "student":
         ay = current_academic_year()
@@ -7642,8 +7646,8 @@ def attendance_mark():
             "academic_year": year_label,
         })
 
-    # Fallback: for principal/admin or when no assignments, expose subjects by program scope
-    if (role in ["principal", "admin"]) or (not options):
+    # Fallback: for principal/admin ONLY (faculty sees only assignments)
+    if role in ["principal", "admin"]:
         subj_q = select(Subject)
         if selected_program_id:
             subj_q = subj_q.filter_by(program_id_fk=selected_program_id)
@@ -7675,10 +7679,10 @@ def attendance_mark():
     if selected_semester:
         options = [opt for opt in options if opt.get("semester") == selected_semester]
 
-    # Program-wide divisions (principal/admin or when no assignment-bound divisions)
+    # Program-wide divisions (principal/admin only)
     program_divisions = []
     try:
-        needs_program_divisions = (role in ["principal", "admin"]) or (not options)
+        needs_program_divisions = (role in ["principal", "admin"])
         if needs_program_divisions:
             div_q = select(Division)
             if selected_program_id:
@@ -7936,14 +7940,25 @@ def attendance_show():
             student_roll_no = None
 
     # Per-student daily report: list of lectures and statuses
+    # Determine faculty assigned subjects to restrict view
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    assigned_subject_ids = None
+    if role == "faculty":
+        assigns = db.session.execute(
+            select(CourseAssignment.subject_id_fk)
+            .filter_by(faculty_id_fk=current_user.user_id, is_active=True)
+        ).scalars().all()
+        assigned_subject_ids = set(assigns)
+
     student_daily = []
     if student:
-        rows = db.session.execute(
-            select(Attendance)
-            .filter_by(student_id_fk=student.enrollment_no)
-            .filter(Attendance.date_marked == selected_date)
-            .order_by(Attendance.period_no.asc())
-        ).scalars().all()
+        q_daily = select(Attendance).filter_by(student_id_fk=student.enrollment_no).filter(Attendance.date_marked == selected_date).order_by(Attendance.period_no.asc())
+        
+        # Filter for faculty
+        if role == "faculty" and assigned_subject_ids is not None:
+             q_daily = q_daily.filter(Attendance.subject_id_fk.in_(assigned_subject_ids))
+
+        rows = db.session.execute(q_daily).scalars().all()
         subj_map = {s.subject_id: s.subject_name for s in db.session.execute(select(Subject)).scalars().all()}
         for r in rows:
             student_daily.append({
@@ -7954,9 +7969,9 @@ def attendance_show():
 
     # Principal/Admin summary: totals per subject for the day
     daily_summary = []
-    # Scope by program for principals; admins see all
+    # Scope by program for principals; admins see all; faculty see assigned
     program_id_fk = None
-    role = (getattr(current_user, "role", "") or "").strip().lower()
+    # role already defined above
     if role == "principal":
         try:
             program_id_fk = int(current_user.program_id_fk) if current_user.program_id_fk else None
@@ -7966,6 +7981,15 @@ def attendance_show():
     subj_q = select(Subject)
     if program_id_fk:
         subj_q = subj_q.filter_by(program_id_fk=program_id_fk)
+    
+    # Filter for faculty
+    if role == "faculty":
+        if not assigned_subject_ids:
+             # No assignments => no subjects
+             subj_q = subj_q.where(Subject.subject_id == -1)
+        else:
+             subj_q = subj_q.where(Subject.subject_id.in_(assigned_subject_ids))
+
     subj_all = db.session.execute(subj_q).scalars().all()
     subj_ids = [s.subject_id for s in subj_all]
     status_counts = {sid: {"P": 0, "A": 0, "L": 0} for sid in subj_ids}
@@ -8456,8 +8480,11 @@ def attendance_report_faculty():
 
     # Attendance scoped by faculty subjects/divisions
     q = select(Attendance)
-    if subj_ids:
+    if not subj_ids:
+        q = q.filter(Attendance.subject_id_fk == -1)
+    else:
         q = q.filter(Attendance.subject_id_fk.in_(subj_ids))
+
     if div_ids:
         q = q.filter(Attendance.division_id_fk.in_(div_ids))
     if subject_id:
@@ -8678,18 +8705,37 @@ def attendance_search():
             students = []
 
     results = []
+    
+    # Pre-fetch faculty assignments to restrict search
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    assigned_subject_ids = None
+    if role == "faculty":
+         assigns = db.session.execute(
+             select(CourseAssignment.subject_id_fk)
+             .filter_by(faculty_id_fk=current_user.user_id, is_active=True)
+         ).scalars().all()
+         assigned_subject_ids = set(assigns)
+
     if students and start_date and end_date:
         for s in students:
             div = db.session.get(Division, s.division_id_fk) if s.division_id_fk else None
             sem = s.current_semester or (div.semester if div else None)
             div_code = div.division_code if div else ""
-            att_rows = db.session.execute(select(Attendance).filter(
+            
+            q_att = select(Attendance).filter(
                 and_(
                     Attendance.student_id_fk == s.enrollment_no,
                     Attendance.date_marked >= start_date,
                     Attendance.date_marked <= end_date,
                 )
-            )).scalars().all()
+            )
+            if role == "faculty":
+                 if not assigned_subject_ids:
+                      q_att = q_att.filter(Attendance.subject_id_fk == -1)
+                 else:
+                      q_att = q_att.filter(Attendance.subject_id_fk.in_(assigned_subject_ids))
+
+            att_rows = db.session.execute(q_att).scalars().all()
             total = len(att_rows)
             present = sum(1 for a in att_rows if (a.status or "").upper() in ("P", "L"))
             absent = sum(1 for a in att_rows if (a.status or "").upper() == "A")
