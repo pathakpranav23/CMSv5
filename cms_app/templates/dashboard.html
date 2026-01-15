@@ -188,6 +188,12 @@
             <div class="card-body"><canvas id="chartGenderSemester" height="140"></canvas></div>
           </div>
         </div>
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Attendance Trend (Last 7 Days)') }}</div></div>
+            <div class="card-body"><canvas id="chartAttendanceWeek" height="140"></canvas></div>
+          </div>
+        </div>
         {% if (current_user.role|lower) == 'principal' %}
             <div class="col">
               <div class="card">
@@ -228,7 +234,10 @@
         <!-- My Active Subjects -->
         <div class="col-md-6">
           <div class="card h-100">
-            <div class="card-header bg-primary text-white"><div class="card-title mb-0"><i class="bi bi-journal-text me-2"></i>{{ t('My Active Subjects') }}</div></div>
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+              <div class="card-title mb-0"><i class="bi bi-journal-text me-2"></i>{{ t('My Active Subjects') }}</div>
+              <span class="badge bg-light text-primary">{{ charts.active_subjects|length }}</span>
+            </div>
             <div class="card-body p-0">
               <ul class="list-group list-group-flush">
                 {% if charts.active_subjects %}
@@ -256,6 +265,7 @@
           <div class="card h-100 border-danger">
             <div class="card-header bg-danger text-white d-flex justify-content-between align-items-center">
               <div class="card-title mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i>{{ t('At-Risk Students Spotlight (<75% Attendance)') }}</div>
+              <span class="badge bg-light text-danger">{{ charts.at_risk_students|length }}</span>
             </div>
             <div class="card-body p-0">
               <div class="table-responsive">
@@ -541,6 +551,7 @@
 
   <!-- Post-metrics cards removed to avoid duplication -->
   
+<script id="attWeekData" type="application/json">{{ summary.att_week_chart | tojson | safe }}</script>
 <script id="chartsData" type="application/json">{{ charts | tojson | safe }}</script>
 <script id="chartsConfig" type="application/json">{{ {"isAdmin": is_admin, "isPrincipal": is_principal, "isFaculty": is_faculty} | tojson | safe }}</script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -556,6 +567,15 @@
     const isAdmin = !!cfg.isAdmin;
     const isPrincipal = !!cfg.isPrincipal;
     const isFaculty = !!cfg.isFaculty;
+    const attWeekEl = document.getElementById('attWeekData');
+    let attWeek = null;
+    if (attWeekEl) {
+      try {
+        attWeek = JSON.parse(attWeekEl.textContent);
+      } catch (e) {
+        attWeek = null;
+      }
+    }
      
     // Render Heatmap for Principal
     if (isPrincipal && charts && charts.attendance_heatmap) {
@@ -717,6 +737,50 @@
             { label:'Female', data: charts.gender_by_semester.female, backgroundColor:'#e83e8c' }
           ] },
           options: { responsive:true, plugins:{ legend:{ position:'bottom' } }, scales:{ x:{ stacked:true }, y:{ stacked:true, beginAtZero:true, precision:0 } } }
+        });
+      }
+      const elWeek = document.getElementById('chartAttendanceWeek');
+      if (elWeek && attWeek && attWeek.labels && attWeek.labels.length) {
+        new Chart(elWeek, {
+          type: 'line',
+          data: {
+            labels: attWeek.labels,
+            datasets: [
+              {
+                label: 'Present %',
+                data: attWeek.present_pct,
+                borderColor: '#198754',
+                backgroundColor: 'rgba(25,135,84,0.1)',
+                tension: 0.3
+              },
+              {
+                label: 'Absent %',
+                data: attWeek.absent_pct,
+                borderColor: '#dc3545',
+                backgroundColor: 'rgba(220,53,69,0.1)',
+                tension: 0.3
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { position: 'bottom' },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) {
+                    return ctx.dataset.label + ': ' + ctx.parsed.y + '%';
+                  }
+                }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                max: 100
+              }
+            }
+          }
         });
       }
       // Subject Results (principal only)
