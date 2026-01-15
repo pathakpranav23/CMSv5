@@ -5261,6 +5261,33 @@ def students():
             pass
 
     query = select(Student)
+    if role == "faculty":
+        try:
+            assigns = db.session.execute(
+                select(CourseAssignment).filter_by(faculty_id_fk=current_user.user_id, is_active=True)
+            ).scalars().all()
+            prog_ids = {a.program_id_fk for a in assigns if getattr(a, "program_id_fk", None)}
+            div_ids = {a.division_id_fk for a in assigns if a.division_id_fk}
+            sems = set()
+            subj_ids = {a.subject_id_fk for a in assigns if a.subject_id_fk}
+            if subj_ids:
+                subs = db.session.execute(select(Subject).filter(Subject.subject_id.in_(subj_ids))).scalars().all()
+                for sub in subs:
+                    if sub.semester:
+                        sems.add(sub.semester)
+            if prog_ids:
+                query = query.filter(Student.program_id_fk.in_(prog_ids))
+            if div_ids:
+                query = query.filter(
+                    or_(
+                        Student.division_id_fk.in_(div_ids),
+                        Student.division_id_fk.is_(None),
+                    )
+                )
+            if sems:
+                query = query.filter(Student.current_semester.in_(sems))
+        except Exception:
+            query = query.filter(Student.enrollment_no == "__none__")
     if selected_program_id:
         query = query.filter(Student.program_id_fk == selected_program_id)
     if selected_semester not in ("all", ""):
@@ -5789,6 +5816,34 @@ def students_show(enrollment_no):
     if not s:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role == "faculty":
+        allowed = False
+        try:
+            assigns = db.session.execute(
+                select(CourseAssignment).filter_by(faculty_id_fk=current_user.user_id, is_active=True)
+            ).scalars().all()
+            prog_ids = {a.program_id_fk for a in assigns if getattr(a, "program_id_fk", None)}
+            div_ids = {a.division_id_fk for a in assigns if a.division_id_fk}
+            sems = set()
+            subj_ids = {a.subject_id_fk for a in assigns if a.subject_id_fk}
+            if subj_ids:
+                subs = db.session.execute(select(Subject).filter(Subject.subject_id.in_(subj_ids))).scalars().all()
+                for sub in subs:
+                    if sub.semester:
+                        sems.add(sub.semester)
+            if prog_ids and s.program_id_fk in prog_ids:
+                allowed = True
+            if div_ids and s.division_id_fk in div_ids:
+                allowed = True
+            if sems and s.current_semester in sems:
+                allowed = True
+        except Exception:
+            allowed = False
+        if not allowed:
+            flash("You are not authorized to view this student.", "danger")
+            return redirect(url_for("main.students"))
 
     program = db.session.get(Program, s.program_id_fk) if s.program_id_fk else None
     division = db.session.get(Division, s.division_id_fk) if s.division_id_fk else None
