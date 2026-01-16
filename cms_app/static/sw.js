@@ -1,5 +1,5 @@
 // Service Worker for Parekh Colleges CMS
-const CACHE_NAME = 'cms-cache-v3';
+const CACHE_NAME = 'cms-cache-v4';
 const URLS_TO_CACHE = [
   '/',
   '/static/style.css',
