@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#0d6efd">
+   <meta name="theme-color" content="#0d6efd">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -112,11 +112,12 @@
       </div>
     </aside>
     <!-- Mobile backdrop for sidebar -->
-    <div class="sidebar-backdrop d-md-none"></div>
+    <div class="sidebar-backdrop d-lg-none"></div>
     <div class="app-main">
       <!-- Mobile topbar with sidebar toggle -->
-  <div class="mobile-topbar d-md-none d-flex align-items-center justify-content-between px-3 py-2" style="background: var(--nav-bg); color: var(--nav-fg);">
-  <button class="btn btn-outline-light btn-sm" id="sidebarToggle"><i class="bi bi-list"></i> Menu</button>
+      <div class="mobile-topbar d-lg-none d-flex align-items-center justify-content-between px-3 py-2" style="background: var(--nav-bg); color: var(--nav-fg);">
+        <button class="btn btn-outline-light btn-sm" id="sidebarToggle"><i class="bi bi-list"></i> Menu</button>
+        <span class="fw-bold">Parekh Colleges</span>
   <div class="d-flex align-items-center gap-2">
     <button class="btn btn-outline-light btn-sm" onclick="history.back()" title="Back"><i class="bi bi-arrow-left"></i></button>
     <span class="small fw-semibold" style="color: var(--nav-fg);">
@@ -134,7 +135,7 @@
 </div>
 
       <!-- Enhanced Navigation Bar for all pages -->
-      <nav class="enhanced-nav d-none d-md-flex align-items-center justify-content-between px-3 py-2 border-bottom">
+      <nav class="enhanced-nav d-none d-lg-flex align-items-center justify-content-between px-3 py-2 border-bottom">
         <div class="nav-breadcrumb">
           <a href="{{ url_for('main.dashboard') }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-house"></i> {{ t('Dashboard') }}</a>
           {% block breadcrumb %}{% endblock %}
@@ -258,7 +259,7 @@
       var navLinks = document.querySelectorAll('.sidebar a[href]');
       navLinks.forEach(function(link) {
         link.addEventListener('click', function() {
-          if (window.innerWidth < 768) {
+          if (window.innerWidth < 992) {
             toggleSidebar(false);
           }
         });
