@@ -100,6 +100,9 @@
             {% if (role or '') in ['admin','principal'] %}
               <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.enroll_core') }}">Core Enrollment</a></div>
             {% endif %}
+            {% if (role or '') in ['principal','clerk'] %}
+              <div class="col-md-4"><a class="btn btn-sm btn-outline-danger w-100" href="{{ url_for('main.students_semester_promotion') }}">Promote Semesters</a></div>
+            {% endif %}
           </div>
         </div>
       </div>

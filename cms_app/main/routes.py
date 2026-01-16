@@ -7251,6 +7251,76 @@ def enroll_core():
     )
 
 
+@main_bp.route("/students/semester-promotion", methods=["GET", "POST"])
+@login_required
+@role_required("principal", "clerk")
+@csrf_required
+def students_semester_promotion():
+    try:
+        program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
+    except Exception:
+        program_id = None
+    if not program_id:
+        try:
+            flash("Your account is not mapped to a program. Ask admin to map it from Users.", "warning")
+        except Exception:
+            pass
+        return redirect(url_for("main.dashboard"))
+    selected_program = db.session.get(Program, program_id)
+    max_semester = 8
+    from_sem_raw = (request.values.get("from_semester") or "").strip()
+    action = (request.form.get("action") or "").strip().lower() if request.method == "POST" else ""
+    try:
+        from_semester = int(from_sem_raw) if from_sem_raw else None
+    except Exception:
+        from_semester = None
+    if from_semester is not None:
+        if from_semester < 1 or from_semester >= max_semester:
+            from_semester = None
+    to_semester = (from_semester + 1) if from_semester is not None else None
+    total_eligible = 0
+    preview_students = []
+    if selected_program and from_semester is not None and to_semester is not None:
+        base_query = select(Student).filter(
+            Student.program_id_fk == selected_program.program_id,
+            Student.current_semester == from_semester,
+        )
+        total_eligible = db.session.scalar(
+            select(func.count()).select_from(base_query.subquery())
+        ) or 0
+        preview_students = db.session.execute(
+            base_query.order_by(Student.enrollment_no).limit(25)
+        ).scalars().all()
+        if request.method == "POST" and action == "confirm" and total_eligible:
+            rows = db.session.execute(base_query).scalars().all()
+            updated = 0
+            for s in rows:
+                s.current_semester = to_semester
+                updated += 1
+            try:
+                db.session.commit()
+                try:
+                    flash(f"Promoted {updated} students from Sem {from_semester} to Sem {to_semester}.", "success")
+                except Exception:
+                    pass
+                return redirect(url_for("main.students", program_id=selected_program.program_id, semester=to_semester))
+            except Exception:
+                db.session.rollback()
+                try:
+                    flash("Failed to promote students. Please try again.", "danger")
+                except Exception:
+                    pass
+    return render_template(
+        "students_semester_promotion.html",
+        program=selected_program,
+        from_semester=from_semester,
+        to_semester=to_semester,
+        max_semester=max_semester,
+        total_eligible=total_eligible,
+        preview_students=preview_students,
+    )
+
+
 @main_bp.route("/subjects/<int:subject_id>/delete", methods=["POST"])
 @login_required
 @role_required("admin", "principal", "clerk")
