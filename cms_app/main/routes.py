@@ -4223,69 +4223,46 @@ def forgot_password():
         username = (request.form.get("username") or "").strip()
         user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
         if user:
-            s = _get_serializer()
-            token = s.dumps({"user_id": user.user_id}, salt="password-reset")
-            reset_url = url_for("main.reset_password", token=token, _external=True)
-            current_app.logger.info(f"Password reset link for {username}: {reset_url}")
-            # Try to resolve an email address to send to
-            email_to = None
+            # Instead of emailing a reset link, create an Announcement for Principals/Clerks
+            # This ensures only authorized personnel can handle password resets
             try:
-                import re as _re
-                if _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", username):
-                    email_to = username
-            except Exception:
-                pass
-            # Prefer linked faculty email if available
-            if not email_to:
-                f = db.session.execute(select(Faculty).filter_by(user_id_fk=user.user_id)).scalars().first()
-                if f and f.email:
-                    email_to = f.email
-            if email_to:
-                subj = "PCMS Password Reset"
-                text = f"Click this link to reset your password:\n{reset_url}\n\nIf you did not request this, you can ignore this email."
-                html = f"<p>Click the link to reset your password:</p><p><a href=\"{reset_url}\">Reset Password</a></p><p>If you did not request this, you can ignore this email.</p>"
-                sent = send_email(subj, email_to, text, html)
-                # Also notify all clerks with the reset info
-                try:
-                    clerks = db.session.execute(select(User).filter_by(role="Clerk")).scalars().all()
-                    for clerk in clerks:
-                        clerk_email = None
-                        try:
-                            import re as _re2
-                            if _re2.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", clerk.username or ""):
-                                clerk_email = clerk.username
-                        except Exception:
-                            pass
-                        if not clerk_email:
-                            lf_c = db.session.execute(select(Faculty).filter_by(user_id_fk=clerk.user_id)).scalars().first()
-                            if lf_c and lf_c.email:
-                                clerk_email = lf_c.email
-                        if clerk_email:
-                            c_subj = "PCMS: Password reset requested"
-                            c_text = (
-                                f"User '{user.username}' requested a password reset.\n"
-                                f"Reset link (for the user): {reset_url}\n\n"
-                                "If you assist with a password change for a Faculty, follow 2FA if enabled."
-                            )
-                            c_html = (
-                                f"<p>User '<strong>{user.username}</strong>' requested a password reset.</p>"
-                                f"<p>Reset link (for the user): <a href=\"{reset_url}\">{reset_url}</a></p>"
-                                f"<p>If you assist with a password change for a Faculty, follow 2FA if enabled.</p>"
-                            )
-                            send_email(c_subj, clerk_email, c_text, c_html)
-                except Exception:
-                    current_app.logger.warning("Failed to send clerk notification email.")
-                if sent:
-                    flash("If the account exists, a reset link has been emailed.", "info")
-                else:
-                    flash("Could not send email. Showing dev reset link below.", "warning")
-                    flash(f"Dev reset link: {reset_url}", "secondary")
-            else:
-                # Fallback for dev without email
-                flash("If the account exists, a reset link has been sent.", "info")
-                flash(f"Dev reset link: {reset_url}", "secondary")
+                # Find an admin/system user to be the 'creator' of this system announcement
+                # If no system user, we might use the first admin found, or None (if model allows)
+                # But created_by is FK to users.user_id. Let's try to find an admin.
+                system_actor = db.session.execute(select(User).filter(func.lower(User.role) == 'admin')).scalars().first()
+                creator_id = system_actor.user_id if system_actor else user.user_id # Fallback to self if no admin found, though odd
+
+                # Create Announcement
+                title = "Password Reset Request"
+                msg = f"User '{user.username}' (ID: {user.user_id}) has requested a password reset. Please verify their identity and reset the password manually via the Accounts page."
+                
+                ann = Announcement(
+                    title=title,
+                    message=msg,
+                    severity="warning",
+                    is_active=True,
+                    created_by=creator_id,
+                    start_at=datetime.utcnow()
+                )
+                db.session.add(ann)
+                db.session.flush()
+
+                # Add Audience: Principal and Clerk
+                for r in ["principal", "clerk"]:
+                    aud = AnnouncementAudience(announcement_id_fk=ann.announcement_id, role=r)
+                    db.session.add(aud)
+                
+                db.session.commit()
+                current_app.logger.info(f"Password reset request for {username} created as Announcement #{ann.announcement_id}")
+
+            except Exception as e:
+                current_app.logger.error(f"Failed to create reset announcement: {e}")
+                db.session.rollback()
+
+            flash("Request sent to Administration. Please contact the Principal or Clerk office.", "info")
         else:
-            flash("If the account exists, a reset link has been sent.", "info")
+            # Same message to prevent user enumeration
+            flash("Request sent to Administration. Please contact the Principal or Clerk office.", "info")
         return redirect(url_for("main.forgot_password"))
     return render_template("forgot_password.html")
 
