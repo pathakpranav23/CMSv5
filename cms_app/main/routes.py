@@ -8439,13 +8439,12 @@ def attendance_report_admin():
         q = q.filter(Attendance.division_id_fk == division_id)
     rows = db.session.execute(q.order_by(Attendance.date_marked.asc())).scalars().all()
 
-    # Aggregations
     totals_by_subject = {}
     totals_by_division = {}
-    # Track per-subject session dates and unique students by status for clearer metrics
     subject_trackers = {}
-    # Track per-division unique students by status for reach metrics
     div_trackers = {}
+    lecture_sessions = set()
+    lecture_per_day = {}
     div_map = {d.division_id: d for d in db.session.execute(select(Division)).scalars().all()}
     for r in rows:
         sid = r.subject_id_fk
@@ -8455,10 +8454,8 @@ def attendance_report_admin():
             totals_by_subject[sid][r.status] += 1
         totals_by_subject[sid]["total"] += 1
 
-        # Build subject trackers: session dates and unique students per status
         st = subject_trackers.setdefault(sid, {"dates": set(), "present_students": set(), "absent_students": set(), "late_students": set()})
         try:
-            # date_marked is a date; store in set for session count
             st["dates"].add(r.date_marked)
         except Exception:
             pass
@@ -8469,7 +8466,6 @@ def attendance_report_admin():
         elif r.status == "L":
             st["late_students"].add(r.student_id_fk)
 
-        # Division
         did = r.division_id_fk
         div = div_map.get(did)
         dkey = did or 0
@@ -8479,7 +8475,6 @@ def attendance_report_admin():
             totals_by_division[dkey][r.status] += 1
         totals_by_division[dkey]["total"] += 1
 
-        # Build division trackers: unique students per status
         dt = div_trackers.setdefault(dkey, {"present_students": set(), "absent_students": set(), "late_students": set()})
         if r.status == "P":
             dt["present_students"].add(r.student_id_fk)
@@ -8488,7 +8483,12 @@ def attendance_report_admin():
         elif r.status == "L":
             dt["late_students"].add(r.student_id_fk)
 
-    # Enrichment: add ratios (L counted as present), context metrics, and reach
+        session_key = (r.date_marked, r.subject_id_fk, r.division_id_fk, r.period_no or 0)
+        if session_key not in lecture_sessions:
+            lecture_sessions.add(session_key)
+            if r.date_marked:
+                lecture_per_day[r.date_marked] = lecture_per_day.get(r.date_marked, 0) + 1
+
     from ..models import StudentSubjectEnrollment
     for sid, t in totals_by_subject.items():
         tracker = subject_trackers.get(sid, {})
@@ -8525,7 +8525,6 @@ def attendance_report_admin():
         t["reach_present_pct"] = reach_present_pct
         t["reach_absent_pct"] = reach_absent_pct
 
-    # Enrichment for divisions: ratios and reach (L counted as Present)
     for did, t in totals_by_division.items():
         p = int(t.get("P", 0))
         a = int(t.get("A", 0))
@@ -8559,6 +8558,11 @@ def attendance_report_admin():
         t["enrolled"] = enrolled_div_distinct
         t["reach_present_pct"] = reach_present_pct
         t["reach_absent_pct"] = reach_absent_pct
+
+    lecture_sessions_total = len(lecture_sessions)
+    lecture_days = sorted(lecture_per_day.items(), key=lambda x: x[0])
+    lecture_active_days = len(lecture_days)
+    avg_lectures_per_day = round((lecture_sessions_total / lecture_active_days), 1) if lecture_active_days else None
 
     # CSV export (raw rows)
     if export_raw == "csv":
@@ -8739,6 +8743,9 @@ def attendance_report_admin():
         chart_division_absent_pct=chart_division_absent_pct,
         student_leaderboard=student_leaderboard,
         csv_export_url=csv_export_url_admin,
+        lecture_sessions_total=lecture_sessions_total,
+        lecture_days=lecture_days,
+        avg_lectures_per_day=avg_lectures_per_day,
     )
 
 # Faculty attendance report scoped to assignments

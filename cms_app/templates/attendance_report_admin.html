@@ -72,6 +72,66 @@
     </div>
   </form>
 
+  <div class="row mb-3">
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <div class="small text-muted">Total lectures in period</div>
+          <div class="h4 mb-0">{{ lecture_sessions_total or 0 }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <div class="small text-muted">Active teaching days</div>
+          <div class="h4 mb-0">{{ lecture_days|length }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <div class="small text-muted">Average lectures per active day</div>
+          <div class="h4 mb-0">{% if avg_lectures_per_day is not none %}{{ avg_lectures_per_day }}{% else %}-{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row mb-3">
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header card-header-standard"><div class="card-title">Lectures by Day</div></div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-modern table-striped table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Date</th>
+                  <th>Lectures</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for d, c in lecture_days %}
+                <tr>
+                  <td>{{ d.strftime('%d %b %Y') }}</td>
+                  <td>{{ c }}</td>
+                </tr>
+                {% endfor %}
+                {% if lecture_days|length == 0 %}
+                <tr>
+                  <td colspan="2" class="text-muted">No lectures in this period.</td>
+                </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="row">
     <div class="col-md-6">
       <h6>Subject Attendance (Percent Only)</h6>
