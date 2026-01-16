@@ -4,7 +4,7 @@ from werkzeug.utils import secure_filename
 import os
 import csv
 from sqlalchemy import or_, select, and_
-from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails
+from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
 from ..api_utils import api_success, api_error
@@ -2526,6 +2526,7 @@ def dashboard():
     try:
         role_lower_for_fees = (role or "").strip().lower()
         if role_lower_for_fees == "clerk":
+            print("DEBUG: INSIDE CLERK BLOCK")
             from datetime import date as _date_cls, datetime as _dt_cls, timedelta as _td_cls
             today_cls = _date_cls.today()
             start_dt = _dt_cls(today_cls.year, today_cls.month, today_cls.day)
@@ -2555,7 +2556,8 @@ def dashboard():
                 "pending_count": int(pending_count),
                 "rejected_count": int(rejected_count),
             }
-    except Exception:
+    except Exception as e:
+        print(f"CLERK FEES ERROR: {e}")
         clerk_fees = None
 
     # Active announcements (time-windowed), audience-targeted and dismissible per-user.
