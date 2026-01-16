@@ -4222,6 +4222,13 @@ def forgot_password():
             pass
         username = (request.form.get("username") or "").strip()
         user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
+        
+        # Fallback: If not found by username, check if it's an email for Faculty
+        if not user and "@" in username:
+            fac = db.session.execute(select(Faculty).filter_by(email=username)).scalars().first()
+            if fac and fac.user_id_fk:
+                user = db.session.get(User, fac.user_id_fk)
+
         if user:
             # Instead of emailing a reset link, create an Announcement for Principals/Clerks
             # This ensures only authorized personnel can handle password resets
