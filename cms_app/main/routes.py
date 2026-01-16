@@ -7410,7 +7410,6 @@ def _get_serializer():
 @main_bp.route("/admin/users")
 @login_required
 @role_required("admin", "principal")
-@cache.cached(timeout=60, key_prefix=lambda: f"users_list_{getattr(current_user, 'user_id', 'anon')}_{request.full_path}", unless=lambda: session.get("_flashes"))
 def users_list():
     q_role = (request.args.get("role") or "").strip()
     q_username = (request.args.get("username") or "").strip()
