@@ -91,6 +91,69 @@
     </div>
   </div>
 
+  {% if (current_user.role|lower) == 'student' and student_view %}
+  <div class="row g-3 mb-3">
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header card-header-standard"><div class="card-title">{{ t('My Attendance') }}</div></div>
+        <div class="card-body">
+          {% if student_view.attendance %}
+            <div class="display-6 mb-1">{{ student_view.attendance.overall_pct }}%</div>
+            <div class="small text-muted">{{ t('Present') }} {{ student_view.attendance.present }} / {{ student_view.attendance.total }}</div>
+          {% else %}
+            <div class="text-muted small">{{ t('No attendance records yet.') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header card-header-standard"><div class="card-title">{{ t('My Fees') }}</div></div>
+        <div class="card-body">
+          {% if student_view.fees %}
+            <div class="small mb-1">{{ t('Total Due') }}: {{ student_view.fees.total_due }}</div>
+            <div class="small mb-1">{{ t('Total Paid') }}: {{ student_view.fees.total_paid }}</div>
+            <div class="h5 mb-0">{{ t('Pending') }}: {{ student_view.fees.pending }}</div>
+          {% else %}
+            <div class="text-muted small">{{ t('No fee records yet.') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header card-header-standard"><div class="card-title">{{ t('My GPA') }}</div></div>
+        <div class="card-body">
+          {% if student_view.gpa and student_view.gpa.avg_gpa %}
+            <div class="display-6 mb-1">{{ student_view.gpa.avg_gpa }}</div>
+            <div class="small text-muted">{{ t('Average across recorded subjects') }}</div>
+          {% else %}
+            <div class="text-muted small">{{ t('No grade records yet.') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row g-3 mb-3">
+    <div class="col-md-8">
+      <div class="card h-100">
+        <div class="card-header card-header-standard"><div class="card-title">{{ t('Subjects To Watch') }}</div></div>
+        <div class="card-body">
+          {% if student_view.low_attendance_subjects and student_view.low_attendance_subjects|length > 0 %}
+            <ul class="mb-0">
+              {% for s in student_view.low_attendance_subjects %}
+                <li>{{ s.subject }} – {{ s.attendance }}%</li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <div class="text-muted small">{{ t('No subjects below 75% attendance.') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Role-Based Infographics placed right after hero and above modules grid -->
   <div class="mt-3">
     <div class="d-flex justify-content-between align-items-center mb-2">
@@ -168,7 +231,63 @@
           </div>
         </div>
       </div>
+      <div class="row g-3 mt-2">
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Programs With No Students') }}</div></div>
+            <div class="card-body">
+              {% if charts.admin_insights and charts.admin_insights.no_students_programs %}
+                <ul class="mb-0">
+                  {% for name in charts.admin_insights.no_students_programs %}
+                    <li>{{ name }}</li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="text-muted small">{{ t('All programs have students.') }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Programs With No Staff') }}</div></div>
+            <div class="card-body">
+              {% if charts.admin_insights and charts.admin_insights.no_staff_programs %}
+                <ul class="mb-0">
+                  {% for name in charts.admin_insights.no_staff_programs %}
+                    <li>{{ name }}</li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="text-muted small">{{ t('All programs have assigned staff.') }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Data Quality') }}</div></div>
+            <div class="card-body">
+              <div class="small mb-1">{{ t('Students without mobile number:') }} {{ summary.students_missing_mobile }}</div>
+              <div class="small">{{ t('Students without user account:') }} {{ summary.students_without_user }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
     {% elif (current_user.role|lower) in ['principal','clerk'] %}
+      <div class="mb-3 d-flex flex-wrap gap-2">
+        {% if (current_user.role|lower) == 'principal' %}
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.students_semester_promotion') }}">{{ t('Semester Promotion') }}</a>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.attendance_report_admin') }}">{{ t('Attendance Report') }}</a>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.module_fees') }}">{{ t('Fees Overview') }}</a>
+        {% elif (current_user.role|lower) == 'clerk' %}
+          {% if not fees_disabled %}
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.fees_entry') }}">{{ t('Collect Fees') }}</a>
+          {% endif %}
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.fees_payment_status') }}">{{ t('Payment Status') }}</a>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.students') }}">{{ t('Students') }}</a>
+        {% endif %}
+      </div>
       <div class="row row-cols-1 row-cols-md-2 g-3">
         <div class="col">
           <div class="card">
@@ -215,6 +334,35 @@
             </div>
             {% endif %}
           </div>
+      {% if clerk_fees and (current_user.role|lower) == 'clerk' %}
+      <div class="row g-3 mt-2">
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t("Today's Collections") }}</div></div>
+            <div class="card-body">
+              <div class="h5 mb-1">{{ clerk_fees.today_amount }}</div>
+              <div class="small text-muted">{{ t('Transactions:') }} {{ clerk_fees.today_tx_count }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Pending Verifications') }}</div></div>
+            <div class="card-body">
+              <div class="h5 mb-0">{{ clerk_fees.pending_count }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Rejected Payments') }}</div></div>
+            <div class="card-body">
+              <div class="h5 mb-0">{{ clerk_fees.rejected_count }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
     {% elif (current_user.role|lower) == 'faculty' %}
       <div class="row g-3 mb-4">
         <!-- Low Attendance Heatmap -->
@@ -265,7 +413,14 @@
           <div class="card h-100 border-danger">
             <div class="card-header bg-danger text-white d-flex justify-content-between align-items-center">
               <div class="card-title mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i>{{ t('At-Risk Students Spotlight (<75% Attendance)') }}</div>
-              <span class="badge bg-light text-danger">{{ charts.at_risk_students|length }}</span>
+              <div class="d-flex align-items-center gap-2">
+                <span class="badge bg-light text-danger">{{ charts.at_risk_students|length }}</span>
+                {% if charts.at_risk_students %}
+                  <a href="{{ url_for('main.announcement_new', recipients=charts.at_risk_students|map(attribute='enrollment')|join(',') ) }}" class="btn btn-sm btn-outline-light">
+                    {{ t('Bulk Announcement') }}
+                  </a>
+                {% endif %}
+              </div>
             </div>
             <div class="card-body p-0">
               <div class="table-responsive">
@@ -293,7 +448,7 @@
                           </div>
                         </td>
                         <td>
-                          <a href="{{ st.email_link }}" class="btn btn-sm btn-outline-danger"><i class="bi bi-envelope"></i> {{ t('Notify') }}</a>
+                          <a href="{{ url_for('main.announcement_new', recipients=st.enrollment) }}" class="btn btn-sm btn-outline-danger"><i class="bi bi-megaphone"></i> {{ t('Create Announcement') }}</a>
                         </td>
                       </tr>
                       {% endfor %}

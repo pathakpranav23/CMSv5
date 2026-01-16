@@ -2204,8 +2204,7 @@ def logout():
 @login_required
 @cache.cached(timeout=60, key_prefix=lambda: f"dashboard_{getattr(current_user, 'user_id', 'anon')}_{request.full_path}", unless=lambda: session.get("_flashes"))
 def dashboard():
-    # Role-aware, program-scoped dashboard (defaults to BCA for Principal)
-    from ..models import Student, Notification
+    from ..models import Student, Notification, FeePayment
     role = (getattr(current_user, "role", None) or (request.args.get("role") or "principal")).strip().lower()
     user_id_raw = str(getattr(current_user, "user_id", "")) or (request.args.get("user_id") or "")
     program_id_raw = str(getattr(current_user, "program_id_fk", "")) or (request.args.get("program_id") or "")
@@ -2292,6 +2291,23 @@ def dashboard():
         "enrollments": enrollments_count,
         "electives": elective_subjects_count,
     }
+
+    try:
+        st_missing_mobile = db.session.scalar(
+            select(func.count()).select_from(Student).filter(
+                or_(Student.mobile == None, func.trim(Student.mobile) == "")
+            )
+        ) or 0
+    except Exception:
+        st_missing_mobile = 0
+    try:
+        st_no_user = db.session.scalar(
+            select(func.count()).select_from(Student).filter(Student.user_id_fk == None)
+        ) or 0
+    except Exception:
+        st_no_user = 0
+    summary["students_missing_mobile"] = st_missing_mobile
+    summary["students_without_user"] = st_no_user
 
     # Attendance summary for dashboard (today), scoped to principal's program
     try:
@@ -2505,6 +2521,42 @@ def dashboard():
         chart_program_id = int(chart_program_raw) if chart_program_raw else None
     except Exception:
         chart_program_id = None
+
+    clerk_fees = None
+    try:
+        role_lower_for_fees = (role or "").strip().lower()
+        if role_lower_for_fees == "clerk":
+            from datetime import date as _date_cls, datetime as _dt_cls, timedelta as _td_cls
+            today_cls = _date_cls.today()
+            start_dt = _dt_cls(today_cls.year, today_cls.month, today_cls.day)
+            end_dt = start_dt + _td_cls(days=1)
+            base_q = select(FeePayment).filter(
+                FeePayment.created_at >= start_dt,
+                FeePayment.created_at < end_dt,
+            )
+            today_verified_q = base_q.filter(FeePayment.status == "verified")
+            today_verified_rows = db.session.execute(
+                today_verified_q.with_only_columns(FeePayment.amount, FeePayment.payment_id)
+            ).all()
+            today_tx_count = len(today_verified_rows)
+            today_amount = 0.0
+            for amt, _pid in today_verified_rows:
+                try:
+                    today_amount += float(amt or 0.0)
+                except Exception:
+                    pass
+            pending_q = select(func.count()).select_from(FeePayment).filter(FeePayment.status == "submitted")
+            pending_count = db.session.scalar(pending_q) or 0
+            rejected_q = select(func.count()).select_from(FeePayment).filter(FeePayment.status == "rejected")
+            rejected_count = db.session.scalar(rejected_q) or 0
+            clerk_fees = {
+                "today_amount": round(today_amount, 2),
+                "today_tx_count": today_tx_count,
+                "pending_count": int(pending_count),
+                "rejected_count": int(rejected_count),
+            }
+    except Exception:
+        clerk_fees = None
 
     # Active announcements (time-windowed), audience-targeted and dismissible per-user.
     # Personal announcements: if recipients are set, show only to selected students and Principal/Clerk.
@@ -2952,6 +3004,31 @@ def dashboard():
                     "staff_by_program": _staff_by_program(),
                     "income_vs_expenses": _income_vs_expenses_annual(),
                 }
+            try:
+                zero_students = []
+                zero_staff = []
+                zero_fees = []
+                for pid_item, name_item in prog_map.items():
+                    s_cnt = _students_for_program(pid_item)
+                    f_cnt = _staff_for_program(pid_item)
+                    fee_amt = _fees_for_program(pid_item)
+                    if s_cnt == 0:
+                        zero_students.append(name_item)
+                    if f_cnt == 0:
+                        zero_staff.append(name_item)
+                    if fee_amt == 0:
+                        zero_fees.append(name_item)
+                charts["admin_insights"] = {
+                    "no_students_programs": zero_students,
+                    "no_staff_programs": zero_staff,
+                    "no_fees_programs": zero_fees,
+                }
+            except Exception:
+                charts["admin_insights"] = {
+                    "no_students_programs": [],
+                    "no_staff_programs": [],
+                    "no_fees_programs": [],
+                }
             charts_semester_scope = None
         else:
             pid_scope = selected_program.program_id if selected_program else None
@@ -3114,11 +3191,97 @@ def dashboard():
     notifications = []
     notifications_vm = []
     s = None
+    student_view = None
     try:
         role_lower = (getattr(current_user, "role", "") or "").strip().lower()
         if role_lower == "student":
             s = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
             if s:
+                student_view = {"attendance": None, "fees": None, "gpa": None, "low_attendance_subjects": []}
+                try:
+                    att_rows = db.session.execute(
+                        select(Attendance.status, Attendance.subject_id_fk).filter_by(student_id_fk=s.enrollment_no)
+                    ).all()
+                    total_att = len(att_rows)
+                    present_att = 0
+                    absent_att = 0
+                    per_subject = {}
+                    for st_status, sid in att_rows:
+                        status_upper = (st_status or "").upper()
+                        if status_upper in ("P", "L"):
+                            present_att += 1
+                        elif status_upper == "A":
+                            absent_att += 1
+                        if sid:
+                            d = per_subject.setdefault(sid, {"present": 0, "total": 0})
+                            d["total"] += 1
+                            if status_upper in ("P", "L"):
+                                d["present"] += 1
+                    overall_pct = int(round((present_att * 100.0) / total_att)) if total_att else 0
+                    low_subjects = []
+                    for sid_item, stats in per_subject.items():
+                        if stats["total"] < 5:
+                            continue
+                        pct_item = int(round((stats["present"] * 100.0) / stats["total"]))
+                        if pct_item < 75:
+                            subj_name = db.session.scalar(select(Subject.subject_name).filter_by(subject_id=sid_item)) or "Subject"
+                            low_subjects.append({"subject": subj_name, "attendance": pct_item})
+                    low_subjects.sort(key=lambda x: x["attendance"])
+                    low_subjects = low_subjects[:5]
+                    student_view["attendance"] = {
+                        "overall_pct": overall_pct,
+                        "present": present_att,
+                        "absent": absent_att,
+                        "total": total_att,
+                    }
+                    student_view["low_attendance_subjects"] = low_subjects
+                except Exception:
+                    student_view["attendance"] = None
+                    student_view["low_attendance_subjects"] = []
+                try:
+                    fee_rows = db.session.execute(
+                        select(FeesRecord.amount_due, FeesRecord.amount_paid).filter_by(student_id_fk=s.enrollment_no)
+                    ).all()
+                    total_due = 0.0
+                    total_paid = 0.0
+                    for due_val, paid_val in fee_rows:
+                        try:
+                            total_due += float(due_val or 0.0)
+                        except Exception:
+                            pass
+                        try:
+                            total_paid += float(paid_val or 0.0)
+                        except Exception:
+                            pass
+                    pending_amt = total_due - total_paid
+                    if pending_amt < 0:
+                        pending_amt = 0.0
+                    student_view["fees"] = {
+                        "total_due": round(total_due, 2),
+                        "total_paid": round(total_paid, 2),
+                        "pending": round(pending_amt, 2),
+                    }
+                except Exception:
+                    student_view["fees"] = None
+                try:
+                    gpa_rows = db.session.execute(
+                        select(Grade.gpa_for_subject).filter_by(student_id_fk=s.enrollment_no)
+                    ).scalars().all()
+                    if gpa_rows:
+                        total_gpa = 0.0
+                        count_gpa = 0
+                        for g_val in gpa_rows:
+                            try:
+                                total_gpa += float(g_val or 0.0)
+                                count_gpa += 1
+                            except Exception:
+                                pass
+                        avg_gpa = round(total_gpa / count_gpa, 2) if count_gpa else None
+                    else:
+                        avg_gpa = None
+                    student_view["gpa"] = {"avg_gpa": avg_gpa}
+                except Exception:
+                    student_view["gpa"] = None
                 notifications = (
                     db.session.execute(
                         select(Notification)
@@ -3171,11 +3334,13 @@ def dashboard():
         chart_semester=chart_semester,
         chart_program_id=chart_program_id,
         chart_subject_id=(request.args.get("chart_subject_id") or None),
+        clerk_fees=clerk_fees,
         announcements=announcements,
         notifications=notifications,
         notifications_vm=notifications_vm,
         charts=charts,
         charts_semester_scope=(charts_semester_scope if (role_lower == 'admin') else None),
+        student_view=student_view,
     )
 
 @main_bp.route("/announcements")
@@ -3442,8 +3607,12 @@ def announcement_new():
                 "program_id_fk": program_id_raw, "start_at": start_at_raw, "end_at": end_at_raw,
                 "audience_roles": audience_roles, "recipient_enrollment_nos": recipients_raw,
             })
-    # GET
-    return render_template("announcement_new.html", programs=programs, errors=[], students_for_picker=students_for_picker, form_data={"audience_roles": []})
+    pre_recipients = (request.args.get("recipients") or "").strip()
+    default_form = {"audience_roles": []}
+    if pre_recipients:
+        default_form["recipient_enrollment_nos"] = pre_recipients
+        default_form["audience_roles"] = ["student"]
+    return render_template("announcement_new.html", programs=programs, errors=[], students_for_picker=students_for_picker, form_data=default_form)
 
 @main_bp.route("/announcements/<int:announcement_id>/edit", methods=["GET", "POST"])
 @login_required
