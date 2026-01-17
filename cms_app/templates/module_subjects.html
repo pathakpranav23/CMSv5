@@ -23,7 +23,8 @@
             <a class="list-group-item list-group-item-action" href="{{ url_for('main.subjects_list') }}">View Subjects</a>
             {% if (role or '') in ['admin','principal'] %}
               <a class="list-group-item list-group-item-action" href="{{ url_for('main.subject_new') }}">Add Subject</a>
-              <a class="list-group-item list-group-item-action" href="{{ url_for('main.subjects_list') }}">Assign Staff</a>
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.subjects_list') }}">Assign Staff (Single)</a>
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.subjects_bulk_assign') }}">Bulk Assign Staff</a>
             {% endif %}
             {% if (role or '') in ['principal','clerk'] %}
               <a class="list-group-item list-group-item-action" href="{{ url_for('main.offer_electives') }}">Offer Electives</a>

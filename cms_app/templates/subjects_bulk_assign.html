@@ -1,0 +1,148 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title d-flex align-items-center">Bulk Assign Staff <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions">
+      <a class="btn btn-secondary btn-sm" href="{{ url_for('main.module_subjects') }}">Subjects Module</a>
+      <a class="btn btn-outline-secondary btn-sm ms-2" href="{{ url_for('main.subjects_list') }}">View Subjects</a>
+    </div>
+  </div>
+
+  <form class="row g-2 g-md-3 mb-3" method="get" action="{{ url_for('main.subjects_bulk_assign') }}">
+    {% set role_lower = (current_user.role|lower) if current_user.is_authenticated else 'guest' %}
+    {% set user_program_id = current_user.program_id_fk if current_user.is_authenticated else None %}
+    <div class="col-md-5 col-lg-5">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">Prog</span>
+        {% if role_lower == 'principal' and user_program_id %}
+          <select id="program_id" class="form-select form-select-sm" disabled>
+            {% for p in programs %}
+              {% if p.program_id == user_program_id %}
+                <option value="{{ p.program_id }}" selected>{{ p.program_name }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          <input type="hidden" name="program_id" value="{{ user_program_id }}" />
+        {% else %}
+          <select id="program_id" name="program_id" class="form-select form-select-sm">
+            {% for p in programs %}
+              <option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+            {% endfor %}
+          </select>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-md-2 col-lg-2">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">Sem</span>
+        <select id="semester" name="semester" class="form-select form-select-sm">
+          {% for s in range(1, 9) %}
+            <option value="{{ s }}" {% if semester == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="col-md-2 col-lg-2">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">Medium</span>
+        <select id="medium" name="medium" class="form-select form-select-sm">
+          <option value="" {% if not selected_medium %}selected{% endif %}>Any</option>
+          <option value="English" {% if selected_medium == 'English' %}selected{% endif %}>English</option>
+          <option value="Gujarati" {% if selected_medium == 'Gujarati' %}selected{% endif %}>Gujarati</option>
+        </select>
+      </div>
+    </div>
+    <div class="col-md-3 col-lg-3">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">AY</span>
+        <select name="academic_year" class="form-select form-select-sm">
+          {% set selected_ay = academic_year or '' %}
+          {% for ay in academic_year_options %}
+            <option value="{{ ay }}" {% if selected_ay == ay %}selected{% endif %}>{{ ay }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="col-12 col-md-12 col-lg-12">
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+        <a href="{{ url_for('main.subjects_bulk_assign') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </div>
+  </form>
+
+  {% if not subjects or not divisions %}
+    <div class="alert alert-info">Select a program and semester to view the grid.</div>
+  {% else %}
+    <form method="post" action="{{ url_for('main.subjects_bulk_assign') }}">
+      <input type="hidden" name="program_id" value="{{ selected_program.program_id if selected_program else '' }}" />
+      <input type="hidden" name="semester" value="{{ semester }}" />
+      <input type="hidden" name="medium" value="{{ selected_medium or '' }}" />
+      <input type="hidden" name="academic_year" value="{{ academic_year or '' }}" />
+
+      <div class="card">
+        <div class="card-header card-header-standard">
+          <div class="card-title">Assignments Grid</div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-modern table-striped table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th scope="col">Subject</th>
+                  {% for d in divisions %}
+                    <th scope="col" class="text-center">Div {{ d.division_code }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for s in subjects %}
+                  <tr>
+                    <td>
+                      <div class="fw-semibold">{{ s.subject_name }}</div>
+                      <div class="text-muted small">
+                        {{ s.subject_code or '—' }}
+                        {% if s.medium_tag %} • {{ s.medium_tag }}{% endif %}
+                      </div>
+                    </td>
+                    {% for d in divisions %}
+                      {% set key = (s.subject_id, d.division_id) %}
+                      {% set current = assignments_map.get(key) or {} %}
+                      {% set current_primary = current.get('primary') %}
+                      {% set current_co = current.get('co') %}
+                      <td class="align-middle" style="min-width: 200px;">
+                        <div class="mb-1 small fw-semibold">Primary Faculty</div>
+                        <select name="fac_{{ s.subject_id }}_{{ d.division_id }}" class="form-select form-select-sm mb-2">
+                          <option value="">—</option>
+                          {% for f in faculties %}
+                            <option value="{{ f.user_id_fk }}" {% if current_primary == f.user_id_fk %}selected{% endif %}>{{ f.full_name }}</option>
+                          {% endfor %}
+                        </select>
+                        <div class="mb-1 small">Co-Faculty (optional)</div>
+                        <select name="cofac_{{ s.subject_id }}_{{ d.division_id }}" class="form-select form-select-sm">
+                          <option value="">—</option>
+                          {% for f in faculties %}
+                            <option value="{{ f.user_id_fk }}" {% if current_co == f.user_id_fk %}selected{% endif %}>{{ f.full_name }}</option>
+                          {% endfor %}
+                        </select>
+                      </td>
+                    {% endfor %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card-footer d-flex justify-content-between align-items-center">
+          <div class="text-muted small">
+            {{ subjects|length }} subject(s), {{ divisions|length }} division(s)
+          </div>
+          <button type="submit" class="btn btn-primary">Save Assignments</button>
+        </div>
+      </div>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

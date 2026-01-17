@@ -25,6 +25,7 @@
             {% if (role or '') in ['admin','principal'] %}
               <a class="list-group-item list-group-item-action" href="{{ url_for('main.faculty_new') }}">{{ t('Add Staff') }}</a>
               <a class="list-group-item list-group-item-action" href="{{ url_for('main.subjects_list') }}">{{ t('Assign Staff to Divisions') }}</a>
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.semester_coordinators') }}">{{ t('Semester Coordinators') }}</a>
             {% endif %}
           </div>
         </div>

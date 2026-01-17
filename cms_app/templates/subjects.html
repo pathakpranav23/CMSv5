@@ -15,7 +15,7 @@
       {% endif %}
       {% if can_manage %}
         <a class="btn btn-success btn-sm ms-2" href="{{ url_for('main.subject_new', program_id=filters.program_id, semester=filters.semester) }}?medium={{ filters.medium or '' }}">Add Subject</a>
-        <a class="btn btn-info btn-sm ms-2" href="#" onclick="showAssignStaffModal()">Assign Staff</a>
+        <a class="btn btn-info btn-sm ms-2" href="#" onclick="showAssignStaffModal()">How to Assign Staff</a>
       {% endif %}
       {% if can_toggle %}
         <a class="btn btn-outline-primary btn-sm ms-2" href="{{ url_for('main.subjects_import', program_id=filters.program_id, semester=filters.semester) }}">Import Subjects</a>
@@ -147,7 +147,11 @@
                   {% endif %}
                 </form>
                 {% if can_manage %}
-                  <a class="btn btn-sm btn-primary ms-2" href="{{ url_for('main.subject_assign', subject_id=r.subject_id) }}">Assign</a>
+                  {% if r.has_assignment %}
+                    <a class="btn btn-sm btn-primary ms-2" href="{{ url_for('main.subject_assign', subject_id=r.subject_id) }}">Re-assign</a>
+                  {% else %}
+                    <a class="btn btn-sm btn-primary ms-2" href="{{ url_for('main.subject_assign', subject_id=r.subject_id) }}">Assign</a>
+                  {% endif %}
                 {% endif %}
               </td>
               {% endif %}
@@ -177,12 +181,12 @@
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="assignStaffModalLabel">Assign Staff to Subject</h5>
+        <h5 class="modal-title" id="assignStaffModalLabel">How to Assign Staff</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <p>Please select a subject from the table below to assign staff to it.</p>
-        <p class="text-muted">Click the "Assign" button in the Actions column for the specific subject you want to assign staff to.</p>
+        <p>This dialog is only a short guide.</p>
+        <p class="text-muted">Use the "Assign" or "Re-assign" button in the Actions column for the specific subject.</p>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>

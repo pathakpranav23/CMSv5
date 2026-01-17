@@ -4,7 +4,7 @@ from werkzeug.utils import secure_filename
 import os
 import csv
 from sqlalchemy import or_, select, and_
-from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails
+from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
 from ..api_utils import api_success, api_error
@@ -289,6 +289,59 @@ def current_academic_year():
     end_year_short = str((start_year + 1))[-2:]
     return f"{start_year}-{end_year_short}"
 
+def academic_year_options():
+    now = datetime.now()
+    start_year = now.year if now.month >= 6 else (now.year - 1)
+    years = [start_year - 1, start_year, start_year + 1]
+    options = []
+    for y in years:
+        end_year_short = str((y + 1))[-2:]
+        options.append(f"{y}-{end_year_short}")
+    return options
+
+
+def get_semester_coordinators_for_scope(program_id: int, semester: int, medium: str, academic_year: str):
+    try:
+        if not (program_id and semester and academic_year):
+            return []
+        medium_val = (medium or "").strip() or None
+        q = (
+            select(SemesterCoordinator, User, Faculty)
+            .join(User, SemesterCoordinator.faculty_user_id_fk == User.user_id)
+            .outerjoin(Faculty, Faculty.user_id_fk == User.user_id)
+            .filter(
+                SemesterCoordinator.program_id_fk == program_id,
+                SemesterCoordinator.semester == semester,
+                SemesterCoordinator.academic_year == academic_year,
+                SemesterCoordinator.is_active.is_(True),
+            )
+        )
+        if medium_val:
+            q = q.filter(SemesterCoordinator.medium_tag == medium_val)
+        rows = db.session.execute(q.order_by(User.username)).all()
+        result = []
+        for sc, u, f in rows:
+            name = getattr(f, "full_name", None) or u.username
+            email = getattr(f, "email", None) or (u.username if "@" in (u.username or "") else "")
+            mobile = getattr(f, "mobile", None) or ""
+            result.append(
+                {
+                    "coordinator_id": sc.coordinator_id,
+                    "user_id": u.user_id,
+                    "faculty_id": getattr(f, "faculty_id", None),
+                    "name": name,
+                    "email": email,
+                    "mobile": mobile,
+                    "medium_tag": sc.medium_tag or "",
+                    "program_id_fk": sc.program_id_fk,
+                    "semester": sc.semester,
+                    "academic_year": sc.academic_year,
+                }
+            )
+        return result
+    except Exception:
+        return []
+
 def _user_is_admin_or_principal():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     return role in ("admin", "principal")
@@ -412,6 +465,38 @@ def _program_dropdown_context(q_program_raw: str = None, *, include_admin_all: b
         "allow_all_programs": allow_all_programs,
         "role": role,
     }
+
+
+def _rebalance_program_divisions_for_semester(program: Program, semester: int):
+    if not program or not semester:
+        return
+    divisions = db.session.execute(
+        select(Division)
+        .filter_by(program_id_fk=program.program_id, semester=semester)
+        .order_by(Division.division_code.asc())
+    ).scalars().all()
+    if not divisions:
+        return
+    students = db.session.execute(
+        select(Student)
+        .filter_by(program_id_fk=program.program_id)
+        .filter_by(current_semester=semester)
+        .order_by(Student.enrollment_no.asc())
+    ).scalars().all()
+    if not students:
+        return
+    div_count = len(divisions)
+    changed = False
+    for idx, s in enumerate(students):
+        target_div = divisions[idx % div_count]
+        if s.division_id_fk != target_div.division_id:
+            s.division_id_fk = target_div.division_id
+            changed = True
+    if changed:
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
 # Clerk fees entry components (standardized list)
 FEE_COMPONENTS = [
@@ -6558,17 +6643,26 @@ def subjects_list():
             .offset((selected_page - 1) * selected_limit)
             .limit(selected_limit)
         ).scalars().all()
-        # Build rows with type code and credit split
-        # Cache subject types for fewer queries
         st_map = {st.type_id: st.type_code for st in db.session.execute(select(SubjectType)).scalars().all()}
-        # Compute current academic year string (e.g., 2025-26)
         now = datetime.now()
         start_year = now.year if now.month >= 6 else (now.year - 1)
         end_year_short = str((start_year + 1))[-2:]
         academic_year = f"{start_year}-{end_year_short}"
+        subject_ids = [s.subject_id for s in subs]
+        assignments_map = {}
+        if subject_ids:
+            assignment_counts = db.session.execute(
+                select(CourseAssignment.subject_id_fk, func.count())
+                .filter(
+                    CourseAssignment.subject_id_fk.in_(subject_ids),
+                    CourseAssignment.academic_year == academic_year,
+                    CourseAssignment.is_active.is_(True),
+                )
+                .group_by(CourseAssignment.subject_id_fk)
+            ).all()
+            assignments_map = {sid: cnt for sid, cnt in assignment_counts}
         for s in subs:
             cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=s.subject_id)).scalars().first()
-            # Count active enrollments for this subject in the current academic year
             enrolled_count = db.session.scalar(select(func.count()).select_from(StudentSubjectEnrollment).filter_by(
                 subject_id_fk=s.subject_id,
                 academic_year=academic_year,
@@ -6586,6 +6680,7 @@ def subjects_list():
                 "enrolled_count": enrolled_count,
                 "is_elective": bool(getattr(s, "is_elective", False)),
                 "medium_tag": (s.medium_tag or ""),
+                "has_assignment": bool(assignments_map.get(s.subject_id, 0)),
             })
 
     return render_template(
@@ -6739,6 +6834,7 @@ def offer_electives():
                 selected_program=selected_program,
                 semester=semester,
                 academic_year=academic_year,
+                academic_year_options=academic_year_options(),
                 subjects_core=subjects_core,
                 subjects_electives=subjects_electives,
                 students=students,
@@ -6815,7 +6911,8 @@ def offer_electives():
         programs=programs,
         selected_program=selected_program,
         semester=semester,
-        academic_year="",
+        academic_year=current_academic_year(),
+        academic_year_options=academic_year_options(),
         subjects_core=subjects_core,
         subjects_electives=subjects_electives,
         electives_count=electives_count,
@@ -6823,6 +6920,214 @@ def offer_electives():
         division_map=division_map,
         errors=[],
         form_data={},
+    )
+
+
+@main_bp.route("/subjects/bulk-assign", methods=["GET", "POST"])
+@login_required
+@role_required("admin", "principal")
+def subjects_bulk_assign():
+    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    role_lower = (getattr(current_user, "role", "") or "").strip().lower()
+    principal_program_id = getattr(current_user, "program_id_fk", None) if role_lower == "principal" else None
+    program_id_raw = (request.values.get("program_id") or "").strip()
+    sem_raw = (request.values.get("semester") or "").strip()
+    medium_raw = (request.values.get("medium") or "").strip()
+    academic_year = (request.values.get("academic_year") or "").strip()
+    selected_program = None
+    program_id = None
+    if principal_program_id:
+        program_id = principal_program_id
+        selected_program = db.session.get(Program, principal_program_id)
+    elif program_id_raw:
+        try:
+            program_id = int(program_id_raw)
+            selected_program = db.session.get(Program, program_id)
+        except Exception:
+            selected_program = None
+    if not selected_program and programs:
+        selected_program = programs[0]
+        program_id = selected_program.program_id
+    try:
+        semester = int(sem_raw) if sem_raw else 1
+    except Exception:
+        semester = 1
+    allowed_mediums = {"English", "Gujarati"}
+    selected_medium = None
+    if medium_raw:
+        m = medium_raw.capitalize()
+        selected_medium = m if m in allowed_mediums else None
+    now = datetime.now()
+    start_year = now.year if now.month >= 6 else (now.year - 1)
+    end_year_short = str(start_year + 1)[-2:]
+    default_academic_year = f"{start_year}-{end_year_short}"
+    if not academic_year:
+        academic_year = default_academic_year
+    academic_year_opts = academic_year_options()
+    subjects = []
+    divisions = []
+    faculties = []
+    assignments_map = {}
+    if selected_program and semester:
+        q = select(Subject).filter_by(program_id_fk=selected_program.program_id, semester=semester)
+        if selected_medium:
+            q = q.filter(Subject.medium_tag == selected_medium)
+        subjects = db.session.execute(q.order_by(Subject.subject_name)).scalars().all()
+        divisions = db.session.execute(
+            select(Division)
+            .filter_by(program_id_fk=selected_program.program_id, semester=semester)
+            .order_by(Division.division_code)
+        ).scalars().all()
+        faculties = db.session.execute(
+            select(Faculty)
+            .filter_by(program_id_fk=selected_program.program_id)
+            .order_by(Faculty.full_name)
+        ).scalars().all()
+        if request.method == "POST" and academic_year and subjects and divisions:
+            subject_ids = [s.subject_id for s in subjects]
+            division_ids = [d.division_id for d in divisions]
+            existing_all = db.session.execute(
+                select(CourseAssignment).where(
+                    CourseAssignment.subject_id_fk.in_(subject_ids),
+                    CourseAssignment.division_id_fk.in_(division_ids),
+                    CourseAssignment.academic_year == academic_year,
+                )
+            ).scalars().all()
+            desired = {}
+            desired_co = {}
+            for s in subjects:
+                for d in divisions:
+                    key = (s.subject_id, d.division_id)
+                    field_name = f"fac_{s.subject_id}_{d.division_id}"
+                    co_field_name = f"cofac_{s.subject_id}_{d.division_id}"
+                    val_raw = (request.form.get(field_name) or "").strip()
+                    co_val_raw = (request.form.get(co_field_name) or "").strip()
+                    faculty_id = None
+                    co_faculty_id = None
+                    if val_raw:
+                        try:
+                            faculty_id = int(val_raw)
+                        except Exception:
+                            faculty_id = None
+                    desired[key] = faculty_id
+                    if co_val_raw:
+                        try:
+                            co_faculty_id = int(co_val_raw)
+                        except Exception:
+                            co_faculty_id = None
+                    desired_co[key] = co_faculty_id
+            have_primary_for_key = {}
+            have_co_for_key = {}
+            for ca in existing_all:
+                key = (ca.subject_id_fk, ca.division_id_fk)
+                desired_fac = desired.get(key)
+                desired_co_fac = desired_co.get(key)
+                role = ca.role or "primary"
+                if role == "primary":
+                    if desired_fac and ca.faculty_id_fk == desired_fac:
+                        if not ca.is_active:
+                            ca.is_active = True
+                        have_primary_for_key[key] = True
+                    else:
+                        if ca.is_active:
+                            ca.is_active = False
+                else:
+                    if desired_co_fac and ca.faculty_id_fk == desired_co_fac:
+                        if not ca.is_active:
+                            ca.is_active = True
+                        have_co_for_key.setdefault(key, set()).add(ca.faculty_id_fk)
+                    else:
+                        if ca.is_active:
+                            ca.is_active = False
+            created_count = 0
+            for key, fac_id in desired.items():
+                if not fac_id:
+                    continue
+                if key in have_primary_for_key:
+                    continue
+                ca = CourseAssignment(
+                    faculty_id_fk=fac_id,
+                    subject_id_fk=key[0],
+                    division_id_fk=key[1],
+                    academic_year=academic_year,
+                    role="primary",
+                    is_active=True,
+                )
+                db.session.add(ca)
+                created_count += 1
+            for key, co_fac_id in desired_co.items():
+                if not co_fac_id:
+                    continue
+                existing_co = db.session.execute(
+                    select(CourseAssignment).where(
+                        CourseAssignment.subject_id_fk == key[0],
+                        CourseAssignment.division_id_fk == key[1],
+                        CourseAssignment.academic_year == academic_year,
+                        CourseAssignment.faculty_id_fk == co_fac_id,
+                        CourseAssignment.role == "co",
+                    )
+                ).scalars().first()
+                if existing_co:
+                    if not existing_co.is_active:
+                        existing_co.is_active = True
+                    continue
+                ca_co = CourseAssignment(
+                    faculty_id_fk=co_fac_id,
+                    subject_id_fk=key[0],
+                    division_id_fk=key[1],
+                    academic_year=academic_year,
+                    role="co",
+                    is_active=True,
+                )
+                db.session.add(ca_co)
+                created_count += 1
+            try:
+                db.session.commit()
+                try:
+                    if created_count > 0:
+                        flash(f"Assignments saved. New records created: {created_count}.", "success")
+                    else:
+                        flash("Assignments updated.", "success")
+                except Exception:
+                    pass
+            except Exception:
+                db.session.rollback()
+                try:
+                    flash("Failed to save assignments.", "danger")
+                except Exception:
+                    pass
+        if academic_year:
+            subject_ids = [s.subject_id for s in subjects]
+            division_ids = [d.division_id for d in divisions]
+            if subject_ids and division_ids:
+                existing_active = db.session.execute(
+                    select(CourseAssignment).where(
+                        CourseAssignment.subject_id_fk.in_(subject_ids),
+                        CourseAssignment.division_id_fk.in_(division_ids),
+                        CourseAssignment.academic_year == academic_year,
+                        CourseAssignment.is_active.is_(True),
+                    )
+                ).scalars().all()
+                for ca in existing_active:
+                    key = (ca.subject_id_fk, ca.division_id_fk)
+                    entry = assignments_map.get(key, {"primary": None, "co": None})
+                    if (ca.role or "primary") == "primary":
+                        entry["primary"] = ca.faculty_id_fk
+                    else:
+                        entry["co"] = ca.faculty_id_fk
+                    assignments_map[key] = entry
+    return render_template(
+        "subjects_bulk_assign.html",
+        programs=programs,
+        selected_program=selected_program,
+        semester=semester,
+        selected_medium=selected_medium,
+        academic_year=academic_year,
+        academic_year_options=academic_year_opts,
+        subjects=subjects,
+        divisions=divisions,
+        faculties=faculties,
+        assignments_map=assignments_map,
     )
 
 
@@ -6835,6 +7140,32 @@ def subject_assign(subject_id):
     if not subj:
         abort(404)
     program = db.session.get(Program, subj.program_id_fk)
+    current_ay = current_academic_year()
+    academic_year_opts = academic_year_options()
+
+    assignments_q = (
+        select(CourseAssignment, Faculty.full_name, Division.division_code)
+        .outerjoin(Faculty, Faculty.user_id_fk == CourseAssignment.faculty_id_fk)
+        .outerjoin(Division, Division.division_id == CourseAssignment.division_id_fk)
+        .where(CourseAssignment.subject_id_fk == subj.subject_id)
+        .where(CourseAssignment.is_active.is_(True))
+        .order_by(CourseAssignment.academic_year.desc(), Division.division_code, Faculty.full_name)
+    )
+    assignments_rows = db.session.execute(assignments_q).all()
+    existing_assignments = []
+    for ca, faculty_name, division_code in assignments_rows:
+        if ca is None:
+            continue
+        label_division = division_code or ("ALL" if ca.division_id_fk is None else "")
+        existing_assignments.append(
+            {
+                "assignment_id": ca.assignment_id,
+                "faculty_name": faculty_name or "",
+                "division_code": label_division or "",
+                "academic_year": ca.academic_year or "",
+                "role": (ca.role or "primary"),
+            }
+        )
 
     # Principal scope restriction: only allow assignment within assigned program
     try:
@@ -6852,6 +7183,8 @@ def subject_assign(subject_id):
         faculty_user_id_raw = form.get("faculty_user_id")
         division_id_raw = form.get("division_id")
         academic_year = (form.get("academic_year") or "").strip()
+        role_raw = (form.get("role") or "").strip().lower()
+        role = "primary" if role_raw not in ("primary", "co") else role_raw
 
         # Validate
         try:
@@ -6881,10 +7214,14 @@ def subject_assign(subject_id):
                 errors=errors,
                 faculties=faculties,
                 divisions=divisions,
+                existing_assignments=existing_assignments,
+                 academic_year_options=academic_year_opts,
+                 current_ay=current_ay,
                 form_data={
                     "faculty_user_id": faculty_user_id_raw,
                     "division_id": division_id_raw,
                     "academic_year": academic_year,
+                    "role": role,
                 },
             )
 
@@ -6896,14 +7233,29 @@ def subject_assign(subject_id):
             created_cnt = 0
             skipped_cnt = 0
             for d in divisions_all:
-                existing = db.session.execute(select(CourseAssignment).filter_by(
-                    faculty_id_fk=faculty_user_id,
-                    subject_id_fk=subj.subject_id,
-                    division_id_fk=d.division_id,
-                    academic_year=academic_year,
-                    is_active=True,
-                )).scalars().first()
-                if existing:
+                if role == "primary":
+                    existing_primary = db.session.execute(
+                        select(CourseAssignment).filter_by(
+                            subject_id_fk=subj.subject_id,
+                            division_id_fk=d.division_id,
+                            academic_year=academic_year,
+                            role="primary",
+                            is_active=True,
+                        )
+                    ).scalars().all()
+                    for ca in existing_primary:
+                        ca.is_active = False
+                existing_same = db.session.execute(
+                    select(CourseAssignment).filter_by(
+                        faculty_id_fk=faculty_user_id,
+                        subject_id_fk=subj.subject_id,
+                        division_id_fk=d.division_id,
+                        academic_year=academic_year,
+                        role=role,
+                        is_active=True,
+                    )
+                ).scalars().first()
+                if existing_same:
                     skipped_cnt += 1
                     continue
                 ca = CourseAssignment(
@@ -6911,6 +7263,7 @@ def subject_assign(subject_id):
                     subject_id_fk=subj.subject_id,
                     division_id_fk=d.division_id,
                     academic_year=academic_year,
+                    role=role,
                     is_active=True,
                 )
                 db.session.add(ca)
@@ -6922,15 +7275,30 @@ def subject_assign(subject_id):
                 db.session.rollback()
                 flash("Failed to save assignments.", "danger")
         else:
-            # Avoid duplicate active assignment for same triplet
-            existing = db.session.execute(select(CourseAssignment).filter_by(
-                faculty_id_fk=faculty_user_id,
-                subject_id_fk=subj.subject_id,
-                division_id_fk=division_id,
-                academic_year=academic_year,
-                is_active=True,
-            )).scalars().first()
-            if existing:
+            existing_primary = []
+            if role == "primary":
+                existing_primary = db.session.execute(
+                    select(CourseAssignment).filter_by(
+                        subject_id_fk=subj.subject_id,
+                        division_id_fk=division_id,
+                        academic_year=academic_year,
+                        role="primary",
+                        is_active=True,
+                    )
+                ).scalars().all()
+                for ca in existing_primary:
+                    ca.is_active = False
+            existing_same = db.session.execute(
+                select(CourseAssignment).filter_by(
+                    faculty_id_fk=faculty_user_id,
+                    subject_id_fk=subj.subject_id,
+                    division_id_fk=division_id,
+                    academic_year=academic_year,
+                    role=role,
+                    is_active=True,
+                )
+            ).scalars().first()
+            if existing_same:
                 flash("Assignment already exists and is active.", "warning")
                 return redirect(url_for("main.subjects_list", program_id=subj.program_id_fk, semester=subj.semester))
 
@@ -6939,6 +7307,7 @@ def subject_assign(subject_id):
                 subject_id_fk=subj.subject_id,
                 division_id_fk=division_id,
                 academic_year=academic_year,
+                role=role,
                 is_active=True,
             )
             try:
@@ -6961,6 +7330,9 @@ def subject_assign(subject_id):
         errors=[],
         faculties=faculties,
         divisions=divisions,
+        existing_assignments=existing_assignments,
+        academic_year_options=academic_year_opts,
+        current_ay=current_ay,
         form_data={},
     )
 
@@ -7408,7 +7780,7 @@ def enroll_core():
 
 @main_bp.route("/students/semester-promotion", methods=["GET", "POST"])
 @login_required
-@role_required("principal", "clerk")
+@role_required("admin", "principal", "clerk")
 @csrf_required
 def students_semester_promotion():
     try:
@@ -7454,6 +7826,7 @@ def students_semester_promotion():
                 updated += 1
             try:
                 db.session.commit()
+                _rebalance_program_divisions_for_semester(selected_program, to_semester)
                 try:
                     flash(f"Promoted {updated} students from Sem {from_semester} to Sem {to_semester}.", "success")
                 except Exception:
@@ -8185,6 +8558,7 @@ def attendance_mark():
     except Exception:
         roster_alert = None
 
+    ay_options = academic_year_options()
     return render_template(
         "attendance_mark.html",
         options=options,
@@ -8204,6 +8578,7 @@ def attendance_mark():
         },
         semester_options=semester_options,
         divisions=program_divisions,
+        academic_year_options=ay_options,
     )
 
 # Show attendance with calendar and daily reports
@@ -12902,6 +13277,174 @@ def api_divisions():
     rows = db.session.execute(q.order_by(Division.division_code.asc())).scalars().all()
     items = [{"division_id": d.division_id, "division_code": d.division_code, "semester": d.semester} for d in rows]
     return api_success({"items": items})
+
+@main_bp.route("/admin/semester-coordinators", methods=["GET", "POST"])
+@login_required
+@role_required("admin", "principal")
+@csrf_required
+def semester_coordinators():
+    ctx = _program_dropdown_context(request.values.get("program_id"), include_admin_all=True, default_program_name=None, exclude_names=None, warn_unmapped=True, fallback_to_first=False, prefer_user_program_default=True)
+    program_list = ctx.get("program_list", [])
+    selected_program_id = ctx.get("selected_program_id")
+    program = db.session.get(Program, selected_program_id) if selected_program_id else None
+
+    sem_raw = (request.values.get("semester") or "").strip()
+    try:
+        semester = int(sem_raw) if sem_raw else None
+    except Exception:
+        semester = None
+
+    medium_raw = (request.values.get("medium_tag") or "").strip()
+    selected_medium = medium_raw if medium_raw else None
+
+    ay_raw = (request.values.get("academic_year") or "").strip()
+    academic_year_options_list = academic_year_options()
+    default_ay = current_academic_year()
+    academic_year = ay_raw or default_ay
+    if academic_year not in academic_year_options_list:
+        academic_year_options_list.append(academic_year)
+
+    available_mediums = []
+    if program and semester:
+        q = select(Subject.medium_tag).filter(Subject.program_id_fk == program.program_id, Subject.semester == semester)
+        vals = [row[0] for row in db.session.execute(q).all()]
+        available_mediums = sorted({(v or "").strip() for v in vals if (v or "").strip()})
+        if selected_medium and selected_medium not in available_mediums:
+            available_mediums.append(selected_medium)
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
+        errors = []
+        if not program or not semester or not academic_year:
+            errors.append("Select program, semester, and academic year.")
+        if not errors:
+            if action == "add":
+                faculty_id_raw = (request.form.get("faculty_user_id") or "").strip()
+                try:
+                    faculty_user_id = int(faculty_id_raw)
+                except Exception:
+                    faculty_user_id = None
+                if not faculty_user_id:
+                    errors.append("Select a staff member.")
+                else:
+                    try:
+                        existing = db.session.execute(
+                            select(SemesterCoordinator).filter_by(
+                                program_id_fk=program.program_id,
+                                semester=semester,
+                                medium_tag=selected_medium,
+                                academic_year=academic_year,
+                                faculty_user_id_fk=faculty_user_id,
+                            )
+                        ).scalars().first()
+                        if existing:
+                            if not existing.is_active:
+                                existing.is_active = True
+                        else:
+                            row = SemesterCoordinator(
+                                program_id_fk=program.program_id,
+                                semester=semester,
+                                medium_tag=selected_medium,
+                                academic_year=academic_year,
+                                faculty_user_id_fk=faculty_user_id,
+                                is_active=True,
+                            )
+                            db.session.add(row)
+                        db.session.commit()
+                        try:
+                            flash("Semester coordinator saved.", "success")
+                        except Exception:
+                            pass
+                    except Exception:
+                        db.session.rollback()
+                        errors.append("Failed to save coordinator.")
+            elif action == "remove":
+                coord_id_raw = (request.form.get("coordinator_id") or "").strip()
+                try:
+                    coord_id = int(coord_id_raw)
+                except Exception:
+                    coord_id = None
+                if not coord_id:
+                    errors.append("Invalid coordinator.")
+                else:
+                    try:
+                        c = db.session.get(SemesterCoordinator, coord_id)
+                        if c:
+                            c.is_active = False
+                            db.session.commit()
+                            try:
+                                flash("Semester coordinator removed.", "success")
+                            except Exception:
+                                pass
+                    except Exception:
+                        db.session.rollback()
+                        errors.append("Failed to remove coordinator.")
+        if errors:
+            try:
+                flash(errors[0], "danger")
+            except Exception:
+                pass
+        return redirect(
+            url_for(
+                "main.semester_coordinators",
+                program_id=(program.program_id if program else None),
+                semester=semester,
+                medium_tag=(selected_medium or ""),
+                academic_year=academic_year,
+            )
+        )
+
+    coordinators = []
+    if program and semester and academic_year:
+        q = (
+            select(SemesterCoordinator, User, Faculty)
+            .join(User, SemesterCoordinator.faculty_user_id_fk == User.user_id)
+            .outerjoin(Faculty, Faculty.user_id_fk == User.user_id)
+            .filter(
+                SemesterCoordinator.program_id_fk == program.program_id,
+                SemesterCoordinator.semester == semester,
+                SemesterCoordinator.academic_year == academic_year,
+                SemesterCoordinator.is_active.is_(True),
+            )
+        )
+        if selected_medium:
+            q = q.filter(SemesterCoordinator.medium_tag == selected_medium)
+        rows = db.session.execute(q.order_by(User.username)).all()
+        for sc, u, f in rows:
+            name = getattr(f, "full_name", None) or u.username
+            email = getattr(f, "email", None) or (u.username if "@" in (u.username or "") else "")
+            mobile = getattr(f, "mobile", None) or ""
+            coordinators.append(
+                {
+                    "coordinator_id": sc.coordinator_id,
+                    "user_id": u.user_id,
+                    "faculty_id": getattr(f, "faculty_id", None),
+                    "name": name,
+                    "email": email,
+                    "mobile": mobile,
+                    "medium_tag": sc.medium_tag or "",
+                }
+            )
+
+    faculty_choices = []
+    if program:
+        fq = select(Faculty).filter(Faculty.program_id_fk == program.program_id).order_by(Faculty.full_name)
+        faculty_choices = db.session.execute(fq).scalars().all()
+
+    return render_template(
+        "semester_coordinators.html",
+        program_list=program_list,
+        selected_program=program,
+        semester=semester,
+        available_mediums=available_mediums,
+        selected_medium=selected_medium,
+        academic_year=academic_year,
+        academic_year_options=academic_year_options_list,
+        coordinators=coordinators,
+        faculty_choices=faculty_choices,
+    )
+
+
 @main_bp.route("/admin/seed-attendance-mock", methods=["GET", "POST"])
 @login_required
 @role_required("admin")

@@ -63,7 +63,12 @@
       </div>
       <div class="col-md-3">
         <label class="form-label">Academic Year</label>
-        <input name="academic_year" class="form-control" placeholder="2024-25" value="{{ selected.academic_year }}" />
+        <select name="academic_year" class="form-select">
+          {% set selected_ay = selected.academic_year %}
+          {% for ay in academic_year_options %}
+            <option value="{{ ay }}" {% if selected_ay == ay %}selected{% endif %}>{{ ay }}</option>
+          {% endfor %}
+        </select>
       </div>
       <div class="col-md-3">
         <label class="form-label">Date</label>

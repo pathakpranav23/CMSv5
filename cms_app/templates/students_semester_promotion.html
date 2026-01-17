@@ -20,6 +20,11 @@
 
     <div class="card mb-3">
       <div class="card-body">
+        <div class="alert alert-info small mb-3">
+          Promotion updates students to the next semester and, when divisions exist
+          for the target semester in this program, also reassigns them into those
+          divisions automatically.
+        </div>
         <form method="post" class="row g-3">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
           <div class="col-md-4">
@@ -80,4 +85,3 @@
   {% endif %}
 </div>
 {% endblock %}
-

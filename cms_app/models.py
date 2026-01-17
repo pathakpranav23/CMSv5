@@ -142,7 +142,31 @@ class CourseAssignment(db.Model):
     subject_id_fk = db.Column(db.Integer, db.ForeignKey("subjects.subject_id"))
     division_id_fk = db.Column(db.Integer, db.ForeignKey("divisions.division_id"))
     academic_year = db.Column(db.String(16))
+    role = db.Column(db.String(16), default="primary")
     is_active = db.Column(db.Boolean, default=True)
+
+
+class SemesterCoordinator(db.Model):
+    __tablename__ = "semester_coordinators"
+    coordinator_id = db.Column(db.Integer, primary_key=True)
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
+    semester = db.Column(db.Integer, nullable=False)
+    medium_tag = db.Column(db.String(32))
+    academic_year = db.Column(db.String(16), nullable=False)
+    faculty_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "program_id_fk",
+            "semester",
+            "medium_tag",
+            "academic_year",
+            "faculty_user_id_fk",
+            name="uq_semester_coordinator_scope_faculty",
+        ),
+    )
 
 
 class Attendance(db.Model):

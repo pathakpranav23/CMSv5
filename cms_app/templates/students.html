@@ -39,8 +39,9 @@
           <select id="semester" name="semester" class="form-select" onchange="this.form.submit()">
             {% set sem = (selected_semester or 'all') %}
             <option value="all" {{ 'selected' if sem == 'all' else '' }}>All</option>
-            <option value="5" {{ 'selected' if sem == '5' else '' }}>5</option>
-            <option value="3" {{ 'selected' if sem == '3' else '' }}>3</option>
+            {% for s in range(1, 9) %}
+              <option value="{{ s }}" {{ 'selected' if sem == (s|string) else '' }}>Semester {{ s }}</option>
+            {% endfor %}
           </select>
         </div>
       </div>

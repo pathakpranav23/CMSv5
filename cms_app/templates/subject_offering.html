@@ -54,8 +54,12 @@
         <div class="card">
           <div class="card-header">Academic Year</div>
           <div class="card-body">
-            <input type="text" name="academic_year" placeholder="2024-25" value="{{ academic_year }}" class="form-control" />
-            <small class="text-muted">Format: YYYY-YY</small>
+            <select name="academic_year" class="form-select">
+              {% set selected_ay = academic_year %}
+              {% for ay in academic_year_options %}
+                <option value="{{ ay }}" {% if selected_ay == ay %}selected{% endif %}>{{ ay }}</option>
+              {% endfor %}
+            </select>
           </div>
         </div>
 
