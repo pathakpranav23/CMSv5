@@ -5977,9 +5977,6 @@ def api_students_search():
         for s in rows
     ]
     return api_success({"items": data}, {"limit": 10})
-    except Exception as e:
-        print(f"API Search Error: {e}")
-        return api_success({"items": []}, {"limit": 10})
 
 
 @main_bp.route("/students/new", methods=["GET", "POST"])
