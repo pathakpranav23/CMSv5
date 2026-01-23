@@ -5944,7 +5944,12 @@ def api_students_search():
         }
         medium_val = medium_map.get(medium_raw)
         if medium_val:
-            query = query.filter(Student.medium_tag == medium_val)
+            try:
+                # Check if column exists by attempting to filter
+                # (SQLAlchemy might error if column missing in DB but present in Model)
+                query = query.filter(Student.medium_tag == medium_val)
+            except Exception:
+                pass # Ignore medium filter if column missing
     if q:
         query = query.filter(
             or_(
