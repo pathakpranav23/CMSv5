@@ -5900,9 +5900,10 @@ def students():
 # JSON search endpoint: search students by name or enrollment
 @main_bp.route("/api/students/search", methods=["GET"])
 @login_required
-@cache.cached(timeout=120, query_string=True)
+# @cache.cached(timeout=120, query_string=True) # Disable cache to avoid PA issues
 def api_students_search():
-    q = (request.args.get("q") or "").strip()
+    try:
+        q = (request.args.get("q") or "").strip()
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
@@ -5976,6 +5977,9 @@ def api_students_search():
         for s in rows
     ]
     return api_success({"items": data}, {"limit": 10})
+    except Exception as e:
+        print(f"API Search Error: {e}")
+        return api_success({"items": []}, {"limit": 10})
 
 
 @main_bp.route("/students/new", methods=["GET", "POST"])
