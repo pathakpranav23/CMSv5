@@ -138,7 +138,33 @@
   <script>
     function toggleAll(name, checked) {
       const inputs = document.querySelectorAll('input[name="' + name + '"]');
-      inputs.forEach(i => { i.checked = checked; });
+      inputs.forEach(i => {
+        // Only toggle if the parent row is visible (handle filtered list)
+        const li = i.closest('li');
+        if (!li || li.style.display !== 'none') {
+          i.checked = checked;
+        }
+      });
+    }
+
+    function filterStudents() {
+      const input = document.getElementById('studentSearchInput');
+      const filter = input.value.toLowerCase();
+      const ul = document.getElementById('studentList');
+      if (!ul) return;
+      const li = ul.getElementsByTagName('li');
+
+      for (let i = 0; i < li.length; i++) {
+        const label = li[i].getElementsByTagName('label')[0];
+        if (label) {
+          const txtValue = label.textContent || label.innerText;
+          if (txtValue.toLowerCase().indexOf(filter) > -1) {
+            li[i].style.display = "";
+          } else {
+            li[i].style.display = "none";
+          }
+        }
+      }
     }
   </script>
 </div>
