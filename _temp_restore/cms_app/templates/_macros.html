@@ -1,0 +1,20 @@
+{% macro back_link(url, label, size='sm', variant='outline-secondary', extra_classes='') -%}
+  <a class="btn btn-{{ 'btn-' ~ variant }} {{ size and ('btn-' ~ size) or '' }} {{ extra_classes }}" href="{{ url }}" aria-label="Back">
+    <i class="bi bi-arrow-left"></i> {{ label }}
+  </a>
+{%- endmacro %}
+
+{# Breadcrumbs macro: pass a list of (label, href). Last item is current page. #}
+{% macro breadcrumbs(items, extra_classes='') -%}
+  <nav aria-label="breadcrumb" class="{{ extra_classes }}">
+    <ol class="breadcrumb mb-2">
+      {% for label, href in items %}
+        {% if loop.last %}
+          <li class="breadcrumb-item active" aria-current="page">{{ label }}</li>
+        {% else %}
+          <li class="breadcrumb-item"><a href="{{ href }}">{{ label }}</a></li>
+        {% endif %}
+      {% endfor %}
+    </ol>
+  </nav>
+{%- endmacro %}

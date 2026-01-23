@@ -1,0 +1,404 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+  @page { size: A4; margin: 6mm; }
+  @media screen {
+    /* Show only one copy on screen; both copies on print */
+    .receipt-copies .receipt-copy:nth-of-type(2) { display: none; }
+  }
+  @media print {
+    .no-print { display: none !important; }
+    /* Hide app chrome during print */
+    .sidebar, .app-sidebar, .sidebar-backdrop, .app-header, .app-footer,
+    .enhanced-nav, .mobile-topbar, nav, aside, .page-header { display: none !important; }
+    .app-main main, main.container, .container, .content { margin: 0 !important; padding: 0 !important; width: 100% !important; }
+    /* Stack copies vertically on one A4 page */
+    .receipt-copies { display: block; }
+    .receipt-copy { page-break-inside: avoid; page-break-after: always; margin: 0; }
+    .receipt-copy:last-child { page-break-after: auto; }
+    .receipt-header img { height: 44px; width: auto; }
+    .brand-title-main { font-weight: 600; font-size: 0.95rem; }
+    .brand-title-sub { font-size: 0.8rem; color: #6c757d; }
+    /* Compact tables and spacing */
+    .receipt-copy table { font-size: 11px; }
+    .receipt-copy table.table th, .receipt-copy table.table td { padding: 3px 5px; }
+    /* Center the receipt table within page for filing margin */
+    .receipt-copy .table-responsive { max-width: 180mm; margin: 0 auto; }
+    .receipt-student { margin-bottom: 4px; font-size: 11px; }
+    .card { margin-bottom: 4mm; }
+    /* Compact disclaimer/footer note */
+    #receipt-disclaimer, .receipt-disclaimer, .receipt-footer-note { font-size: 10px; margin-top: 4mm; }
+
+  }
+  .receipt-header img { height: 72px; width: auto; }
+  .brand-title-main { font-weight: 600; }
+  .brand-title-sub { font-size: 0.9rem; color: #6c757d; }
+  .receipt-card-total { font-size: 2rem; }
+  .receipt-student { margin-bottom: 6px; font-size: 14px; }
+</style>
+
+<div class="container py-4">
+  <div class="no-print d-flex justify-content-end gap-2 mb-2">
+    <a class="btn btn-outline-primary" href="{{ url_for('main.students') }}?program_id={{ selected_program.program_id if selected_program else '' }}&semester={{ semester or '' }}">Search Students</a>
+    <button class="btn btn-primary" onclick="window.print()">Print</button>
+  </div>
+  {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+  <div class="section-header d-flex justify-content-between align-items-center mb-3 no-print">
+    <h2 class="mb-0 title d-flex align-items-center">Semester Fees Receipt <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions"></div>
+  </div>
+
+  <form method="get" class="row g-3 mb-3 no-print">
+    {% if (current_user.role|lower) == 'admin' %}
+    <div class="col-md-6">
+      <label for="program_id" class="form-label">Program</label>
+      <select class="form-select" id="program_id" name="program_id" required>
+        <option value="">Select Program</option>
+        {% for p in programs %}
+          <option value="{{ p.program_id }}" {% if filters.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <div class="col-md-3">
+      <label for="semester" class="form-label">Semester</label>
+      <input class="form-control" type="number" min="1" id="semester" name="semester" value="{{ filters.semester or '' }}" required />
+    </div>
+    {% if show_medium %}
+    <div class="col-md-3">
+      <label for="medium" class="form-label">Medium</label>
+      <select class="form-select" id="medium" name="medium">
+        <option value="" {% if not filters.medium %}selected{% endif %}>Common</option>
+        <option value="English" {% if (filters.medium or '')|lower == 'english' %}selected{% endif %}>English</option>
+        <option value="Gujarati" {% if (filters.medium or '')|lower == 'gujarati' %}selected{% endif %}>Gujarati</option>
+      </select>
+    </div>
+    {% endif %}
+    <div class="col-md-3">
+      <label for="mode" class="form-label">Mode</label>
+      <select class="form-select" id="mode" name="mode">
+        <option value="frozen" {% if filters.mode == 'frozen' %}selected{% endif %}>Finalized only (frozen)</option>
+        <option value="preview" {% if filters.mode == 'preview' %}selected{% endif %}>Preview current amounts</option>
+      </select>
+    </div>
+    <div class="col-12">
+      <button type="submit" class="btn btn-primary">Generate</button>
+    </div>
+  </form>
+
+  {% if selected_program and semester %}
+    <div class="text-center mb-3 receipt-header no-print">
+      <img src="{{ url_for('static', filename='logo.png') }}" alt="Parekh Colleges Logo" />
+      <div class="brand-title-main">The Group of Parekh Colleges - Mahuva</div>
+      <div class="brand-title-sub">Managed by Shri Balvant Parekh Education Trust (SBPET)</div>
+      <div class="fw-bold mt-2">{{ selected_program.program_name }}</div>
+      <div class="text-muted">Semester {{ semester }}</div>
+      {% if show_medium %}
+        <div class="text-muted">Medium: {{ (filters.medium or '') and filters.medium or 'Common' }}</div>
+      {% endif %}
+      {% if verified_payment and verified_payment.receipt_no %}
+        <div class="mt-1">
+          <span class="badge bg-light text-dark">Receipt No.: {{ verified_payment.receipt_no }}</span>
+        </div>
+      {% elif preview_receipt_no %}
+        <div class="mt-1">
+          <span class="badge bg-light text-dark">Receipt No.: {{ preview_receipt_no }}</span>
+        </div>
+      {% endif %}
+      {% if filters.mode == 'frozen' %}
+        <div class="badge text-bg-success">Finalized Receipt</div>
+      {% else %}
+        <div class="badge text-bg-warning">Preview</div>
+      {% endif %}
+    </div>
+
+    <div class="card mb-3 no-print">
+      <div class="card-body d-flex align-items-center justify-content-between">
+        <div>
+          <div class="text-muted">Total fees for Semester {{ semester }}</div>
+          <div class="display-6">₹ {{ (total_amount or 0)|round(2) }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-3 no-print quick-pay-card">
+      <div class="card-header card-header-standard">
+        <div class="d-flex align-items-center justify-content-between">
+          <div class="card-title d-flex align-items-center gap-2 mb-0"><i class="bi bi-qr-code"></i> Quick Payment</div>
+          <span class="badge bg-primary">Semester {{ semester }}{% if show_medium and filters.medium %} • {{ filters.medium }}{% endif %}</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <form id="quickPayForm" method="get" action="">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-6 col-lg-5">
+              <label class="form-label">Search by Name or Enrollment No.</label>
+              <div class="position-relative">
+                <input type="text" id="qpSearch" class="form-control" placeholder="Type 2+ letters or digits (e.g., 1001 or Patel)" autocomplete="off" />
+                <div id="qpSuggestions" class="list-group position-absolute w-100" style="z-index: 1000; max-height: 220px; overflow:auto; display:none;"></div>
+              </div>
+            </div>
+            <div class="col-md-4 col-lg-3">
+              <label class="form-label">Enrollment</label>
+              <input type="text" name="enrollment" id="qpEnrollment" class="form-control" placeholder="e.g., 1001" />
+            </div>
+            <div class="col-md-2 col-lg-2">
+              <button type="submit" class="btn btn-primary w-100">Open Payment</button>
+            </div>
+          </div>
+        </form>
+        <p class="text-muted mb-0">Find a student by name or enrollment, then open the Direct UPI payment page with current context.</p>
+      </div>
+    </div>
+
+    <!-- Config values injected via data attributes to avoid Jinja inside JS -->
+    <div id="qpConfig" class="d-none"
+         data-students-url="{{ url_for('main.students') }}"
+         data-fees-payment-url-template="{{ url_for('main.fees_payment', enrollment_no='__ENR__') }}"
+         data-program-id="{{ selected_program.program_id if selected_program else '' }}"
+         data-semester="{{ semester or '' }}"
+         data-medium="{{ (filters.medium or '') }}">
+    </div>
+
+    <script>
+      (function(){
+        const searchInput = document.getElementById('qpSearch');
+        const suggBox = document.getElementById('qpSuggestions');
+        const enrInput = document.getElementById('qpEnrollment');
+        const form = document.getElementById('quickPayForm');
+        const cfgEl = document.getElementById('qpConfig');
+        const studentsUrlBase = (cfgEl && cfgEl.dataset && cfgEl.dataset.studentsUrl) || '';
+        const feesPaymentUrlTemplate = (cfgEl && cfgEl.dataset && cfgEl.dataset.feesPaymentUrlTemplate) || '';
+        const programId = (cfgEl && cfgEl.dataset && cfgEl.dataset.programId ? Number(cfgEl.dataset.programId) : null);
+        const semesterVal = (cfgEl && cfgEl.dataset && cfgEl.dataset.semester ? Number(cfgEl.dataset.semester) : null);
+        const mediumVal = (cfgEl && cfgEl.dataset && cfgEl.dataset.medium) || '';
+        const hasContext = Boolean(programId) && Boolean(semesterVal);
+
+        // Gate search until program & semester are set
+        if (!hasContext) {
+          if (searchInput) {
+            searchInput.disabled = true;
+            searchInput.placeholder = 'Select program & semester to search';
+          }
+        }
+
+        function clearSuggestions(){ suggBox.innerHTML = ''; suggBox.style.display = 'none'; }
+        function showSuggestions(items){
+          if (!items || items.length === 0) { clearSuggestions(); return; }
+          suggBox.innerHTML = '';
+          items.forEach(function(it){
+            const a = document.createElement('a');
+            a.href = '#'; a.className = 'list-group-item list-group-item-action';
+            a.innerHTML = `<div class="d-flex justify-content-between"><span><span class="fw-semibold">${it.name || '—'}</span><span class="text-muted small"> &middot; ${it.program_name || ''}</span><span class="badge bg-light text-dark ms-2">Sem ${it.semester || ''}</span></span><span class="badge bg-secondary">${it.enrollment_no}</span></div>`;
+            a.addEventListener('click', function(ev){ ev.preventDefault(); enrInput.value = it.enrollment_no || ''; searchInput.value = it.name || ''; clearSuggestions(); });
+            suggBox.appendChild(a);
+          });
+          // Append a small "view all matches" link with same filters
+          const q = (searchInput.value || '').trim();
+          if (q.length >= 2) {
+            const link = document.createElement('a');
+            link.className = 'list-group-item list-group-item-action';
+            const params = new URLSearchParams();
+            if (programId) params.set('program_id', String(programId));
+            if (semesterVal) params.set('semester', String(semesterVal));
+            if (mediumVal) params.set('medium', (mediumVal || '').toLowerCase() || 'all');
+            // Route supports name or enrollment_no; choose based on query pattern
+            const isNameLike = /[a-zA-Z]/.test(q);
+            if (isNameLike) {
+              params.set('name', q);
+            } else {
+              params.set('enrollment_no', q);
+            }
+            link.href = studentsUrlBase + '?' + params.toString();
+            link.innerHTML = `<div class="d-flex justify-content-center"><span class="small text-primary">View all matches</span></div>`;
+            suggBox.appendChild(link);
+          }
+          suggBox.style.display = 'block';
+        }
+
+        let debounceTimer;
+        searchInput.addEventListener('input', function(){
+          const q = (searchInput.value || '').trim();
+          if (debounceTimer) { clearTimeout(debounceTimer); }
+          if (q.length < 2) { clearSuggestions(); return; }
+          if (!hasContext) { clearSuggestions(); return; }
+          debounceTimer = setTimeout(function(){
+            const params = new URLSearchParams({ q: q });
+            if (programId) params.set('program_id', String(programId));
+            if (semesterVal) params.set('semester', String(semesterVal));
+            if (mediumVal) params.set('medium', mediumVal);
+            fetch(`${window.location.origin}/api/students/search?` + params.toString())
+              .then(r => r.ok ? r.json() : Promise.reject())
+              .then(data => showSuggestions((data && data.items) || []))
+              .catch(() => clearSuggestions());
+          }, 220);
+        });
+
+        form.addEventListener('submit', function(ev){
+          ev.preventDefault();
+          const enr = (enrInput.value || '').trim();
+          if (!enr) { alert('Please select or enter an enrollment number.'); return; }
+          const url = feesPaymentUrlTemplate.replace('__ENR__', encodeURIComponent(enr));
+          const params = new URLSearchParams();
+          if (semesterVal) params.set('semester', String(semesterVal));
+          if (mediumVal) params.set('medium', mediumVal);
+          window.location.href = url + (params.toString() ? ('?' + params.toString()) : '');
+        });
+
+        document.addEventListener('click', function(ev){
+          if (!suggBox.contains(ev.target) && ev.target !== searchInput) { clearSuggestions(); }
+        });
+      })();
+    </script>
+
+    <div class="receipt-copies">
+      {% for copy_label in ["Student Copy", "Office Copy"] %}
+      <div class="receipt-copy">
+        <div class="text-center mb-2 receipt-header">
+          <img src="{{ url_for('static', filename='logo.png') }}" alt="Parekh Colleges Logo" />
+          <div class="brand-title-main">The Group of Parekh Colleges - Mahuva</div>
+          <div class="brand-title-sub">Managed by Shri Balvant Parekh Education Trust (SBPET)</div>
+          {% if selected_program %}
+            <div class="fw-bold mt-1">{{ selected_program.program_name }}</div>
+          {% endif %}
+          {% if semester %}
+            <div class="text-muted">Semester {{ semester }}{% if show_medium %} — Medium: {{ (filters.medium or '') and filters.medium or 'Common' }}{% endif %}</div>
+          {% endif %}
+          <div class="small text-muted">{{ copy_label }}</div>
+          {% if verified_payment and verified_payment.receipt_no %}
+            <div class="mt-1">
+              <span class="badge bg-light text-dark">Receipt No.: {{ verified_payment.receipt_no }}</span>
+            </div>
+          {% elif preview_receipt_no %}
+            <div class="mt-1">
+              <span class="badge bg-light text-dark">Receipt No.: {{ preview_receipt_no }}</span>
+            </div>
+          {% endif %}
+        </div>
+        {% if student %}
+        <div class="receipt-student">
+          <strong>Student:</strong>
+          {{ ((student.student_name or '') ~ (student.father_name and (' ' ~ student.father_name) or '') ~ (student.surname and (' ' ~ student.surname) or ''))|trim }}
+          {% set enr = student.enrollment_no or student.enrollment or filters.enrollment_no %}
+          {% if enr %}<small>({{ enr }})</small>{% endif %}
+        </div>
+        {% endif %}
+        <div class="table-responsive">
+          <table class="table table-bordered">
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th class="text-end">Amount (INR)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in items %}
+                <tr>
+                  <td>{{ item.component }}</td>
+                  <td class="text-end">{{ (item.amount or 0)|round(2) }}</td>
+                </tr>
+              {% endfor %}
+              <tr>
+                <th class="text-end">Total</th>
+                <th class="text-end">{{ (total_amount or 0)|round(2) }}</th>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {% if bank_details or verified_payment %}
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="border rounded p-2">
+              <div class="fw-semibold mb-2">Payment Summary</div>
+              {% if verified_payment %}
+                <div><strong>Status:</strong> Verified</div>
+                <div><strong>UTR:</strong> {{ verified_payment.utr or '-' }}</div>
+                <div><strong>Amount:</strong> ₹ {{ (verified_payment.amount or total_amount or 0)|round(2) }}</div>
+                <div><strong>Verified At:</strong> {{ (verified_payment.verified_at or verified_payment.updated_at or verified_payment.created_at) }}</div>
+                <div><strong>Payer Name:</strong> {{ verified_payment.payer_name or '-' }}</div>
+                <div><strong>Transaction Date (Bank Credit):</strong> {{ verified_payment.bank_credit_at and verified_payment.bank_credit_at.strftime('%Y-%m-%d %H:%M') or '-' }}</div>
+              {% else %}
+                <div class="text-muted">No verified payment found for this receipt.</div>
+              {% endif %}
+            </div>
+          </div>
+          {% if bank_details %}
+          <div class="col-md-6">
+            <div class="border rounded p-2">
+              <div class="fw-semibold mb-2">Bank Details</div>
+              <div><strong>Account Name:</strong> {{ bank_details.account_name or bank_details.payee_display or '-' }}</div>
+              <div><strong>Account Number:</strong> {{ bank_details.account_number or '-' }}</div>
+              <div><strong>IFSC:</strong> {{ bank_details.ifsc_code or '-' }}</div>
+              <div><strong>Bank:</strong> {{ bank_details.bank_name or '-' }}</div>
+              <div><strong>Branch:</strong> {{ bank_details.branch_name or '-' }}</div>
+              <div><strong>UPI ID:</strong> {{ bank_details.upi_vpa or '-' }}</div>
+              {% if bank_details.qr_image_url %}
+                <div class="mt-2 d-flex align-items-center gap-2">
+                  <img alt="UPI QR" src="{{ bank_details.qr_image_url }}" style="height: 96px; width: auto;" />
+                  <span class="text-muted small">Scan to pay via UPI</span>
+                </div>
+               {% elif receipt_upi_uri %}
+                 <div class="mt-2 d-flex align-items-center gap-2">
+                   <div class="qr-dynamic" data-uri="{{ receipt_upi_uri }}" style="height:96px;width:96px;border:1px solid #ddd;border-radius:4px;"></div>
+                   <span class="text-muted small">Scan to pay via UPI</span>
+                 </div>
+              {% endif %}
+            </div>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+        <div class="row mt-3">
+          <div class="col-md-6 text-center">
+            <div style="border-top:1px solid #333;padding-top:6px;">Clerk Signature</div>
+          </div>
+          <div class="col-md-6 text-center">
+            <div style="border-top:1px solid #333;padding-top:6px;">Admin Signature</div>
+          </div>
+        </div>
+        {% if loop.last %}
+        <div class="mt-2 small text-muted receipt-disclaimer">
+          Disclaimer: This receipt is system-generated. Payment is subject to bank realization. Please verify details and retain this document for your records.
+        </div>
+        {% endif %}
+        <div class="text-center mb-3">
+          <div class="badge text-bg-secondary">{{ copy_label }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="mt-3 d-flex justify-content-end gap-2 no-print">
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.fees_structure_view', program_id=selected_program.program_id, semester=semester) }}">View Structure</a>
+      <button class="btn btn-primary" onclick="window.print()">Print</button>
+    </div>
+    <div class="mt-3 small text-muted no-print">
+      Disclaimer: This receipt is system-generated. Payment is subject to bank realization. Please verify details and retain this document for your records.
+    </div>
+  {% endif %}
+  {% if request.args.get('auto') %}
+  <script>
+    // Auto print when ?auto=1 is present; useful with kiosk printing
+    window.addEventListener('load', function(){
+      setTimeout(function(){ try { window.print(); } catch(e) {} }, 200);
+    });
+  </script>
+  {% endif %}
+  <script>
+    // Generate dynamic QR codes where static bank QR is not available
+    (function(){
+      try {
+        var els = document.querySelectorAll('.qr-dynamic');
+        if (els && els.length) {
+          els.forEach(function(el){
+            var uri = el && el.dataset && el.dataset.uri;
+            if (uri && uri.length > 0) {
+              try { new QRCode(el, { text: uri, width: 96, height: 96 }); } catch(e) {}
+            }
+          });
+        }
+      } catch(e) {}
+    })();
+  </script>
+</div>
+{% endblock %}

@@ -54,7 +54,7 @@
       <select id="subject_type_id" name="subject_type_id" class="form-select" required>
         <option value="">-- Select Type --</option>
         {% for st in subject_types %}
-          <option value="{{ st.type_id }}" {{ 'selected' if form_data.subject_type_id|string == st.type_id|string else '' }}>{{ st.type_code }}</option>
+          <option value="{{ st.type_id }}" {{ 'selected' if form_data.subject_type_id|string == st.type_id|string else '' }}>{{ st.type_name }}</option>
         {% endfor %}
       </select>
     </div>

@@ -56,8 +56,8 @@ def test_nep_exit_report(client, app):
         student = Student(
             enrollment_no=eno,
             program_id_fk=prog.program_id,
-            surname="Doe",
-            student_name="John",
+            last_name="Doe",
+            first_name="John",
             current_semester=2
         )
         db.session.add(student)

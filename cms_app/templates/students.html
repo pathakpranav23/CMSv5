@@ -144,8 +144,8 @@
         </td>
         <td><a href="{{ url_for('main.students_show', enrollment_no=s.enrollment_no) }}">{{ s.enrollment_no }}</a></td>
         <td>{{ ns.roll }}</td>
-        <td>{{ s.surname }}</td>
-        <td>{{ s.student_name }}</td>
+        <td>{{ s.last_name }}</td>
+        <td>{{ s.first_name }}</td>
         <td>{{ s.father_name }}</td>
         <td>{{ program_map.get(s.program_id_fk) }}</td>
         <td>

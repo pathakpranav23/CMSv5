@@ -1,0 +1,174 @@
+{% extends 'layout.html' %}
+{% block title %}Payment Status{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h3 class="mb-0 title">Payment Status</h3>
+    <div class="d-print-none d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.dashboard') }}">Back</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('main.fees_payment_status', program_id=(filters.program_id or ''), semester=(filters.semester or ''), medium=(filters.medium or ''), format='csv') }}">Download CSV</a>
+      <a class="btn btn-outline-success" href="{{ url_for('main.fees_payments_queue') }}">Open Verification Queue</a>
+      <button class="btn btn-dark" onclick="window.print()">Print</button>
+    </div>
+  </div>
+
+  <form method="get" action="{{ url_for('main.fees_payment_status') }}" class="d-print-none">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-4">
+        <label class="form-label">Program</label>
+        <select name="program_id" class="form-select">
+          <option value="">Select Program</option>
+          {% for p in programs %}
+            <option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Semester</label>
+        <select name="semester" class="form-select">
+          <option value="">Select Semester</option>
+          {% for s in [1,2,3,4,5,6] %}
+            <option value="{{ s }}" {% if semester == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% if show_medium %}
+      <div class="col-md-3">
+        <label class="form-label">Medium (B.Com)</label>
+        <select name="medium" class="form-select">
+          <option value="">Common</option>
+          <option value="English" {% if (medium or '') == 'English' %}selected{% endif %}>English</option>
+          <option value="Gujarati" {% if (medium or '') == 'Gujarati' %}selected{% endif %}>Gujarati</option>
+        </select>
+      </div>
+      {% endif %}
+      <div class="col-md-2">
+        <label class="form-label">Status</label>
+        <select id="statusFilter" class="form-select">
+          <option value="">All</option>
+          <option value="Paid">Paid</option>
+          <option value="Partially Paid">Partially Paid</option>
+          <option value="Unpaid">Unpaid</option>
+          <option value="Pending">Pending Verification</option>
+          <option value="Rejected">Rejected</option>
+        </select>
+      </div>
+      <div class="col-md-12">
+        <button type="submit" class="btn btn-primary">Apply Filters</button>
+      </div>
+    </div>
+  </form>
+
+  {% if selected_program and semester %}
+    <div class="row g-3 mt-3">
+      <div class="col-md-12">
+        <div class="alert alert-light border">
+          <div class="d-flex flex-wrap gap-2 align-items-center">
+            <span><strong>Program:</strong> {{ selected_program.program_name }}</span>
+            <span><strong>Semester:</strong> {{ semester }}</span>
+            {% if show_medium %}
+              <span><strong>Medium:</strong> {{ (medium or 'Common') }}</span>
+            {% endif %}
+          </div>
+          <div class="mt-2 d-flex flex-wrap gap-3">
+            <span class="badge text-bg-success">Paid: {{ counts.paid }}</span>
+            <span class="badge text-bg-warning">Partial: {{ counts.partial }}</span>
+            <span class="badge text-bg-danger">Unpaid: {{ counts.unpaid }}</span>
+            <span class="badge text-bg-secondary">Pending: {{ counts.pending }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-striped align-middle" id="statusTable">
+        <thead>
+          <tr>
+            <th>Enrollment No</th>
+            <th>Name</th>
+            {% if show_medium %}<th>Medium</th>{% endif %}
+            <th>Status</th>
+            <th class="text-end">Verified Amount (₹)</th>
+            <th class="text-end">Required Amount (₹)</th>
+            <th class="d-print-none">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+          {% set s = r.student %}
+          <tr data-status="{{ r.status }}" data-pending="{{ 'Yes' if r.has_submitted else 'No' }}" data-rejected="{{ 'Yes' if r.has_rejected else 'No' }}">
+            <td>{{ s.enrollment_no }}</td>
+            <td>
+              {{ ((s.student_name or '') ~ (s.father_name and (' ' ~ s.father_name) or '') ~ (s.surname and (' ' ~ s.surname) or ''))|trim }}
+              {% if r.has_submitted and r.status != 'Paid' %}
+                <span class="badge bg-secondary ms-2">Submitted</span>
+              {% endif %}
+              {% if r.has_rejected %}
+                <span class="badge bg-danger ms-2">Rejected</span>
+              {% endif %}
+            </td>
+            {% if show_medium %}<td>{{ s.medium_tag or '' }}</td>{% endif %}
+            <td>
+              {% if r.status == 'Paid' %}
+                <span class="badge bg-success">Paid</span>
+              {% elif r.status == 'Partially Paid' %}
+                <span class="badge bg-warning">Partially Paid</span>
+              {% else %}
+                <span class="badge bg-danger">Unpaid</span>
+              {% endif %}
+            </td>
+            <td class="text-end">{{ '%.2f'|format(r.verified_total or 0) }}</td>
+            <td class="text-end">{{ '%.2f'|format(r.required_total or 0) }}</td>
+            <td class="d-print-none">
+              <div class="d-flex gap-2">
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.fees_payment', enrollment_no=s.enrollment_no, semester=(semester or ''), medium=(medium or '')) }}">Payment Page</a>
+                {% if r.has_submitted and r.status != 'Paid' %}
+                  <a class="btn btn-sm btn-success" href="{{ url_for('main.fees_payments_queue') }}">Verify</a>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="text-muted">Select program and semester to view payment status.</p>
+  {% endif %}
+</div>
+
+<style>
+/* Print-specific tweaks */
+@media print {
+  .d-print-none { display: none !important; }
+  .container { padding: 0 !important; }
+  table { font-size: 12px; }
+  .badge { font-size: 10px; }
+}
+</style>
+
+<script>
+  (function(){
+    const sel = document.getElementById('statusFilter');
+    const tbl = document.getElementById('statusTable');
+    function applyFilter(){
+      const val = (sel && sel.value) || '';
+      if (!tbl) return;
+      const rows = tbl.querySelectorAll('tbody tr');
+      rows.forEach(tr => {
+        const status = tr.getAttribute('data-status') || '';
+        const pending = tr.getAttribute('data-pending') || '';
+        const rejected = tr.getAttribute('data-rejected') || '';
+        let show = true;
+        if (val === 'Paid') show = (status === 'Paid');
+        else if (val === 'Partially Paid') show = (status === 'Partially Paid');
+        else if (val === 'Unpaid') show = (status === 'Unpaid');
+        else if (val === 'Pending') show = (pending === 'Yes');
+        else if (val === 'Rejected') show = (rejected === 'Yes');
+        tr.style.display = show ? '' : 'none';
+      });
+    }
+    if (sel) sel.addEventListener('change', applyFilter);
+  })();
+</script>
+{% endblock %}

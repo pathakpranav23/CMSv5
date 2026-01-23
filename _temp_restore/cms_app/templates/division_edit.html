@@ -1,0 +1,69 @@
+{% extends 'layout.html' %}
+{% import '_macros.html' as ui %}
+{% block content %}
+{% set role_lower = (role or (current_user.role if current_user.is_authenticated else 'Guest'))|lower %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    {% set role_display = (role or (current_user.role if current_user.is_authenticated else 'Guest')) %}
+    <h2 class="mb-0 title d-flex align-items-center">Edit Division <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions">{{ ui.back_link(url_for('main.divisions_list'), 'Back to List') }}</div>
+  </div>
+  {{ ui.breadcrumbs([
+    ('Dashboard', url_for('main.dashboard')),
+    ('Divisions', url_for('main.divisions_list')),
+    ('Edit', '')
+  ]) }}
+
+  {% if errors and errors|length %}
+    <div class="alert alert-danger">
+      <ul class="mb-0">
+        {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('main.division_edit', division_id=division.division_id) }}" class="row g-3">
+    <div class="col-md-6">
+      <label class="form-label">Program *</label>
+      {% if role_lower in ['principal','clerk'] and user_program_id %}
+        <select class="form-select" disabled>
+          {% for p in programs %}
+            {% if p.program_id == user_program_id %}
+              <option value="{{ p.program_id }}" selected>{{ p.program_name }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+        <input type="hidden" name="program_id" value="{{ user_program_id }}" />
+      {% else %}
+        <select name="program_id" class="form-select">
+          <option value="">Select program</option>
+          {% for p in programs %}
+            {% set selected_pid = (form_data.program_id if form_data.program_id is defined else division.program_id_fk) %}
+            <option value="{{ p.program_id }}" {% if selected_pid and selected_pid|string == p.program_id|string %}selected{% endif %}>{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+      {% endif %}
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Semester *</label>
+      {% set selected_sem = (form_data.semester if form_data.semester is defined else division.semester) %}
+      <select name="semester" class="form-select">
+        {% for s in range(1, 9) %}
+          <option value="{{ s }}" {% if selected_sem and selected_sem|string == s|string %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Code *</label>
+      <input type="text" name="division_code" class="form-control" value="{{ (form_data.division_code if form_data.division_code is defined else division.division_code) or '' }}" placeholder="A/B/C" />
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Capacity *</label>
+      <input type="number" name="capacity" class="form-control" value="{{ (form_data.capacity if form_data.capacity is defined else division.capacity) or '60' }}" min="1" />
+    </div>
+    <div class="col-12">
+      <button type="submit" class="btn btn-primary">Update</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

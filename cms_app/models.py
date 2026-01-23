@@ -16,8 +16,8 @@ class Program(db.Model):
 class SubjectType(db.Model):
     __tablename__ = "subject_types"
     type_id = db.Column(db.Integer, primary_key=True)
-    type_code = db.Column(db.String(16), unique=True, nullable=False)
-    description = db.Column(db.String(128))
+    type_name = db.Column(db.String(64), nullable=False)
+    description = db.Column(db.String(255))
 
 
 class Division(db.Model):
@@ -25,10 +25,8 @@ class Division(db.Model):
     division_id = db.Column(db.Integer, primary_key=True)
     program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
     semester = db.Column(db.Integer, nullable=False)
-    division_code = db.Column(db.String(8), nullable=False)  # e.g., A, B, C
-    capacity = db.Column(db.Integer, default=67)
-
-    students = db.relationship("Student", backref="division", lazy=True)
+    division_code = db.Column(db.String(10), nullable=False)  # A, B, C...
+    capacity = db.Column(db.Integer, default=60)
 
 
 class ProgramDivisionPlan(db.Model):
@@ -36,37 +34,29 @@ class ProgramDivisionPlan(db.Model):
     plan_id = db.Column(db.Integer, primary_key=True)
     program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
     semester = db.Column(db.Integer, nullable=False)
-    # Number of divisions planned for this semester within the program
     num_divisions = db.Column(db.Integer, nullable=False)
-    # Planned capacity per division for this semester
     capacity_per_division = db.Column(db.Integer, nullable=False)
-    # Roll number upper bound per division (default 200, per requirement)
     roll_max_per_division = db.Column(db.Integer, default=200)
-    # If true, roll numbers reset each semester (common pattern)
     roll_reset_each_semester = db.Column(db.Boolean, default=True)
-
-    program = db.relationship("Program", backref="division_plans", lazy=True)
 
     __table_args__ = (
         db.UniqueConstraint("program_id_fk", "semester", name="uq_program_semester_plan"),
     )
 
 
-class User(db.Model, UserMixin):
+class User(UserMixin, db.Model):
     __tablename__ = "users"
     user_id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(120), unique=True, nullable=False)  # email or enrollment
-    password_hash = db.Column(db.String(255))
-    role = db.Column(db.String(32), nullable=False, default="Student")
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))  # For Principals
+    username = db.Column(db.String(128), unique=True, nullable=False)
+    email = db.Column(db.String(128))
+    password_hash = db.Column(db.String(256))
+    role = db.Column(db.String(32), default="student")  # admin, principal, faculty, student, clerk
+    is_active = db.Column(db.Boolean, default=True)
 
-    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))
-
-    # Flask-Login integration helpers
     def get_id(self):
-        try:
-            return str(self.user_id)
-        except Exception:
-            return None
+        return str(self.user_id)
+
 
 
 class Faculty(db.Model):
@@ -74,29 +64,33 @@ class Faculty(db.Model):
     faculty_id = db.Column(db.Integer, primary_key=True)
     user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
     program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))
-
     full_name = db.Column(db.String(128), nullable=False)
-    email = db.Column(db.String(120))
-    mobile = db.Column(db.String(20))
+    email = db.Column(db.String(128))
     designation = db.Column(db.String(64))
     department = db.Column(db.String(64))
-    # Store all original Excel columns as a JSON string for display/reference
-    extra_data = db.Column(db.Text)
-    # Teaching medium expertise (e.g., English, Gujarati)
-    medium_expertise = db.Column(db.String(32))
+    
+    # Extra profile fields
+    emp_id = db.Column(db.String(32))
+    date_of_joining = db.Column(db.Date)
+    highest_qualification = db.Column(db.String(64))
+    experience_years = db.Column(db.Float)
+    specialization = db.Column(db.String(255))
+    extra_data = db.Column(db.Text)  # JSON store for flexible fields
 
 
 class Student(db.Model):
     __tablename__ = "students"
-    enrollment_no = db.Column(db.String(32), primary_key=True)
-    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
+    enrollment_no = db.Column(db.String(32), primary_key=True, nullable=False)
     user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
     division_id_fk = db.Column(db.Integer, db.ForeignKey("divisions.division_id"))
-
-    surname = db.Column(db.String(64))
-    student_name = db.Column(db.String(64))
+    
+    first_name = db.Column("student_name", db.String(64))
+    last_name = db.Column("surname", db.String(64))
     father_name = db.Column(db.String(64))
+    
     date_of_birth = db.Column(db.Date)
+    email = db.Column(db.String(128))
     mobile = db.Column(db.String(20))
     # New fields
     gender = db.Column(db.String(16))
@@ -105,6 +99,11 @@ class Student(db.Model):
     current_semester = db.Column(db.Integer)
     # Medium of instruction (e.g., English, Gujarati)
     medium_tag = db.Column(db.String(32))
+
+    @property
+    def full_name(self):
+        return f"{self.first_name or ''} {self.last_name or ''}".strip()
+
 
 
 class Subject(db.Model):
@@ -199,18 +198,112 @@ class StudentCreditLog(db.Model):
     student_id_fk = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"))
     subject_id_fk = db.Column(db.Integer, db.ForeignKey("subjects.subject_id"))
     credits_earned = db.Column(db.Integer, default=0)
-    date_awarded = db.Column(db.Date, default=datetime.utcnow)
+    date_awarded = db.Column(db.Date)
     is_exit_eligible = db.Column(db.Boolean, default=False)
+
+
+class ExamScheme(db.Model):
+    __tablename__ = "exam_schemes"
+    scheme_id = db.Column(db.Integer, primary_key=True)
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
+    semester = db.Column(db.Integer, nullable=False)
+    academic_year = db.Column(db.String(16), nullable=False)
+    medium_tag = db.Column(db.String(32))
+    name = db.Column(db.String(128))
+    max_internal_marks = db.Column(db.Float)
+    max_external_marks = db.Column(db.Float)
+    min_internal_marks = db.Column(db.Float)
+    min_external_marks = db.Column(db.Float)
+    min_total_marks = db.Column(db.Float)
+    max_total_marks = db.Column(db.Float)
+    grading_scheme_json = db.Column(db.Text)
+    credit_rules_json = db.Column(db.Text)  # Stores credit-based rules: [{credit:1, max_total:15, ...}]
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "program_id_fk",
+            "semester",
+            "medium_tag",
+            "academic_year",
+            name="uq_exam_scheme_scope",
+        ),
+    )
+
+
+class ExamMark(db.Model):
+    __tablename__ = "exam_marks"
+    exam_mark_id = db.Column(db.Integer, primary_key=True)
+    scheme_id_fk = db.Column(db.Integer, db.ForeignKey("exam_schemes.scheme_id"), nullable=False)
+    student_id_fk = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"), nullable=False)
+    subject_id_fk = db.Column(db.Integer, db.ForeignKey("subjects.subject_id"), nullable=False)
+    division_id_fk = db.Column(db.Integer)
+    
+    semester = db.Column(db.Integer)
+    academic_year = db.Column(db.String(16))
+    attempt_no = db.Column(db.Integer, default=1)
+    
+    internal_marks = db.Column(db.Float)
+    external_marks = db.Column(db.Float)
+    total_marks = db.Column(db.Float)
+    
+    grade_letter = db.Column(db.String(4))
+    grade_point = db.Column(db.Float)
+    
+    is_absent = db.Column(db.Boolean, default=False)
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def grade(self):
+        return self.grade_letter
+        
+    @grade.setter
+    def grade(self, value):
+        self.grade_letter = value
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "scheme_id_fk",
+            "student_id_fk",
+            "subject_id_fk",
+            name="uq_exam_mark_entry",
+        ),
+    )
+
+
+class StudentSemesterResult(db.Model):
+    __tablename__ = "student_semester_results"
+    result_id = db.Column(db.Integer, primary_key=True)
+    scheme_id_fk = db.Column(db.Integer, db.ForeignKey("exam_schemes.scheme_id"), nullable=False)
+    student_id_fk = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"), nullable=False)
+    sgpa = db.Column(db.Float)
+    cgpa = db.Column(db.Float)
+    total_credits_earned = db.Column(db.Integer)
+    result_status = db.Column(db.String(16))  # Pass, Fail, ATKT
+    calculated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "scheme_id_fk",
+            "student_id_fk",
+            name="uq_student_semester_result",
+        ),
+    )
 
 
 class FeesRecord(db.Model):
     __tablename__ = "fees_records"
     fee_id = db.Column(db.Integer, primary_key=True)
-    student_id_fk = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"))
+    student_id_fk = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"), nullable=False)
     amount_due = db.Column(db.Float, default=0.0)
     amount_paid = db.Column(db.Float, default=0.0)
-    date_paid = db.Column(db.Date)
+    date_paid = db.Column(db.Date, default=datetime.utcnow)
     semester = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class FeeStructure(db.Model):
@@ -229,7 +322,6 @@ class FeeStructure(db.Model):
     is_frozen = db.Column(db.Boolean, default=False)
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class FeePayment(db.Model):
@@ -238,21 +330,19 @@ class FeePayment(db.Model):
     enrollment_no = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"), nullable=False)
     program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
     semester = db.Column(db.Integer, nullable=False)
-    medium_tag = db.Column(db.String(32))
     amount = db.Column(db.Float, nullable=False)
-    txn_ref = db.Column(db.String(64))
-    utr = db.Column(db.String(64))
-    proof_image_path = db.Column(db.String(255))
-    status = db.Column(db.String(16), default="submitted")  # submitted | verified | rejected
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    verified_at = db.Column(db.DateTime)
-    verified_by_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
-    # Additional verification metadata
-    payer_name = db.Column(db.String(128))
-    bank_credit_at = db.Column(db.DateTime)
-    # Formal receipt number assigned upon verification
-    receipt_no = db.Column(db.String(32))
+    payment_date = db.Column(db.Date, default=datetime.utcnow)
+    payment_mode = db.Column(db.String(32))  # Cash, UPI, Cheque
+    reference_no = db.Column(db.String(64))  # Transaction ID / Cheque No
+    status = db.Column(db.String(32), default="submitted")  # submitted, verified, rejected
+    receipt_no = db.Column(db.String(64), unique=True)
     remarks = db.Column(db.Text)
+    # Who entered this payment?
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    # When verified, snapshot verification time
+    verified_at = db.Column(db.DateTime)
+    verified_by_user_id = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class ProgramBankDetails(db.Model):
@@ -286,28 +376,31 @@ class StudentSubjectEnrollment(db.Model):
     student_id_fk = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"), nullable=False)
     subject_id_fk = db.Column(db.Integer, db.ForeignKey("subjects.subject_id"), nullable=False)
     semester = db.Column(db.Integer)
-    division_id_fk = db.Column(db.Integer, db.ForeignKey("divisions.division_id"))
     academic_year = db.Column(db.String(16))
+    division_id_fk = db.Column(db.Integer, db.ForeignKey("divisions.division_id"))  # Optional snapshot
     is_active = db.Column(db.Boolean, default=True)
-    source = db.Column(db.String(32))  # default_core | offering_default | manual_opt_in
+    source = db.Column(db.String(32))  # e.g., 'bulk_csv', 'manual', 'offering_default'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "student_id_fk",
+            "subject_id_fk",
+            "academic_year",
+            name="uq_student_subject_enrollment_year",
+        ),
+    )
 
 
 class Notification(db.Model):
     __tablename__ = "notifications"
     notification_id = db.Column(db.Integer, primary_key=True)
-    student_id_fk = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"), nullable=False)
-    kind = db.Column(db.String(32), nullable=False)  # fee_rejected | fee_verified | fee_submitted | other
-    title = db.Column(db.String(128), nullable=False)
-    message = db.Column(db.Text)
-    data_json = db.Column(db.Text)  # optional payload (program_id, semester, medium, payment_id, utr)
-    payment_id_fk = db.Column(db.Integer, db.ForeignKey("fee_payments.payment_id"))
+    user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)
+    title = db.Column(db.String(128))
+    message = db.Column(db.String(255))
+    link = db.Column(db.String(255))
     is_read = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    read_at = db.Column(db.DateTime)
-
-    student = db.relationship("Student", backref="notifications", lazy=True)
 
 
 class SubjectMaterial(db.Model):
@@ -346,29 +439,17 @@ class Announcement(db.Model):
     message = db.Column(db.Text, nullable=False)
     severity = db.Column(db.String(16), default="info")  # info, warning, danger, success
     is_active = db.Column(db.Boolean, default=True)
-    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))
-    program = db.relationship("Program", backref="announcements", lazy=True)
+    
+    # Targeting
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id")) # Null = All Programs
+    
     start_at = db.Column(db.DateTime, default=datetime.utcnow)
     end_at = db.Column(db.DateTime)
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    created_by = db.Column(db.Integer, db.ForeignKey("users.user_id"))
-    # Audience targeting: roles that should see this announcement. If none, visible to all.
-    audiences = db.relationship("AnnouncementAudience", backref="announcement", lazy=True)
-    dismissals = db.relationship("AnnouncementDismissal", backref="announcement", lazy=True)
-    recipients = db.relationship("AnnouncementRecipient", backref="announcement", lazy=True)
-
-
-class MaterialRevision(db.Model):
-    __tablename__ = "material_revisions"
-    revision_id = db.Column(db.Integer, primary_key=True)
-    material_id_fk = db.Column(db.Integer, db.ForeignKey("subject_materials.material_id"), nullable=False)
-    version = db.Column(db.Integer, nullable=False)
-    title = db.Column(db.String(200), nullable=False)
-    description = db.Column(db.Text)
-    kind = db.Column(db.String(16), nullable=False)
-    file_path = db.Column(db.String(255))
-    external_url = db.Column(db.String(255))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Who created it?
     actor_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
 
 
@@ -384,6 +465,19 @@ class AnnouncementRevision(db.Model):
     program_id_fk = db.Column(db.Integer)
     start_at = db.Column(db.DateTime)
     end_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class MaterialRevision(db.Model):
+    __tablename__ = "material_revisions"
+    revision_id = db.Column(db.Integer, primary_key=True)
+    material_id_fk = db.Column(db.Integer, db.ForeignKey("subject_materials.material_id"), nullable=False)
+    version = db.Column(db.Integer, nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    kind = db.Column(db.String(16), nullable=False)
+    file_path = db.Column(db.String(255))
+    external_url = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     actor_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
 
@@ -436,4 +530,35 @@ class PasswordChangeLog(db.Model):
     changed_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)  # actor
     changed_at = db.Column(db.DateTime, default=datetime.utcnow)
     method = db.Column(db.String(32))  # self, clerk, admin, principal
-    note = db.Column(db.String(255))
+
+
+class TimetableSettings(db.Model):
+    __tablename__ = "timetable_settings"
+    setting_id = db.Column(db.Integer, primary_key=True)
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
+    academic_year = db.Column(db.String(16), nullable=False)
+    # Configuration
+    start_time = db.Column(db.Time, default=datetime.strptime("08:00", "%H:%M").time())
+    slot_duration_mins = db.Column(db.Integer, default=55)
+    break_after_period = db.Column(db.Integer, default=3)
+    break_duration_mins = db.Column(db.Integer, default=25)
+    slots_per_day = db.Column(db.Integer, default=6)
+    
+    __table_args__ = (
+        db.UniqueConstraint("program_id_fk", "academic_year", name="uq_timetable_settings"),
+    )
+
+
+class TimetableSlot(db.Model):
+    __tablename__ = "timetable_slots"
+    slot_id = db.Column(db.Integer, primary_key=True)
+    division_id_fk = db.Column(db.Integer, db.ForeignKey("divisions.division_id"), nullable=False)
+    subject_id_fk = db.Column(db.Integer, db.ForeignKey("subjects.subject_id"), nullable=False)
+    day_of_week = db.Column(db.String(10), nullable=False) # Mon, Tue, Wed...
+    period_no = db.Column(db.Integer, nullable=False)
+    slot_type = db.Column(db.String(16), default="Theory") # Theory, Practical
+    room_no = db.Column(db.String(32))
+    
+    __table_args__ = (
+        db.UniqueConstraint("division_id_fk", "day_of_week", "period_no", name="uq_timetable_slot_div_day_period"),
+    )

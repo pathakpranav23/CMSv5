@@ -1,0 +1,60 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex align-items-center justify-content-between mb-2">
+    <h3 class="mb-0 title">Bulk Import Students (Clerk)</h3>
+    <div class="actions"></div>
+  </div>
+  <p class="text-muted soft-hint">Upload an Excel file to import students for a program. Supported formats: .xlsx, .xls</p>
+
+  {% if errors %}
+    <div class="alert alert-danger">
+      <ul class="mb-0">
+        {% for e in errors %}<li>{{ t(e) }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data">
+    <div class="mb-3">
+      <label class="form-label">Program</label>
+      <select name="program_id_fk" class="form-select" required>
+        <option value="">-- Select Program --</option>
+        {% for p in programs %}
+          <option value="{{ p.program_id }}" {% if form and form.program_id_fk == p.program_id|string %}selected{% endif %}>{{ p.program_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Semester (optional hint)</label>
+      <input type="number" name="semester_hint" class="form-control" min="1" max="10" value="{{ (form.semester_hint if form else '')|default('') }}">
+      <div class="form-text">If provided, students will be assigned to this semester during import.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Excel File</label>
+      <input type="file" name="file" class="form-control" accept=".xlsx,.xls" required>
+      <div class="form-text">Download a sample: <a href="{{ url_for('main.students_import_template') }}">students_import_template.csv</a></div>
+      <div class="mt-2">
+        <small class="text-muted">Expected columns (order not strict, headers case-insensitive):</small>
+        <ul class="text-muted small mb-0">
+          <li><strong>enrollment_no</strong> (required)</li>
+          <li>surname, student_name, father_name</li>
+          <li>division_code (e.g. A), current_semester</li>
+          <li>mobile, date_of_birth (YYYY-MM-DD)</li>
+          <li>gender, photo_url, permanent_address</li>
+          <li>medium_tag (e.g. English/Gujarati)</li>
+        </ul>
+      </div>
+    </div>
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" value="1" id="dryRun" name="dry_run" {% if form and form.dry_run %}checked{% endif %}>
+      <label class="form-check-label" for="dryRun">Dry-run (validate only)</label>
+      <div class="form-text">Runs validation and shows the report without saving data.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-primary">Import</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.module_students') }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

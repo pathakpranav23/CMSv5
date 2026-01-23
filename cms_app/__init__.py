@@ -186,6 +186,7 @@ def create_app():
                 "Students": "વિદ્યાર્થીઓ",
                 "Subjects": "વિષયો",
                 "Materials": "સામગ્રી",
+                "Exams": "પરીક્ષાઓ",
                 "Staff": "સ્ટાફ",
                 "Divisions": "વિભાગો",
                 "Fees Module": "ફી મોડ્યુલ",
@@ -298,6 +299,12 @@ def create_app():
     from .imports import imports_bp
     app.register_blueprint(imports_bp)
 
+    from .exams import exams_bp
+    app.register_blueprint(exams_bp)
+
+    from .timetable import timetable_bp
+    app.register_blueprint(timetable_bp, url_prefix="/timetable")
+
     @app.errorhandler(RequestEntityTooLarge)
     def handle_large_upload(e):
         try:
@@ -341,71 +348,99 @@ def create_app():
         # Minimal migration: ensure new columns exist in dev DB
         try:
             inspector = inspect(db.engine)
+            
+            # 1. Users table
+            user_cols = [c['name'] for c in inspector.get_columns('users')]
+            if 'email' not in user_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE users ADD COLUMN email VARCHAR(128)")
+            if 'is_active' not in user_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1")
+            if 'program_id_fk' not in user_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE users ADD COLUMN program_id_fk INTEGER")
+            if 'preferred_lang' not in user_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE users ADD COLUMN preferred_lang VARCHAR(8)")
+
+            # 2. CourseAssignments table
+            ca_cols = [c['name'] for c in inspector.get_columns('course_assignments')]
+            if 'is_active' not in ca_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE course_assignments ADD COLUMN is_active BOOLEAN DEFAULT 1")
+            if 'role' not in ca_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE course_assignments ADD COLUMN role VARCHAR(16) DEFAULT 'primary'")
+            if 'academic_year' not in ca_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE course_assignments ADD COLUMN academic_year VARCHAR(16)")
+
+            # 3. Students table
             cols = [c['name'] for c in inspector.get_columns('students')]
             if 'father_name' not in cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE students ADD COLUMN father_name VARCHAR(64)")
-            # Ensure students.medium_tag exists for medium filtering
             if 'medium_tag' not in cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE students ADD COLUMN medium_tag VARCHAR(32)")
-            # Ensure attendance.period_no exists for lecture-wise marking
+
+            # 4. Attendance table
             att_cols = [c['name'] for c in inspector.get_columns('attendance')]
             if 'period_no' not in att_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE attendance ADD COLUMN period_no INTEGER")
-            # Ensure fee_structures.is_frozen exists for clerk confirmation
+
+            # 5. FeeStructures table
             fee_cols = [c['name'] for c in inspector.get_columns('fee_structures')]
             if 'is_frozen' not in fee_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE fee_structures ADD COLUMN is_frozen BOOLEAN")
-            # Ensure fee_structures.medium_tag exists for medium-aware fees
-            fee_cols = [c['name'] for c in inspector.get_columns('fee_structures')]
             if 'medium_tag' not in fee_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE fee_structures ADD COLUMN medium_tag VARCHAR(32)")
 
-            # Ensure subjects.medium_tag exists
+            # 6. Subjects table
             subj_cols = [c['name'] for c in inspector.get_columns('subjects')]
             if 'medium_tag' not in subj_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE subjects ADD COLUMN medium_tag VARCHAR(32)")
-            # Ensure faculty.medium_expertise exists
+
+            # 7. Faculty table
             fac_cols = [c['name'] for c in inspector.get_columns('faculty')]
             if 'medium_expertise' not in fac_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE faculty ADD COLUMN medium_expertise VARCHAR(32)")
 
-            # Ensure fee_payments.proof_image_path exists for receipt screenshot uploads
+            # 8. FeePayments table
             pay_cols = [c['name'] for c in inspector.get_columns('fee_payments')]
             if 'proof_image_path' not in pay_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE fee_payments ADD COLUMN proof_image_path VARCHAR(255)")
-            # Ensure fee_payments.verified_by_fk exists to track verifier user
-            pay_cols = [c['name'] for c in inspector.get_columns('fee_payments')]
             if 'verified_by_fk' not in pay_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE fee_payments ADD COLUMN verified_by_fk INTEGER")
-            # Ensure new verification metadata columns exist
-            pay_cols = [c['name'] for c in inspector.get_columns('fee_payments')]
             if 'payer_name' not in pay_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE fee_payments ADD COLUMN payer_name VARCHAR(128)")
-            pay_cols = [c['name'] for c in inspector.get_columns('fee_payments')]
             if 'bank_credit_at' not in pay_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE fee_payments ADD COLUMN bank_credit_at DATETIME")
-            pay_cols = [c['name'] for c in inspector.get_columns('fee_payments')]
             if 'receipt_no' not in pay_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE fee_payments ADD COLUMN receipt_no VARCHAR(32)")
-            # Ensure users.preferred_lang exists for i18n preference
-            user_cols = [c['name'] for c in inspector.get_columns('users')]
-            if 'preferred_lang' not in user_cols:
+
+            # 9. SubjectTypes table
+            st_cols = [c['name'] for c in inspector.get_columns('subject_types')]
+            if 'type_name' not in st_cols:
                 with db.engine.begin() as conn:
-                    conn.execute("ALTER TABLE users ADD COLUMN preferred_lang VARCHAR(8)")
+                    conn.execute("ALTER TABLE subject_types ADD COLUMN type_name VARCHAR(64)")
+            if 'description' not in st_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE subject_types ADD COLUMN description VARCHAR(255)")
+
         except Exception:
-            # Best-effort; skip if migration fails (e.g., permissions)
+            # Best-effort; skip if migration fails
             pass
 
     return app

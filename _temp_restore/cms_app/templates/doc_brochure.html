@@ -1,0 +1,70 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+@media print {
+  nav.navbar, .btn, .actions { display: none !important; }
+  .container { max-width: 100% !important; }
+}
+.brand-header { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+.brand-header img { height:36px; }
+.brand-tag { font-weight:600; color:#0d6efd; }
+.feature { margin-bottom: 12px; }
+</style>
+<div class="container py-4">
+  <div class="brand-header">
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo">
+    <div class="brand-tag">CMSv5 Marketing Brochure</div>
+    <div class="ms-auto actions">
+      <a class="btn btn-outline-secondary btn-sm" href="?download=1">Download HTML</a>
+      <button class="btn btn-outline-primary btn-sm" onclick="window.print()">Print / Save PDF</button>
+    </div>
+  </div>
+
+  <h3>Overview</h3>
+  <p>CMSv5 is a modern, medium-aware College Management System that streamlines student data, fees, materials, announcements, and role-specific reports. Built for colleges operating Gujarati and English mediums across programs like B.Com, B.Sc, BCA, and BBA.</p>
+
+  <h3>Why CMSv5</h3>
+  <div class="feature"><strong>Medium-Smart Operations:</strong> Prevents mixing English/Gujarati cohorts via program-level policies and defaults.</div>
+  <div class="feature"><strong>Role-Tailored:</strong> Focused tools for Admin, Principal, Clerk, Faculty, and Student.</div>
+  <div class="feature"><strong>Safe Imports:</strong> Dry-run validation mode, clear alerts, and import audit logs.</div>
+  <div class="feature"><strong>Insightful Reports:</strong> Enrollment, fees, attendance, and materials summaries with CSV exports.</div>
+  <div class="feature"><strong>Localized UI:</strong> Gujarati and English with per-user preferences.</div>
+
+  <h3>Feature Highlights</h3>
+  <ul>
+    <li>Students: Powerful search, Program/Semester/Medium filters, pagination, CSV export.</li>
+    <li>Subjects & Materials: Fast management hub, publish/review workflows, engagement summaries.</li>
+    <li>Fees: Structured heads, bulk import with Dry-run, receipts, UTR verification queue, bank details management.</li>
+    <li>Announcements: Targeted notice board with archive and dismissals.</li>
+    <li>Divisions: Planning forms, capacity management, rebalance tools.</li>
+    <li>Reports: Role-aware summaries, division utilization, absentees export, fees status, trends.</li>
+    <li>Audit & Health: Import logs with filters, system status cards for DB/Cache/Email/Storage.</li>
+  </ul>
+
+  <h3>Role Experiences</h3>
+  <ul>
+    <li><strong>Admin:</strong> Global control, imports, reports, health checks, audit logs.</li>
+    <li><strong>Principal:</strong> Division capacity vs enrolled, fees progress, medium splits.</li>
+    <li><strong>Clerk:</strong> Bulk imports with Dry-run, verification queue, receipts.</li>
+    <li><strong>Faculty:</strong> Attendance compliance, absentees CSV, materials publishing.</li>
+    <li><strong>Student:</strong> Clean listings, targeted announcements, fee summaries.</li>
+  </ul>
+
+  <h3>Differentiators</h3>
+  <ul>
+    <li>Medium Policy embedded: B.Com supports English|Gujarati (default Gujarati); BBA/BCA/PG DMLT English-only; others Gujarati-only.</li>
+    <li>Validation-first workflows with Dry-run.</li>
+    <li>Localized Gujarati and English UI.</li>
+    <li>Comprehensive auditability.</li>
+  </ul>
+
+  <h3>Deployment</h3>
+  <p>Recommended stack: Linux (Ubuntu) + Nginx + Gunicorn + Postgres + Redis. Health checks and config via Admin System Status.</p>
+
+  <h3>Onboarding</h3>
+  <p>Prepare programs.csv → Import subjects/students/fees with Dry-run → Set bank details → Publish announcements/materials → Assign faculty to subjects.</p>
+
+  <h3>Call to Action</h3>
+  <p>Start with a pilot program and semester, validate via Dry-run, enable reports and exports, then scale to all programs and mediums.</p>
+</div>
+{% endblock %}

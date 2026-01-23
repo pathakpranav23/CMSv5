@@ -1,0 +1,168 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title">All Downloads — {{ ay }}</h2>
+    <div class="actions">
+      <a class="btn btn-secondary btn-sm" href="{{ url_for('main.materials_hub') }}">Back to Materials</a>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">Filters</div>
+    <div class="card-body">
+      <form class="row g-2" method="get" action="{{ url_for('main.materials_downloads') }}">
+        <div class="col-md-3">
+          <label class="form-label mb-0">Subject</label>
+          <select class="form-select form-select-sm" name="subject_id">
+            <option value="">All Subjects</option>
+            {% for s in subjects_options %}
+              <option value="{{ s.subject_id }}" {% if filters and filters.subject_id == (s.subject_id|string) %}selected{% endif %}>{{ s.subject_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label mb-0">Kind</label>
+          <select class="form-select form-select-sm" name="kind">
+            <option value="">All</option>
+            <option value="file" {% if filters and filters.kind == 'file' %}selected{% endif %}>File</option>
+            <option value="link" {% if filters and filters.kind == 'link' %}selected{% endif %}>Link</option>
+            <option value="embed" {% if filters and filters.kind == 'embed' %}selected{% endif %}>Embed</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label mb-0">From</label>
+          <input type="date" class="form-control form-control-sm" name="from" value="{{ filters.from if filters else '' }}">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label mb-0">To</label>
+          <input type="date" class="form-control form-control-sm" name="to" value="{{ filters.to if filters else '' }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label mb-0">Search</label>
+          <input type="text" class="form-control form-control-sm" name="q" placeholder="Title, tags, description" value="{{ filters.q if filters else '' }}">
+        </div>
+        <div class="col-12 d-flex justify-content-between align-items-center mt-2">
+          <div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="group" id="groupNone" value="" {% if not group_by_subject %}checked{% endif %}>
+              <label class="form-check-label" for="groupNone">Flat List</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="group" id="groupSubject" value="subject" {% if group_by_subject %}checked{% endif %}>
+              <label class="form-check-label" for="groupSubject">Group by Subject</label>
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-sm btn-primary">Apply</button>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.materials_downloads') }}">Clear</a>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if group_by_subject %}
+    {% if items_grouped and items_grouped|length > 0 %}
+      {% for sid, list in items_grouped.items() %}
+        {% set subj = subject_map.get(sid) %}
+        <div class="card mb-3">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <div class="card-title mb-0">{{ subj.subject_name if subj else ('Subject #' ~ sid) }}</div>
+            <div>
+              {% if subj %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.subject_materials', subject_id=subj.subject_id) }}">Open Subject</a>
+              {% endif %}
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-modern table-striped table-hover mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">Title</th>
+                    <th scope="col" class="text-center">Kind</th>
+                    <th scope="col">Link</th>
+                    <th scope="col" class="text-center">Added</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for m in list %}
+                  <tr>
+                    <td>{{ m.title }}</td>
+                    <td class="text-center">{{ m.kind|capitalize }}</td>
+                    <td>
+                      {% if m.kind == 'file' and m.file_path %}
+                        <a href="{{ url_for('static', filename=m.file_path) }}" target="_blank">Download</a>
+                      {% elif m.kind in ['link','embed'] and m.external_url %}
+                        <a href="{{ m.external_url }}" target="_blank">Open</a>
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
+                    <td class="text-center">{{ m.created_at.strftime('%d %b %Y') if m.created_at else '—' }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="card"><div class="card-body"><div class="text-muted">No published materials found for selected filters.</div></div></div>
+    {% endif %}
+  {% else %}
+    <div class="card">
+      <div class="card-header card-header-standard"><div class="card-title">Published Materials across your enrolled subjects</div></div>
+      <div class="card-body p-0">
+        {% if items %}
+          <div class="table-responsive">
+            <table class="table table-modern table-striped table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th scope="col">Subject</th>
+                  <th scope="col">Title</th>
+                  <th scope="col" class="text-center">Kind</th>
+                  <th scope="col">Link</th>
+                  <th scope="col" class="text-center">Added</th>
+                  <th scope="col" class="text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for m in items %}
+                  {% set subj = subject_map.get(m.subject_id_fk) %}
+                  <tr>
+                    <td>
+                      <div>{{ subj.subject_name if subj else ('Subject #' ~ m.subject_id_fk) }}</div>
+                    </td>
+                    <td>{{ m.title }}</td>
+                    <td class="text-center">{{ m.kind|capitalize }}</td>
+                    <td>
+                      {% if m.kind == 'file' and m.file_path %}
+                        <a href="{{ url_for('static', filename=m.file_path) }}" target="_blank">Download</a>
+                      {% elif m.kind in ['link','embed'] and m.external_url %}
+                        <a href="{{ m.external_url }}" target="_blank">Open</a>
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
+                    <td class="text-center">{{ m.created_at.strftime('%d %b %Y') if m.created_at else '—' }}</td>
+                    <td class="text-center">
+                      {% if subj %}
+                        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.subject_materials', subject_id=subj.subject_id) }}">Open Subject</a>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="p-3 text-muted">No published materials found for selected filters.</div>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -18,7 +18,7 @@
     <div class="card-body">
       <div class="row">
         <div class="col-md-6">
-          <p class="mb-1"><strong>Student:</strong> {{ student.student_name }} (ENR {{ student.enrollment_no }})</p>
+          <p class="mb-1"><strong>Student:</strong> {{ student.first_name }} {{ student.last_name }} (ENR {{ student.enrollment_no }})</p>
           <p class="mb-1"><strong>Program:</strong> {{ program.program_name if program else 'N/A' }}</p>
           <p class="mb-1"><strong>Semester:</strong> {{ semester }}</p>
           {% if is_bcom and medium %}

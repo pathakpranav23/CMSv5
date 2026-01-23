@@ -1,0 +1,281 @@
+{% extends "layout.html" %}
+
+{% block title %}Manage Timetable{% endblock %}
+
+{% block content %}
+<style>
+    .bg-practical {
+        background-color: #e3f2fd !important;
+    }
+    .faculty-hint {
+        font-size: 0.7rem;
+        min-height: 1.1em;
+    }
+</style>
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="h3 mb-0 text-gray-800">Timetable Management</h1>
+            <p class="text-muted small mb-0">Schedule classes, set breaks, and assign faculty.</p>
+        </div>
+        <div class="d-flex gap-2">
+            {% if demo_mode %}
+            <a href="{{ url_for('timetable.manage') }}" class="btn btn-warning text-white">
+                <i class="bi bi-lightning-fill"></i> Exit Demo
+            </a>
+            {% else %}
+            <a href="{{ url_for('timetable.manage', demo='1') }}" class="btn btn-outline-warning">
+                <i class="bi bi-lightning"></i> Demo Data
+            </a>
+            {% endif %}
+            <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#settingsModal">
+                <i class="bi bi-gear"></i> Settings
+            </button>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body py-3">
+            <form method="get" class="row g-3 align-items-end">
+                <input type="hidden" name="academic_year" value="{{ academic_year }}">
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">Program</label>
+                    <select name="program_id" class="form-select" onchange="this.form.submit()">
+                        <option value="">Select Program</option>
+                        {% for p in programs %}
+                        <option value="{{ p.program_id }}" {% if selected_program_id == p.program_id %}selected{% endif %}>
+                            {{ p.program_name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted">Semester</label>
+                    <select name="semester" class="form-select" onchange="this.form.submit()" {% if not selected_program_id %}disabled{% endif %}>
+                        <option value="">Select Sem</option>
+                        {% for i in range(1, 9) %}
+                        <option value="{{ i }}" {% if selected_semester == i %}selected{% endif %}>Sem {{ i }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">Division</label>
+                    <select name="division_id" class="form-select" onchange="this.form.submit()" {% if not selected_semester %}disabled{% endif %}>
+                        <option value="">Select Division</option>
+                        {% for d in divisions %}
+                        <option value="{{ d.division_id }}" {% if selected_division_id == d.division_id %}selected{% endif %}>
+                            Division {{ d.division_code }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if selected_division_id %}
+    <div class="row">
+        <!-- Sidebar: Subject Stats -->
+        <div class="col-md-3">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0">Subject Allocation</h6>
+                </div>
+                <ul class="list-group list-group-flush">
+                    {% for sub in subjects %}
+                    {% set theory_creds = sub.credit_structure.theory_credits if sub.credit_structure else 0 %}
+                    {% set prac_creds = sub.credit_structure.practical_credits if sub.credit_structure else 0 %}
+                    <li class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="fw-bold text-truncate" title="{{ sub.subject_name }}">{{ sub.subject_name }}</span>
+                            <span class="badge bg-secondary">{{ sub.subject_code }}</span>
+                        </div>
+                        <div class="small text-muted mt-1">
+                            Credits: T:{{ theory_creds }} | P:{{ prac_creds }}
+                        </div>
+                        <!-- We could calculate assigned count via JS or backend pass -->
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="col-md-9">
+            <div class="card shadow-sm">
+                <div class="card-body p-0 table-responsive">
+                    <table class="table table-bordered text-center align-middle mb-0">
+                        <thead class="bg-light">
+                            <tr>
+                                <th style="width: 80px;">Period</th>
+                                <th style="width: 100px;">Time</th>
+                                {% for day in days %}
+                                <th>{{ day }}</th>
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% set start_time = settings.start_time if settings else t('08:00') %}
+                            {% set duration = settings.slot_duration_mins if settings else 55 %}
+                            {% set break_after = settings.break_after_period if settings else 3 %}
+                            {% set break_dur = settings.break_duration_mins if settings else 25 %}
+                            
+                            <!-- JS will handle exact time calc, simplified here -->
+                            
+                            {% for p in periods %}
+                                <!-- Break Row -->
+                                {% if p == break_after + 1 %}
+                                <tr class="table-warning">
+                                    <td class="fw-bold">Break</td>
+                                    <td>{{ break_dur }} mins</td>
+                                    <td colspan="6" class="text-muted fst-italic">Recess</td>
+                                </tr>
+                                {% endif %}
+
+                                <tr>
+                                    <td class="fw-bold">{{ p }}</td>
+                                    <td class="small text-muted">
+                                        <!-- Time placeholder -->
+                                        {{ duration }}m
+                                    </td>
+                                    {% for day in days %}
+                                    {% set key = day ~ "_" ~ p %}
+                                    {% set slot = slots_data.get(key) %}
+                                    <td class="p-1 position-relative">
+                                        <select class="form-select form-select-sm border-0 slot-select {{ 'bg-practical' if slot and slot.slot_type == 'Practical' else '' }}" 
+                                                data-day="{{ day }}" 
+                                                data-period="{{ p }}">
+                                            <option value="">--</option>
+                                            {% for sub in subjects %}
+                                            <option value="{{ sub.subject_id }}" {% if slot and slot.subject_id_fk == sub.subject_id %}selected{% endif %}>
+                                                {{ sub.subject_name }}
+                                            </option>
+                                            {% endfor %}
+                                        </select>
+                                        <div class="faculty-hint small text-muted" style="font-size: 0.7rem;">
+                                            <!-- Loaded via JS -->
+                                        </div>
+                                    </td>
+                                    {% endfor %}
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="text-center py-5 text-muted">
+        <i class="bi bi-calendar-range display-1"></i>
+        <p class="mt-3">Please select a Division to manage the timetable.</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Settings Modal -->
+<div class="modal fade" id="settingsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form action="{{ url_for('timetable.update_settings') }}" method="post" class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Timetable Configuration</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="program_id" value="{{ selected_program_id }}">
+                <input type="hidden" name="academic_year" value="{{ academic_year }}">
+                
+                <div class="mb-3">
+                    <label class="form-label">Start Time</label>
+                    <input type="time" name="start_time" class="form-control" value="{{ settings.start_time.strftime('%H:%M') if settings else '08:00' }}" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Lecture Duration (mins)</label>
+                    <input type="number" name="slot_duration_mins" class="form-control" value="{{ settings.slot_duration_mins if settings else 55 }}" required>
+                </div>
+                <div class="row">
+                    <div class="col-6 mb-3">
+                        <label class="form-label">Break After Period</label>
+                        <input type="number" name="break_after_period" class="form-control" value="{{ settings.break_after_period if settings else 3 }}" required>
+                    </div>
+                    <div class="col-6 mb-3">
+                        <label class="form-label">Break Duration</label>
+                        <input type="number" name="break_duration_mins" class="form-control" value="{{ settings.break_duration_mins if settings else 25 }}" required>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const divisionId = "{{ selected_division_id }}";
+    
+    document.querySelectorAll('.slot-select').forEach(select => {
+        select.addEventListener('change', function() {
+            const day = this.dataset.day;
+            const period = this.dataset.period;
+            const subjectId = this.value;
+            const cell = this.parentElement;
+            
+            // Optimistic UI update
+            cell.style.opacity = '0.5';
+            
+            fetch("{{ url_for('timetable.save_slot') }}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": "{{ csrf_token }}"
+                },
+                body: JSON.stringify({
+                    division_id: divisionId,
+                    day: day,
+                    period: period,
+                    subject_id: subjectId
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                cell.style.opacity = '1';
+                if (data.error) {
+                    alert(data.error);
+                    // Revert?
+                } else {
+                    // Update visuals
+                    if (data.slot_type === 'Practical') {
+                        this.classList.add('bg-practical');
+                    } else {
+                        this.classList.remove('bg-practical');
+                    }
+                    this.style.backgroundColor = '';
+                    
+                    // Show Faculty
+                    const hint = cell.querySelector('.faculty-hint');
+                    if (hint) hint.textContent = data.faculty || '';
+                    
+                    if (data.warning) {
+                        // Toast or alert
+                        console.warn(data.warning);
+                    }
+                }
+            })
+            .catch(err => {
+                cell.style.opacity = '1';
+                alert("Failed to save.");
+            });
+        });
+        
+        // Initial Faculty Load? (Optional, better to load with page render if possible, 
+        // but current logic loads slots_data which is just the slot, not joined faculty.
+        // We can leave it for now or enhance later.)
+    });
+});
+</script>
+{% endblock %}

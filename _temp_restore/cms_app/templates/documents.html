@@ -1,0 +1,36 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title">Documents</h2>
+  </div>
+  <div class="row g-3">
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <h5 class="card-title">User Manuals</h5>
+          <p class="text-muted">Role-based manuals for Admin, Principal, Clerk, Faculty, and Student.</p>
+          <div class="d-flex gap-2">
+            <a class="btn btn-primary" href="{{ url_for('main.documents_user_manuals') }}">Open</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('main.documents_user_manuals') }}?download=1">Download HTML</a>
+            <button class="btn btn-outline-primary" onclick="window.open('{{ url_for('main.documents_user_manuals') }}','_blank'); setTimeout(()=>window.print(), 600);">Print / Save PDF</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <h5 class="card-title">Marketing Brochure</h5>
+          <p class="text-muted">Client-facing brochure highlighting CMSv5 features and benefits.</p>
+          <div class="d-flex gap-2">
+            <a class="btn btn-primary" href="{{ url_for('main.documents_brochure') }}">Open</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('main.documents_brochure') }}?download=1">Download HTML</a>
+            <button class="btn btn-outline-primary" onclick="window.open('{{ url_for('main.documents_brochure') }}','_blank'); setTimeout(()=>window.print(), 600);">Print / Save PDF</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

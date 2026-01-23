@@ -1,0 +1,87 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+<h2 class="mb-0 title d-flex align-items-center">Staff <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions">
+      {% if current_user.is_authenticated and (current_user.role|lower in ['admin','principal']) %}
+<a class="btn btn-primary btn-sm" href="{{ url_for('main.faculty_new') }}">New Staff</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Filters: compact input-group pattern for consistency -->
+  <form class="filters row g-1 g-md-3 mb-3" method="get" action="{{ url_for('main.faculty_list') }}">
+    <div class="col-md-6">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">Search</span>
+        <input type="text" name="q" class="form-control form-control-sm" placeholder="Name or email" value="{{ request.args.get('q','') }}">
+      </div>
+    </div>
+  <div class="col-md-4 col-lg-3">
+    <div class="input-group input-group-sm">
+      <span class="input-group-text">Role</span>
+      {% set sel_role = request.args.get('role','') %}
+      <select name="role" class="form-select form-select-sm">
+        <option value="">All</option>
+        <option value="admin" {% if sel_role=='admin' %}selected{% endif %}>Admin</option>
+        <option value="principal" {% if sel_role=='principal' %}selected{% endif %}>Principal</option>
+        <option value="faculty" {% if sel_role=='faculty' %}selected{% endif %}>Staff</option>
+        <option value="clerk" {% if sel_role=='clerk' %}selected{% endif %}>Clerk</option>
+      </select>
+    </div>
+  </div>
+  <div class="col-md-4 col-lg-3">
+    <div class="input-group input-group-sm">
+      <span class="input-group-text">Prog</span>
+      <select name="program_id" class="form-select form-select-sm" {% if current_user.is_authenticated and (current_user.role or '').lower()=='principal' %}disabled{% endif %}>
+        <option value="">All</option>
+        {% for p in program_list %}
+          <option value="{{ p.program_id }}" {% if selected_program_id==p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+    <div class="col-md-2 col-lg-3">
+      <div class="filter-actions d-flex flex-column flex-md-row gap-2">
+        <button type="submit" class="btn btn-primary btn-sm">Search</button>
+        <a href="{{ url_for('main.faculty_list') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </div>
+  </form>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Mobile</th>
+          <th>Role</th>
+          <th>Program</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.name }}</td>
+            <td>{{ row.email or '—' }}</td>
+            <td>{{ row.mobile or '—' }}</td>
+            <td>{{ row.role or '—' }}</td>
+            <td>{{ row.program or '—' }}</td>
+            <td>
+              {% if row.faculty_id %}
+                <a class="btn btn-link btn-sm p-0" href="{{ url_for('main.faculty_profile', faculty_id=row.faculty_id) }}">View Profile</a>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

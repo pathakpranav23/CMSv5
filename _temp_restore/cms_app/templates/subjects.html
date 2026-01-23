@@ -1,0 +1,205 @@
+{% extends 'layout.html' %}
+{% block content %}
+{% set can_manage = current_user.is_authenticated and (current_user.role|lower in ['admin','principal']) %}
+{% set can_enroll = current_user.is_authenticated and (current_user.role|lower in ['principal','clerk']) %}
+{% set can_toggle = current_user.is_authenticated and (current_user.role|lower in ['admin','principal','clerk']) %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+    <h2 class="mb-0 title d-flex align-items-center">Subjects <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions">
+      <a class="btn btn-secondary btn-sm" href="{{ url_for('main.dashboard') }}">Back to Dashboard</a>
+      {% if can_enroll %}
+        <a class="btn btn-primary btn-sm ms-2" href="{{ url_for('main.offer_electives', program_id=filters.program_id, semester=filters.semester) }}">Offer Electives</a>
+        <a class="btn btn-warning btn-sm ms-2" href="{{ url_for('main.enroll_core', program_id=filters.program_id, semester=filters.semester) }}">Enroll Core</a>
+      {% endif %}
+      {% if can_manage %}
+        <a class="btn btn-success btn-sm ms-2" href="{{ url_for('main.subject_new', program_id=filters.program_id, semester=filters.semester) }}?medium={{ filters.medium or '' }}">Add Subject</a>
+        <a class="btn btn-info btn-sm ms-2" href="#" onclick="showAssignStaffModal()">How to Assign Staff</a>
+      {% endif %}
+      {% if can_toggle %}
+        <a class="btn btn-outline-primary btn-sm ms-2" href="{{ url_for('main.subjects_import', program_id=filters.program_id, semester=filters.semester) }}">Import Subjects</a>
+      {% endif %}
+    </div>
+  </div>
+
+  
+
+  <form class="filters row g-1 g-md-3 mb-3" method="get" action="{{ url_for('main.subjects_list') }}">
+    {% set role_lower = (current_user.role|lower) if current_user.is_authenticated else 'guest' %}
+    {% set user_program_id = current_user.program_id_fk if current_user.is_authenticated else None %}
+    <div class="col-md-5 col-lg-5">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">Prog</span>
+        {% if role_lower in ['principal','clerk'] and user_program_id %}
+          <select id="program_id" class="form-select form-select-sm" disabled>
+            {% for p in programs %}
+              {% if p.program_id == user_program_id %}
+                <option value="{{ p.program_id }}" selected>{{ p.program_name }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          <input type="hidden" name="program_id" value="{{ user_program_id }}" />
+        {% else %}
+          <select id="program_id" name="program_id" class="form-select form-select-sm">
+            {% for p in programs %}
+            <option value="{{ p.program_id }}" {% if filters.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+            {% endfor %}
+          </select>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-md-3 col-lg-3">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">Sem</span>
+        <select id="semester" name="semester" class="form-select form-select-sm">
+          {% for s in range(1, 9) %}
+          <option value="{{ s }}" {% if filters.semester == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="col-md-2 col-lg-2">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">Medium</span>
+        <select id="medium" name="medium" class="form-select form-select-sm">
+          <option value="" {% if not filters.medium %}selected{% endif %}>Any</option>
+          <option value="English" {% if filters.medium == 'English' %}selected{% endif %}>English</option>
+          <option value="Gujarati" {% if filters.medium == 'Gujarati' %}selected{% endif %}>Gujarati</option>
+        </select>
+      </div>
+    </div>
+    <div class="col-md-2 col-lg-2">
+      <div class="filter-actions d-flex flex-column flex-md-row gap-2">
+        <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+        <a href="{{ url_for('main.subjects_list') }}" class="btn btn-outline-secondary btn-sm">Reset</a>
+      </div>
+    </div>
+  </form>
+
+  <div class="card">
+    <div class="card-header card-header-standard"><div class="card-title">Subjects List</div></div>
+    <div class="card-body p-0">
+      <div class="px-3 py-2 d-flex justify-content-between align-items-center">
+        <div class="input-group input-group-sm" style="max-width:240px;">
+          <span class="input-group-text">{{ t('Per Page') }}</span>
+          <select id="limit" name="limit" class="form-select form-select-sm" onchange="document.getElementById('limitForm').submit()">
+            <option value="10" {{ 'selected' if (selected_limit or 20) == 10 else '' }}>10</option>
+            <option value="20" {{ 'selected' if (selected_limit or 20) == 20 else '' }}>20</option>
+            <option value="50" {{ 'selected' if (selected_limit or 20) == 50 else '' }}>50</option>
+            <option value="100" {{ 'selected' if (selected_limit or 20) == 100 else '' }}>100</option>
+          </select>
+        </div>
+        <div>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.subjects_export_csv') }}?program_id={{ filters.program_id or '' }}&semester={{ filters.semester or '' }}&medium={{ filters.medium or '' }}">{{ t('Export CSV') }}</a>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-modern table-striped table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">Code</th>
+              <th scope="col">Paper Code</th>
+              <th scope="col">Subject</th>
+              <th scope="col" class="text-center">Medium</th>
+              <th scope="col">Type</th>
+              <th scope="col" class="text-center">Theory</th>
+              <th scope="col" class="text-center">Practical</th>
+              <th scope="col" class="text-center">Total</th>
+              <th scope="col" class="text-center">Enrolled</th>
+              {% if can_toggle %}
+              <th scope="col" class="text-end">Actions</th>
+              {% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+            <tr>
+              <td>{{ r.subject_code or '—' }}</td>
+              <td>{{ r.paper_code or '—' }}</td>
+              <td>
+                {{ r.subject_name }}
+                {% if r.is_elective %}
+                  <span class="badge bg-warning text-dark ms-2">Elective</span>
+                {% endif %}
+              </td>
+              <td class="text-center">
+                {% if r.medium_tag %}
+                  <span class="badge bg-info text-dark">{{ r.medium_tag }}</span>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>{{ r.type_code }}</td>
+              <td class="text-center">{{ r.theory_credits }}</td>
+              <td class="text-center">{{ r.practical_credits }}</td>
+              <td class="text-center">{{ r.total_credits }}</td>
+              <td class="text-center">{{ r.enrolled_count }}</td>
+              {% if can_toggle %}
+              <td class="text-end">
+                <form method="post" action="{{ url_for('main.subject_toggle_elective', subject_id=r.subject_id) }}" class="d-inline">
+                  {% if r.is_elective %}
+                    <input type="hidden" name="action" value="make_core" />
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Make Core</button>
+                  {% else %}
+                    <input type="hidden" name="action" value="make_elective" />
+                    <button type="submit" class="btn btn-sm btn-outline-warning">Make Elective</button>
+                  {% endif %}
+                </form>
+                {% if can_manage %}
+                  {% if r.has_assignment %}
+                    <a class="btn btn-sm btn-primary ms-2" href="{{ url_for('main.subject_assign', subject_id=r.subject_id) }}">Re-assign</a>
+                  {% else %}
+                    <a class="btn btn-sm btn-primary ms-2" href="{{ url_for('main.subject_assign', subject_id=r.subject_id) }}">Assign</a>
+                  {% endif %}
+                {% endif %}
+              </td>
+              {% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% set start_idx = ((selected_page - 1) * selected_limit) + 1 %}
+  {% set end_idx = (start_idx + rows|length - 1) %}
+  <div class="d-flex justify-content-between align-items-center mt-2">
+    <div class="small text-muted">Showing {{ start_idx if total_count else 0 }}–{{ end_idx if total_count else 0 }} of {{ total_count or 0 }}</div>
+    {% set base_url = url_for('main.subjects_list') %}
+    {% set prev_page = selected_page - 1 %}
+    {% set next_page = selected_page + 1 %}
+    <div class="btn-group">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ base_url }}?program_id={{ filters.program_id or '' }}&semester={{ filters.semester or '' }}&medium={{ filters.medium or '' }}&limit={{ selected_limit }}&page={{ prev_page }}" {% if selected_page <= 1 %}disabled{% endif %}>Prev</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ base_url }}?program_id={{ filters.program_id or '' }}&semester={{ filters.semester or '' }}&medium={{ filters.medium or '' }}&limit={{ selected_limit }}&page={{ next_page }}" {% if end_idx >= total_count %}disabled{% endif %}>Next</a>
+    </div>
+  </div>
+</div>
+
+<!-- Assign Staff Modal -->
+<div class="modal fade" id="assignStaffModal" tabindex="-1" aria-labelledby="assignStaffModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="assignStaffModalLabel">How to Assign Staff</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>This dialog is only a short guide.</p>
+        <p class="text-muted">Use the "Assign" or "Re-assign" button in the Actions column for the specific subject.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showAssignStaffModal() {
+  var modal = new bootstrap.Modal(document.getElementById('assignStaffModal'));
+  modal.show();
+}
+</script>
+
+{% endblock %}

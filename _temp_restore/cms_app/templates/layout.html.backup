@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Parekh Colleges CMS</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png', v=1) }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="role-{{ (current_user.role|lower) if (current_user.is_authenticated) else 'guest' }} {% if program_slug %}program-{{ program_slug }}{% endif %} {{ page_class|default('') }} {% block page_class %}{% endblock %} {% if not info_hints_enabled %}hints-off{% endif %}"
+      data-theme="{{ theme|default('lightblue') }}">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <a class="d-flex align-items-center gap-2 text-decoration-none" href="{{ url_for('main.index') }}" title="Shri Balvant Parekh Education Trust">
+          <img src="{{ url_for('static', filename='logo.png', v=1) }}" alt="Parekh Colleges Logo" />
+          <span class="fw-semibold" style="color: var(--nav-fg)">SBPET</span>
+          {% if program_name %}
+            <span class="program-badge" title="Program">{{ program_name }}</span>
+          {% endif %}
+        </a>
+      </div>
+      <ul class="nav">
+        {% if current_user.is_authenticated %}
+          <li><a href="{{ url_for('main.dashboard') }}"><span class="module-icon"><i class="bi bi-speedometer"></i></span><span class="label">Dashboard</span></a></li>
+          <li><a href="{{ url_for('main.module_announcements') }}"><span class="module-icon"><i class="bi bi-megaphone"></i></span><span class="label">Announcements</span></a></li>
+          <li><a href="{{ url_for('main.module_attendance') }}"><span class="module-icon"><i class="bi bi-calendar-check"></i></span><span class="label">Attendance</span></a></li>
+          <li><a href="{{ url_for('main.module_students') }}"><span class="module-icon"><i class="bi bi-people"></i></span><span class="label">Students</span></a></li>
+          <li><a href="{{ url_for('main.module_subjects') }}"><span class="module-icon"><i class="bi bi-journal-bookmark"></i></span><span class="label">Subjects</span></a></li>
+          <li><a href="{{ url_for('main.materials_hub') }}"><span class="module-icon"><i class="bi bi-folder2"></i></span><span class="label">Materials</span></a></li>
+          <li><a href="{{ url_for('main.module_faculty') }}"><span class="module-icon"><i class="bi bi-person-badge"></i></span><span class="label">Staff</span></a></li>
+          {% if (current_user.role|lower) in ['admin','principal','clerk'] %}
+            <li><a href="{{ url_for('main.module_divisions') }}"><span class="module-icon"><i class="bi bi-diagram-3"></i></span><span class="label">Divisions</span></a></li>
+          {% endif %}
+          {% if (current_user.role|lower) in ['admin','principal','clerk'] %}
+            {% if (current_user.role|lower) == 'clerk' %}
+              {% if not fees_disabled %}<li><a href="{{ url_for('main.fees_entry') }}"><span class="module-icon"><i class="bi bi-cash-coin"></i></span><span class="label">Fees</span></a></li>{% endif %}
+            {% else %}
+              {% if not fees_disabled %}<li><a href="{{ url_for('main.module_fees') }}"><span class="module-icon"><i class="bi bi-cash-coin"></i></span><span class="label">Fees</span></a></li>{% endif %}
+            {% endif %}
+          {% endif %}
+          {% if (current_user.role|lower) in ['admin','principal'] %}
+            <li><a href="{{ url_for('main.module_admin') }}"><span class="module-icon"><i class="bi bi-sliders"></i></span><span class="label">Admin</span></a></li>
+          {% endif %}
+        {% else %}
+          <li><a href="{{ url_for('main.notice_board') }}"><span class="module-icon"><i class="bi bi-bell"></i></span><span class="label">Notice Board</span></a></li>
+          <li><a href="{{ url_for('main.notice_archive') }}"><span class="module-icon"><i class="bi bi-archive"></i></span><span class="label">Archive</span></a></li>
+        {% endif %}
+      </ul>
+      <div class="user-tools">
+        <ul class="nav">
+          {% if current_user.is_authenticated %}
+            <li><a href="{{ url_for('main.account_settings') }}"><span class="module-icon"><i class="bi bi-person-circle"></i></span><span class="label">Account</span></a></li>
+            <li><a href="{{ url_for('main.logout') }}"><span class="module-icon"><i class="bi bi-box-arrow-right"></i></span><span class="label">Logout</span></a></li>
+          {% else %}
+            <li><a href="{{ url_for('main.login') }}"><span class="module-icon"><i class="bi bi-box-arrow-in-right"></i></span><span class="label">Login</span></a></li>
+          {% endif %}
+        </ul>
+      </div>
+    </aside>
+    <!-- Mobile backdrop for sidebar -->
+    <div class="sidebar-backdrop d-md-none"></div>
+    <div class="app-main">
+      <!-- Mobile topbar with sidebar toggle -->
+      <div class="mobile-topbar d-md-none d-flex align-items-center justify-content-between px-3 py-2" style="background: var(--nav-bg); color: var(--nav-fg);">
+        <button class="btn btn-outline-light btn-sm" id="sidebarToggle"><i class="bi bi-list"></i> Menu</button>
+        <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.dashboard') }}">Dashboard</a>
+      </div>
+
+      <main class="container my-4">
+    {% with messages = get_flashed_messages(with_categories=True) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          {% set cat = (category or 'info') %}
+          {% if cat not in ['primary','secondary','success','danger','warning','info','light','dark'] %}
+            {% set cat = 'info' %}
+          {% endif %}
+          <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+          </div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+      </main>
+      <footer class="app-footer">
+        <div class="container py-3 d-flex justify-content-between align-items-center">
+          <img src="{{ url_for('static', filename='CODEP-LOGO-6.png') }}" alt="CODEP Company Logo" class="footer-logo" />
+          <div class="footer-brand text-end">
+            <div class="small fw-semibold">The Group of Parekh Colleges - Mahuva</div>
+            <div class="small">Managed by Shri Balvant Parekh Education Trust (SBPET)</div>
+          </div>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Shared initializer: apply background images from data-bg-url across pages
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('[data-bg-url]').forEach(function(el) {
+        var url = el.getAttribute('data-bg-url');
+        if (url) {
+          el.style.backgroundImage = "url('" + url + "')";
+          el.style.backgroundSize = 'cover';
+          el.style.backgroundPosition = 'center';
+        }
+      });
+
+      // Initialize Bootstrap tooltips for richer styling
+      var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+      tooltipTriggerList.forEach(function(el) {
+        try { new bootstrap.Tooltip(el); } catch (e) {}
+      });
+
+      // Mobile sidebar toggle
+      var shell = document.querySelector('.app-shell');
+      var toggleBtn = document.getElementById('sidebarToggle');
+      var backdrop = document.querySelector('.sidebar-backdrop');
+      function toggleSidebar(open) {
+        if (!shell) return;
+        if (open === true) { shell.classList.add('sidebar-open'); }
+        else if (open === false) { shell.classList.remove('sidebar-open'); }
+        else { shell.classList.toggle('sidebar-open'); }
+      }
+      if (toggleBtn) { toggleBtn.addEventListener('click', function() { toggleSidebar(); }); }
+      if (backdrop) { backdrop.addEventListener('click', function() { toggleSidebar(false); }); }
+    });
+  </script>
+</body>
+</html>

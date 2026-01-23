@@ -1,0 +1,44 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+    <h2 class="mb-0 d-flex align-items-center">Enroll Core Subjects <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div>
+      <a class="btn btn-secondary btn-sm" href="{{ url_for('main.subjects_list', program_id=selected_program.program_id if selected_program else None, semester=semester) }}">Back to Subjects</a>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-8">
+          <div><strong>Program:</strong> {{ selected_program.program_name if selected_program else '—' }}</div>
+          <div><strong>Semester:</strong> {{ semester }}</div>
+          <div><strong>Academic Year:</strong> {{ academic_year }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <p class="mb-2">This will enroll all BCA students currently in Semester {{ semester }} into all core (non-elective) subjects for the selected semester.</p>
+      <div class="alert alert-info">
+        Re-running core enrollment will <strong>update existing enrollments</strong> for this academic year
+        (reactivates and refreshes semester/division) instead of creating duplicates.
+      </div>
+      <ul>
+        <li>Core subjects found: {{ subjects_core|length }}</li>
+        <li>Students found: {{ students|length }}</li>
+      </ul>
+
+      <form method="post" action="{{ url_for('main.enroll_core') }}">
+        <input type="hidden" name="program_id" value="{{ selected_program.program_id if selected_program else '' }}" />
+        <input type="hidden" name="semester" value="{{ semester }}" />
+        <button type="submit" class="btn btn-primary">Enroll Core Subjects</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,87 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title d-flex align-items-center">Promote Students Between Semesters <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.students') }}">Back to Students</a>
+    </div>
+  </div>
+
+  {% if not program %}
+    <div class="alert alert-warning">Your account is not mapped to a program. Contact admin.</div>
+  {% else %}
+    <div class="card mb-3">
+      <div class="card-body">
+        <div><strong>Program:</strong> {{ program.program_name }}</div>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="alert alert-info small mb-3">
+          Promotion updates students to the next semester and, when divisions exist
+          for the target semester in this program, also reassigns them into those
+          divisions automatically.
+        </div>
+        <form method="post" class="row g-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <div class="col-md-4">
+            <label class="form-label">From Semester</label>
+            <select name="from_semester" class="form-select" required>
+              <option value="">Select semester</option>
+              {% for s in range(1, max_semester) %}
+                <option value="{{ s }}" {% if from_semester == s %}selected{% endif %}>Semester {{ s }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">To Semester</label>
+            <input type="text" class="form-control" value="{{ to_semester if to_semester else '' }}" readonly>
+            <div class="form-text">Automatically set to next semester.</div>
+          </div>
+          <div class="col-md-4 d-flex align-items-end gap-2">
+            <button type="submit" name="action" value="preview" class="btn btn-outline-primary">Preview</button>
+            <button type="submit" name="action" value="confirm" class="btn btn-danger" {% if not total_eligible %}disabled{% endif %}>Confirm Promotion</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {% if from_semester and to_semester is not none %}
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title mb-2">Preview</h5>
+          {% if total_eligible %}
+            <p class="mb-2">This will promote {{ total_eligible }} students in {{ program.program_name }} from Semester {{ from_semester }} to Semester {{ to_semester }}.</p>
+            <div class="table-responsive">
+              <table class="table table-sm table-striped mb-0">
+                <thead>
+                  <tr>
+                    <th>Enrollment No</th>
+                    <th>Name</th>
+                    <th>Current Semester</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for s in preview_students %}
+                    <tr>
+                      <td>{{ s.enrollment_no }}</td>
+                      <td>{{ (s.surname or '') ~ ' ' ~ (s.student_name or '') }}</td>
+                      <td>{{ s.current_semester }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <p class="small text-muted mt-2">Showing up to {{ preview_students|length }} students.</p>
+          {% else %}
+            <p class="mb-0 text-muted">No students found in Semester {{ from_semester }} for this program.</p>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,13 @@
+Flask==2.2.5
+Flask-SQLAlchemy==2.5.1
+Flask-Migrate==4.0.5
+Flask-Login==0.6.3
+# psycopg2-binary==2.9.9 # Optional/Prod only
+python-dotenv==1.0.0
+openpyxl==3.1.2
+SQLAlchemy==1.4.49
+Flask-Limiter==4.1.1
+Flask-Caching==2.3.1
+pytest==9.0.2
+gunicorn==21.2.0
+Werkzeug==2.3.7

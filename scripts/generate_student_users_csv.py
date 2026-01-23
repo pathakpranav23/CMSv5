@@ -49,7 +49,7 @@ def ensure_student_user(student: Student) -> tuple:
     username = (student.enrollment_no or '').strip()
     if not username:
         # Fallback to generated username if enrollment missing
-        base = (student.student_name or 'student').replace(' ', '').lower()
+        base = (student.first_name or 'student').replace(' ', '').lower()
         username = f"{base}{random.randint(1000,9999)}"
 
     user = db.session.execute(
@@ -95,7 +95,7 @@ def generate_csv(output_path: str) -> None:
         div_code = division.division_code if division else ''
         semester = s.current_semester or (division.semester if division else None)
         roll_no = rolls.get(s.enrollment_no) or ''
-        full_name = f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() or (s.student_name or '')
+        full_name = f"{(s.last_name or '').strip()} {(s.first_name or '').strip()}".strip() or (s.first_name or '')
         rows.append([
             s.enrollment_no,
             roll_no,

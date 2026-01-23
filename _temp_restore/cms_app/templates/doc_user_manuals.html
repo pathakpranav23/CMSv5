@@ -1,0 +1,175 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+@media print {
+  nav.navbar, .btn, .actions { display: none !important; }
+  .container { max-width: 100% !important; }
+}
+.brand-header { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+.brand-header img { height:36px; }
+.brand-tag { font-weight:600; color:#0d6efd; }
+</style>
+<div class="container py-4">
+  <div class="brand-header">
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo">
+    <div class="brand-tag">CMSv5 User Manuals</div>
+    <div class="ms-auto actions">
+      <a class="btn btn-outline-secondary btn-sm" href="?download=1">Download HTML</a>
+      <button class="btn btn-outline-primary btn-sm" onclick="window.print()">Print / Save PDF</button>
+    </div>
+  </div>
+
+  <h3>User Categories</h3>
+  <ul>
+    <li>Admin: Full system control; configuration, imports, health checks, access management.</li>
+    <li>Principal: Academic oversight; divisions planning, enrollment and fees analytics, announcements.</li>
+    <li>Clerk: Data operations; bulk imports, fees verification, receipts, cleanup.</li>
+    <li>Faculty: Teaching workflows; attendance, materials, subject lectures, absentees.</li>
+    <li>Student: Consumption; notices, materials, fee status view, language preferences.</li>
+  </ul>
+
+  <h3>Modules Overview</h3>
+  <ul>
+    <li>Dashboard: Quick actions and status cards.</li>
+    <li>Announcements: Create and view notices, targeted to programs/mediums.</li>
+    <li>Attendance: Mark and review attendance, threshold reports.</li>
+    <li>Students: Roster management, search, CSV export.</li>
+    <li>Subjects: Catalog, filters, assignments.</li>
+    <li>Materials: Upload and publish teaching content; track published/flagged.</li>
+    <li>Staff: Faculty and staff directory.</li>
+    <li>Divisions: Capacity planning, sections, utilization analytics.</li>
+    <li>Fees Module: Heads, payments, verification, receipts, bank details.</li>
+    <li>Programs: Program list and metadata.</li>
+    <li>Admin Module: Imports, system status, configuration.
+    </li>
+    <li>Reports: Enrollment, fees, attendance, materials, divisions; exports.</li>
+    <li>Documents: User manuals and brochure; print/export.</li>
+    <li>Manage Accounts: Create users, roles, language preference.</li>
+    <li>Notice Board & Archive: Student-facing notices and history.</li>
+  </ul>
+
+  <h3>Role-based Access</h3>
+  <ul>
+    <li>Admin: Access to all modules including Admin Module, Programs, Divisions, Fees, Reports, Documents, Manage Accounts, System Status.</li>
+    <li>Principal: Dashboard, Announcements, Divisions, Programs, Reports, Documents; read-only on some admin views.</li>
+    <li>Clerk: Fees Module (verification, receipts), Students/Subjects imports, Reports (fees/enrollment); limited admin operations.</li>
+    <li>Faculty: Attendance, Materials, Subject Lectures, Absentees; limited Reports.</li>
+    <li>Student: Notices, Materials, personal fee view (if enabled), language toggle.</li>
+  </ul>
+
+  <h3>Reports & Exports</h3>
+  <ul>
+    <li>Enrollment Summary: Filter by Program, Semester, Medium; totals per semester.</li>
+    <li>Fees Summary: Status counts; export CSV.</li>
+    <li>Fees Program Status: Buckets (Full/Partial/None), per-student Paid and Outstanding; program mediums are dynamic.</li>
+    <li>Attendance Threshold Report: Below/Above threshold list with subject filters; summary header and CSV.</li>
+    <li>Subject Lectures: Distinct session counts by date/period/division; date range filter and CSV.</li>
+    <li>Division Capacity vs Enrolled: Capacity, enrolled, utilization, medium split.</li>
+  </ul>
+
+  <h3>Operational Workflows</h3>
+  <ul>
+    <li>Imports: Use Dry-run; fix errors; commit only after validation. Review Import Logs.</li>
+    <li>Fees Verification: Clerk verifies payments (UTR/proofs); receipts issued after verification.</li>
+    <li>Attendance: Faculty marks by roll/enrollment; subject-wise compliance and absentees.</li>
+    <li>Language: Set preferred in Account Settings; quick toggle EN/GU in nav.</li>
+  </ul>
+
+  <h3>Language & Mediums</h3>
+  <ul>
+    <li>Localization: English and Gujarati UI with t() translations.</li>
+    <li>Medium Policy: Programs declare mediums via fee structure; per-student due uses common components plus the student’s medium components.</li>
+    <li>Medium Filter: In fees reports, medium options load per program/semester; dropdown hides when not applicable.</li>
+  </ul>
+
+  <h3>Security & Health</h3>
+  <ul>
+    <li>Rate Limiting: Defensive defaults; Redis-backed when configured.</li>
+    <li>Cache: In-memory or Redis; status shown on dashboard.</li>
+    <li>System Status: DB, cache, email, storage checks; Redis check endpoint.</li>
+  </ul>
+
+  <h3>Detailed Role Permissions</h3>
+  <p class="soft-hint">This section lists module access and key actions per role.</p>
+  <div class="table-responsive">
+    <table class="table table-sm table-modern">
+      <thead>
+        <tr>
+          <th>Module</th>
+          <th>Admin</th>
+          <th>Principal</th>
+          <th>Clerk</th>
+          <th>Faculty</th>
+          <th>Student</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Dashboard</td><td>Full</td><td>Full</td><td>Full</td><td>Full</td><td>Limited</td></tr>
+        <tr><td>Announcements</td><td>Create/Manage</td><td>Create/Manage</td><td>View</td><td>View</td><td>View</td></tr>
+        <tr><td>Attendance</td><td>Admin Reports</td><td>Reports</td><td>View</td><td>Mark/Reports</td><td>View Own</td></tr>
+        <tr><td>Students</td><td>Manage</td><td>View</td><td>Import/Manage</td><td>View</td><td>View</td></tr>
+        <tr><td>Subjects</td><td>Manage</td><td>View</td><td>Import/Manage</td><td>View</td><td>View</td></tr>
+        <tr><td>Materials</td><td>Manage</td><td>View</td><td>View</td><td>Publish/Manage</td><td>View</td></tr>
+        <tr><td>Staff</td><td>Manage</td><td>View</td><td>View</td><td>View</td><td>—</td></tr>
+        <tr><td>Divisions</td><td>Manage</td><td>Plan/Analyze</td><td>View</td><td>View</td><td>—</td></tr>
+        <tr><td>Fees Module</td><td>Configure</td><td>Analyze</td><td>Verify/Receipts</td><td>View</td><td>View</td></tr>
+        <tr><td>Programs</td><td>Manage</td><td>View</td><td>View</td><td>View</td><td>—</td></tr>
+        <tr><td>Admin Module</td><td>Full</td><td>Limited</td><td>Imports</td><td>—</td><td>—</td></tr>
+        <tr><td>Reports</td><td>Full</td><td>Full</td><td>Fees/Enroll</td><td>Attendance</td><td>Limited</td></tr>
+        <tr><td>Documents</td><td>Full</td><td>Full</td><td>Full</td><td>Full</td><td>View</td></tr>
+        <tr><td>Manage Accounts</td><td>Full</td><td>Limited</td><td>—</td><td>—</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Key Workflows (Step-by-Step)</h3>
+  <h4>Fees Verification</h4>
+  <ol>
+    <li>Clerk opens Fees Module → Verification Queue.</li>
+    <li>Review payment proof/UTR, cross-check bank credit if needed.</li>
+    <li>Set status to Verified/Rejected; verified rows generate receipt number.</li>
+    <li>Use Reports → Fees Program Status to monitor Full/Partial/None with filters.</li>
+  </ol>
+  <h4>Attendance Marking & Reports</h4>
+  <ol>
+    <li>Faculty navigates Attendance → select subject, date, period, division.</li>
+    <li>Mark P/A/L; submission persists per student.</li>
+    <li>Use Reports → Attendance Threshold to list below/above compliance.</li>
+    <li>Use Subject Lectures to count sessions (distinct date+period+division).</li>
+  </ol>
+  <h4>Imports (Safe Mode)</h4>
+  <ol>
+    <li>Open Admin Module → Import Students/Subjects/Fees.</li>
+    <li>Run Dry‑run; fix errors; re-run until clean.</li>
+    <li>Commit import; check Import Logs for audit.</li>
+  </ol>
+
+  <h3>Fees Computation Details</h3>
+  <ul>
+    <li>Per‑student semester due = common components (no medium) + student’s medium components for that Program/Semester.</li>
+    <li>Paid (semester filter) = sum of verified payments for that Program/Semester; optionally include Submitted.</li>
+    <li>Outstanding = max(due − paid, 0); buckets: Full (paid ≥ due), Partial (0 < paid < due), None (paid = 0).</li>
+    <li>All semesters selected: Due hidden; Paid shows cumulative across all semesters.</li>
+    <li>Fallback: if fee structure missing, use student’s FeesRecord.amount_due for the semester.</li>
+  </ul>
+
+  <h3>Attendance & Roll Numbers</h3>
+  <ul>
+    <li>Roll numbers are convenience identifiers for faculty; canonical ID is enrollment number.</li>
+    <li>Policy flag: continuous per Program+Semester (ignores division) can be enabled; else per‑division sequential.</li>
+    <li>Reports sort by roll within division when applicable; else by enrollment number.</li>
+  </ul>
+
+  <h3>Language & Medium Policy</h3>
+  <ul>
+    <li>Localization: English/Gujarati; language preference via Account Settings and nav toggles.</li>
+    <li>Mediums per Program/Semester derived from FeeStructure; dropdown hides if medium not applicable.</li>
+  </ul>
+
+  <h3>Admin Tools & Health</h3>
+  <ul>
+    <li>System Status: check DB, cache, email, storage; Redis badge on Dashboard.</li>
+    <li>Redis wiring: cache and rate limits fall back to in‑memory; endpoint `/admin/redis-check` confirms status.</li>
+  </ul>
+</div>
+{% endblock %}

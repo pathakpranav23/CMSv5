@@ -110,10 +110,10 @@
             {% set selected_student_ids = form_data.get('student_ids') if form_data else None %}
             {% for st in students %}
               {% set dm = division_map.get(st.division_id_fk) %}
-              {% set checked = (selected_student_ids and (st.student_id|string in selected_student_ids)) or (not selected_student_ids) %}
+              {% set checked = (selected_student_ids and (st.enrollment_no|string in selected_student_ids)) or (not selected_student_ids) %}
               <li class="list-group-item">
                 <label class="form-check-label w-100">
-                  <input class="form-check-input me-2" type="checkbox" name="student_ids" value="{{ st.student_id }}" {% if checked %}checked{% endif %} />
+                  <input class="form-check-input me-2" type="checkbox" name="student_ids" value="{{ st.enrollment_no }}" {% if checked %}checked{% endif %} />
                   {{ st.enrollment_no }} — {{ st.full_name }}
                   <span class="badge bg-light text-dark float-end">{{ dm[1] if dm else '' }}</span>
                 </label>

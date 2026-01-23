@@ -1,0 +1,457 @@
+{% extends 'layout.html' %}
+{% block content %}
+{% set user_role = (current_user.role or '')|lower %}
+{% set can_manage = current_user.is_authenticated and ((user_role in ['admin','principal']) or (user_role == 'clerk' and (current_user.program_id_fk and student.program_id_fk and (current_user.program_id_fk == student.program_id_fk)))) %}
+{% set can_delete = current_user.is_authenticated and (user_role in ['admin','principal','clerk']) %}
+{% set can_linker = current_user.is_authenticated and (user_role in ['admin','principal','clerk']) %}
+{% set can_account_edit = current_user.is_authenticated and (user_role in ['admin','principal','clerk']) and student.user_id_fk %}
+<h2 class="mb-3">Student Profile — {{ student.enrollment_no }}</h2>
+
+<div class="mb-3">
+  <a class="btn btn-primary btn-sm" href="{{ url_for('main.students') }}">Back to Students</a>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.index') }}">Home</a>
+  {% if can_manage %}
+    <a class="btn btn-success btn-sm ms-2" href="{{ url_for('main.students_edit', enrollment_no=student.enrollment_no) }}">Edit</a>
+  {% endif %}
+  {% if can_delete %}
+    <form method="post" action="{{ url_for('main.students_delete', enrollment_no=student.enrollment_no) }}" class="d-inline" onsubmit="return confirm('Delete {{ student.enrollment_no }}? This cannot be undone.');">
+      <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+    </form>
+  {% endif %}
+  {% if can_account_edit %}
+    <a class="btn btn-outline-secondary btn-sm ms-2" href="{{ url_for('main.user_edit', user_id=student.user_id_fk) }}">Edit Account</a>
+  {% endif %}
+  {% if can_linker %}
+    {% if student.user_id_fk %}
+      <form method="post" action="{{ url_for('main.students_unlink_user', enrollment_no=student.enrollment_no) }}" class="d-inline">
+        <button class="btn btn-outline-warning btn-sm" type="submit">Unlink Account</button>
+      </form>
+    {% else %}
+      <form method="post" action="{{ url_for('main.students_link_user', enrollment_no=student.enrollment_no) }}" class="d-inline">
+        <input type="text" name="username" class="form-control form-control-sm d-inline-block" placeholder="username/email" style="width:160px;" />
+        <button class="btn btn-outline-success btn-sm" type="submit">Link Account</button>
+      </form>
+    {% endif %}
+  {% endif %}
+  {% if student.photo_url %}
+  <a class="btn btn-outline-info btn-sm ms-2" target="_blank" rel="noopener" href="{{ student.photo_url }}">Open Photo</a>
+  {% endif %}
+  <span class="ms-2 text-muted">Use tabs below to view summaries.</span>
+  </div>
+
+<ul class="nav nav-tabs" id="profileTabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="details-tab" data-bs-toggle="tab" data-bs-target="#details" type="button" role="tab" aria-controls="details" aria-selected="true">Details</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="attendance-tab" data-bs-toggle="tab" data-bs-target="#attendance" type="button" role="tab" aria-controls="attendance" aria-selected="false">Attendance</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="grades-tab" data-bs-toggle="tab" data-bs-target="#grades" type="button" role="tab" aria-controls="grades" aria-selected="false">Grades</button>
+  </li>
+</ul>
+
+<div class="tab-content mt-3" id="profileTabsContent">
+  <!-- Details Tab -->
+  <div class="tab-pane fade show active" id="details" role="tabpanel" aria-labelledby="details-tab">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="card">
+          <div class="card-header">Photo</div>
+          <div class="card-body text-center">
+            {% if student.photo_url %}
+              <img src="{{ student.photo_url }}" alt="Photo of {{ student.student_name }}" class="img-fluid img-thumbnail" style="max-height: 280px; object-fit: contain;" />
+            {% else %}
+              <div class="text-muted">No photo on file</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="col-md-8">
+        <div class="card">
+          <div class="card-header">Details</div>
+          <div class="card-body">
+            <table class="table table-sm">
+              <tbody>
+                <tr>
+                  <th scope="row" style="width: 180px;">Enrollment No</th>
+                  <td>
+                    {{ student.enrollment_no }}
+                    <a class="ms-2 small text-decoration-none" href="{{ url_for('main.attendance_search') }}?q={{ student.enrollment_no }}">Attendance Search</a>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Name</th>
+                  <td>{{ student.student_name }} {{ student.surname }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Father's Name</th>
+                  <td>{{ student.father_name or '-' }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Gender</th>
+                  <td>{{ student.gender or '-' }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Date of Birth</th>
+                  <td>{{ student.date_of_birth or '-' }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Mobile</th>
+                  <td>{{ student.mobile or '-' }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Program</th>
+                  <td>{{ program.program_name if program else '-' }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Division</th>
+                  <td>{% if division %}Sem {{ division.semester }} — {{ division.division_code }}{% else %}-{% endif %}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Current Semester</th>
+                  <td>{{ student.current_semester or '-' }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Permanent Address</th>
+                  <td>{{ student.permanent_address or '-' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Attendance Tab -->
+  <div class="tab-pane fade" id="attendance" role="tabpanel" aria-labelledby="attendance-tab">
+    <div class="card">
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <span>Attendance Summary</span>
+      </div>
+      <div class="card-body">
+        <div class="d-none">
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Start date</label>
+            <input type="date" class="form-control form-control-sm" name="a_start" value="{{ a_filters.a_start }}">
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">End date</label>
+            <input type="date" class="form-control form-control-sm" name="a_end" value="{{ a_filters.a_end }}">
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Semester</label>
+            <input type="number" min="1" class="form-control form-control-sm" name="a_sem" value="{{ a_filters.a_sem }}" placeholder="All">
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Subject</label>
+            <select class="form-select form-select-sm" name="a_subject_id">
+              <option value="">All</option>
+              {% for opt in subject_options %}
+                <option value="{{ opt.id }}" {% if a_filters.a_subject_id == opt.id %}selected{% endif %}>{{ opt.name }} (Sem {{ opt.semester }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Sort by</label>
+            <select class="form-select form-select-sm" name="a_sort">
+              {% for key,label in {'date':'Date','status':'Status','semester':'Semester','subject':'Subject'}.items() %}
+                <option value="{{ key }}" {% if a_filters.a_sort == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Direction</label>
+            <select class="form-select form-select-sm" name="a_dir">
+              {% for key,label in {'desc':'Desc','asc':'Asc'}.items() %}
+                <option value="{{ key }}" {% if a_filters.a_dir == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Per page</label>
+            <select class="form-select form-select-sm" name="a_per">
+              {% for n in [10,20,50] %}
+                <option value="{{ n }}" {% if a_filters.a_per == n %}selected{% endif %}>{{ n }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 d-flex gap-2">
+            <input type="hidden" name="a_page" value="1">
+            <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.students_show', enrollment_no=student.enrollment_no) }}">Reset</a>
+          </div>
+        </div>
+        <div class="row text-center">
+          <div class="col-6 col-md-3"><div class="p-2 border rounded"><div class="text-muted">Total</div><div class="fw-bold">{{ attendance_summary.total }}</div></div></div>
+          <div class="col-6 col-md-3"><div class="p-2 border rounded"><div class="text-success">Present</div><div class="fw-bold">{{ attendance_summary.present }}</div></div></div>
+          <div class="col-6 col-md-3 mt-2 mt-md-0"><div class="p-2 border rounded"><div class="text-danger">Absent</div><div class="fw-bold">{{ attendance_summary.absent }}</div></div></div>
+          <div class="col-6 col-md-3 mt-2 mt-md-0"><div class="p-2 border rounded"><div class="text-warning">Late</div><div class="fw-bold">{{ attendance_summary.late }}</div></div></div>
+          <div class="col-12 mt-2">
+            <div class="text-muted small">Present %: {{ '%.2f' % attendance_summary.pct_present }} | Absent %: {{ '%.2f' % attendance_summary.pct_absent }} | Late %: {{ '%.2f' % attendance_summary.pct_late }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <span>Recent Attendance</span>
+        <div class="d-none">
+          <span class="text-muted">Page {{ a_filters.a_page }} of {{ a_pagination.total_pages }}</span>
+          {% if a_pagination.has_prev %}
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.students_show', enrollment_no=student.enrollment_no, a_start=a_filters.a_start, a_end=a_filters.a_end, a_sem=a_filters.a_sem, a_subject_id=a_filters.a_subject_id, a_sort=a_filters.a_sort, a_dir=a_filters.a_dir, a_page=a_filters.a_page - 1, a_per=a_filters.a_per) }}">Prev</a>
+          {% endif %}
+          {% if a_pagination.has_next %}
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.students_show', enrollment_no=student.enrollment_no, a_start=a_filters.a_start, a_end=a_filters.a_end, a_sem=a_filters.a_sem, a_subject_id=a_filters.a_subject_id, a_sort=a_filters.a_sort, a_dir=a_filters.a_dir, a_page=a_filters.a_page + 1, a_per=a_filters.a_per) }}">Next</a>
+          {% endif %}
+        </div>
+      </div>
+      <div class="card-body">
+        {% if attendance_rows and attendance_rows|length > 0 %}
+          <div class="table-responsive">
+            <table class="table table-modern table-striped table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Date</th>
+                  <th>Subject</th>
+                  <th>Status</th>
+                  <th>Semester</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for a in attendance_rows %}
+                  <tr>
+                    <td>{{ a.date_marked }}</td>
+                    <td>
+                      {% if a.subject_id_fk %}
+                        {{ subject_map.get(a.subject_id_fk) or '-' }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                    <td>{{ a.status }}</td>
+                    <td>{{ a.semester or '-' }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted">No attendance records.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Grades Tab -->
+  <div class="tab-pane fade" id="grades" role="tabpanel" aria-labelledby="grades-tab">
+    <div class="card">
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <span>Grades Summary</span>
+      </div>
+      <div class="card-body">
+        <div class="d-none">
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Semester</label>
+            <input type="number" min="1" class="form-control form-control-sm" name="g_sem" value="{{ g_filters.g_sem }}" placeholder="All">
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Subject</label>
+            <select class="form-select form-select-sm" name="g_subject_id">
+              <option value="">All</option>
+              {% for opt in subject_options %}
+                <option value="{{ opt.id }}" {% if g_filters.g_subject_id == opt.id %}selected{% endif %}>{{ opt.name }} (Sem {{ opt.semester }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Sort by</label>
+            <select class="form-select form-select-sm" name="g_sort">
+              {% for key,label in {'grade_id':'Newest','subject':'Subject','theory':'Theory','practical':'Practical','gpa':'GPA'}.items() %}
+                <option value="{{ key }}" {% if g_filters.g_sort == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Direction</label>
+            <select class="form-select form-select-sm" name="g_dir">
+              {% for key,label in {'desc':'Desc','asc':'Asc'}.items() %}
+                <option value="{{ key }}" {% if g_filters.g_dir == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-sm-6 col-md-3">
+            <label class="form-label">Per page</label>
+            <select class="form-select form-select-sm" name="g_per">
+              {% for n in [10,20,50] %}
+                <option value="{{ n }}" {% if g_filters.g_per == n %}selected{% endif %}>{{ n }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 d-flex gap-2">
+            <input type="hidden" name="g_page" value="1">
+            <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.students_show', enrollment_no=student.enrollment_no) }}">Reset</a>
+          </div>
+        </div>
+        <div class="row text-center">
+          <div class="col-6 col-md-3"><div class="p-2 border rounded"><div class="text-muted">Records</div><div class="fw-bold">{{ grade_summary.count }}</div></div></div>
+          <div class="col-6 col-md-3"><div class="p-2 border rounded"><div class="text-muted">Avg Theory</div><div class="fw-bold">{{ '%.2f' % grade_summary.avg_theory }}</div></div></div>
+          <div class="col-6 col-md-3 mt-2 mt-md-0"><div class="p-2 border rounded"><div class="text-muted">Avg Practical</div><div class="fw-bold">{{ '%.2f' % grade_summary.avg_practical }}</div></div></div>
+          <div class="col-6 col-md-3 mt-2 mt-md-0"><div class="p-2 border rounded"><div class="text-muted">Avg GPA</div><div class="fw-bold">{{ '%.2f' % grade_summary.avg_gpa }}</div></div></div>
+        </div>
+        <div class="d-none">
+          <canvas id="gpaChart" height="120"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <span>Recent Grades</span>
+        <div class="d-none">
+          <span class="text-muted">Page {{ g_filters.g_page }} of {{ g_pagination.total_pages }}</span>
+          {% if g_pagination.has_prev %}
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.students_show', enrollment_no=student.enrollment_no, g_sem=g_filters.g_sem, g_subject_id=g_filters.g_subject_id, g_sort=g_filters.g_sort, g_dir=g_filters.g_dir, g_page=g_filters.g_page - 1, g_per=g_filters.g_per) }}">Prev</a>
+          {% endif %}
+          {% if g_pagination.has_next %}
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.students_show', enrollment_no=student.enrollment_no, g_sem=g_filters.g_sem, g_subject_id=g_filters.g_subject_id, g_sort=g_filters.g_sort, g_dir=g_filters.g_dir, g_page=g_filters.g_page + 1, g_per=g_filters.g_per) }}">Next</a>
+          {% endif %}
+        </div>
+      </div>
+      <div class="card-body">
+        {% if grade_rows and grade_rows|length > 0 %}
+          <div class="table-responsive">
+            <table class="table table-modern table-striped table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Subject</th>
+                  <th>Theory</th>
+                  <th>Practical</th>
+                  <th>GPA</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for g in grade_rows %}
+                  <tr>
+                    <td>
+                      {% if g.subject_id_fk %}
+                        {{ subject_map.get(g.subject_id_fk) or '-' }}
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                    <td>{{ g.theory_marks }}</td>
+                    <td>{{ g.practical_marks }}</td>
+                    <td>{{ g.gpa_for_subject }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted">No grade records.</div>
+        {% endif %}
+      </div>
+    </div>
+    <!--
+    <script type="application/json" id="gradeChartValues">{{ grade_chart_values|tojson }}</script>
+    <script type="application/json" id="gradeChartSeries">{{ grade_chart_series|tojson }}</script>
+    <script type="application/json" id="gradeChartSubjectIds">{{ grade_chart_subject_ids|tojson }}</script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+      (function(){
+        try {
+          const ctx = document.getElementById('gpaChart');
+          if (!ctx) return;
+          const labels = JSON.parse(document.getElementById('gradeChartLabels')?.textContent || '[]');
+          const baseData = JSON.parse(document.getElementById('gradeChartValues')?.textContent || '[]');
+          const series = JSON.parse(document.getElementById('gradeChartSeries')?.textContent || '[]');
+          const subjectIds = JSON.parse(document.getElementById('gradeChartSubjectIds')?.textContent || '[]');
+          const baseUrl = "{{ url_for('main.students_grades', enrollment_no=student.enrollment_no) }}";
+          const colors = ['rgba(54,162,235,0.5)','rgba(255,99,132,0.5)','rgba(255,206,86,0.5)','rgba(75,192,192,0.5)','rgba(153,102,255,0.5)','rgba(255,159,64,0.5)'];
+          const datasets = (series && series.length ? series : [{label: 'Avg GPA per Subject', data: baseData}]).map((s, i) => ({
+            label: s.label,
+            data: s.data,
+            backgroundColor: colors[i % colors.length],
+            borderWidth: 1
+          }));
+          const chart = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: labels, datasets: datasets },
+            options: {
+              responsive: true,
+              scales: { y: { beginAtZero: true, max: 10 } },
+              onClick: (evt, elements) => {
+                if (!elements.length) return;
+                const el = elements[0];
+                const idx = el.index;
+                const datasetIndex = el.datasetIndex;
+                const ds = chart.data.datasets[datasetIndex];
+                const semMatch = (ds.label || '').match(/(\d+)/);
+                const sem = semMatch ? semMatch[1] : '';
+                const sid = subjectIds[idx];
+                const params = new URLSearchParams();
+                if (sem) params.set('g_sem', sem);
+                if (sid) params.set('subject_id', sid);
+                window.location.href = `${baseUrl}?${params.toString()}`;
+              }
+            }
+          });
+        } catch (e) { /* ignore chart errors */ }
+      })();
+    -->
+  </div>
+</div>
+<div class="mt-3">
+  <canvas id="gpaChart" data-base-url="{{ url_for('main.students_grades', enrollment_no=student.enrollment_no) }}" height="120"></canvas>
+  <script type="application/json" id="gradeChartLabels">{{ (grade_chart_labels or []) | tojson }}</script>
+  <script type="application/json" id="gradeChartValues">{{ (grade_chart_values or []) | tojson }}</script>
+  <script type="application/json" id="gradeChartSeries">{{ (grade_chart_series or []) | tojson }}</script>
+  <script type="application/json" id="gradeChartSubjectIds">{{ (grade_chart_subject_ids or []) | tojson }}</script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    (function(){
+      try {
+        const ctx = document.getElementById('gpaChart');
+        if (!ctx) return;
+        const labels = JSON.parse(document.getElementById('gradeChartLabels')?.textContent || '[]');
+        const baseData = JSON.parse(document.getElementById('gradeChartValues')?.textContent || '[]');
+        const series = JSON.parse(document.getElementById('gradeChartSeries')?.textContent || '[]');
+        const subjectIds = JSON.parse(document.getElementById('gradeChartSubjectIds')?.textContent || '[]');
+        const baseUrl = ctx.dataset.baseUrl || '';
+        const colors = ['rgba(54,162,235,0.5)','rgba(255,99,132,0.5)','rgba(255,206,86,0.5)','rgba(75,192,192,0.5)','rgba(153,102,255,0.5)','rgba(255,159,64,0.5)'];
+        const datasets = (series && series.length ? series : [{label: 'Avg GPA per Subject', data: baseData}]).map((s, i) => ({
+          label: s.label,
+          data: s.data,
+          backgroundColor: colors[i % colors.length],
+          borderWidth: 1
+        }));
+        const chart = new Chart(ctx, {
+          type: 'bar',
+          data: { labels: labels, datasets: datasets },
+          options: {
+            responsive: true,
+            scales: { y: { beginAtZero: true, max: 10 } },
+            onClick: (evt, elements) => {
+              if (!elements.length || !baseUrl) return;
+              const el = elements[0];
+              const idx = el.index;
+              const datasetIndex = el.datasetIndex;
+              const ds = chart.data.datasets[datasetIndex];
+              const semMatch = (ds.label || '').match(/(\d+)/);
+              const sem = semMatch ? semMatch[1] : '';
+              const sid = subjectIds[idx];
+              const params = new URLSearchParams();
+              if (sem) params.set('g_sem', sem);
+              if (sid) params.set('subject_id', sid);
+              window.location.href = `${baseUrl}?${params.toString()}`;
+            }
+          }
+        });
+      } catch (e) {}
+    })();
+  </script>
+{% endblock %}

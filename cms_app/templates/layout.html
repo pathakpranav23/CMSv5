@@ -61,6 +61,9 @@
             <li><a href="{{ url_for('main.module_students') }}"><span class="module-icon"><i class="bi bi-people text-primary"></i></span><span class="label">{{ t('Students') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.module_subjects') }}"><span class="module-icon"><i class="bi bi-journal-bookmark text-primary"></i></span><span class="label">{{ t('Subjects') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.materials_hub') }}"><span class="module-icon"><i class="bi bi-folder2 text-primary"></i></span><span class="label">{{ t('Materials') }}</span></a><br class="nav-break"></li>
+            {% if (current_user.role|lower) in ['admin','principal','clerk','faculty'] %}
+              <li><a href="{{ url_for('exams.dashboard') }}"><span class="module-icon"><i class="bi bi-mortarboard text-primary"></i></span><span class="label">{{ t('Exams') }}</span></a><br class="nav-break"></li>
+            {% endif %}
             <li><a href="{{ url_for('main.module_faculty') }}"><span class="module-icon"><i class="bi bi-person-badge text-primary"></i></span><span class="label">{{ t('Staff') }}</span></a><br class="nav-break"></li>
           </div>
 

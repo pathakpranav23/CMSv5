@@ -1,0 +1,66 @@
+{% extends 'layout.html' %}
+{% import '_macros.html' as ui %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title">Materials — {{ subject.subject_name }}</h2>
+    <div class="actions">
+      {{ ui.back_link(url_for('main.subjects_list', program_id=subject.program_id_fk, semester=subject.semester), 'Back to Subjects') }}
+      {% if can_manage and role == 'faculty' %}
+        <a class="btn btn-primary btn-sm ms-2" href="{{ url_for('main.subject_material_new', subject_id=subject.subject_id) }}">Share New</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if info_hints_enabled %}
+    <div class="alert alert-info">New uploads are hidden until published. Flagged items are invisible to students.</div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-header card-header-standard"><div class="card-title">Subject Materials</div></div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-modern table-striped table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">Title</th>
+              <th scope="col" class="text-center">Kind</th>
+              <th scope="col">Link</th>
+              <th scope="col" class="text-center">Status</th>
+              <th scope="col">Owner</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in materials %}
+              <tr>
+                <td>{{ m.title }}</td>
+                <td class="text-center">{{ m.kind|capitalize }}</td>
+                <td>
+                  {% if m.kind == 'file' and m.file_path %}
+                    <a href="{{ url_for('static', filename=m.file_path) }}" target="_blank">Download</a>
+                  {% elif m.kind in ['link','embed'] and m.external_url %}
+                    <a href="{{ m.external_url }}" target="_blank">Open</a>
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td class="text-center">
+                  {% if m.is_flagged %}
+                    <span class="badge bg-danger">Flagged</span>
+                  {% endif %}
+                  {% if m.is_published %}
+                    <span class="badge bg-success">Published</span>
+                  {% else %}
+                    <span class="badge bg-secondary">Hidden</span>
+                  {% endif %}
+                </td>
+                <td>{{ owners.get(m.faculty_id_fk, '—') }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

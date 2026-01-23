@@ -1,0 +1,166 @@
+{% extends "layout.html" %}
+{% block page_class %}divisions-module module-cards{% endblock %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (role or (current_user.role if current_user.is_authenticated else 'Guest')) %}
+  {% set role_display_lower = (role_display or '')|lower %}
+  <div class="section-header d-flex align-items-center justify-content-between mb-2">
+    <h3 class="mb-0 title d-flex align-items-center">{{ t('Divisions & Sections Module') }} <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h3>
+    <div class="actions"></div>
+  </div>
+  {% if role_display_lower in ['admin','principal','clerk'] %}
+    <div class="small text-muted" data-bs-toggle="tooltip" data-bs-placement="right" title="Admins see all programs. Principals/Clerks are scoped to their program. Manage divisions per semester with capacity and codes.">Admin: Elevated access on this module.</div>
+  {% endif %}
+  <p class="text-muted soft-hint">{{ t('Manage divisions/sections per program and semester.') }}</p>
+
+  <!-- Usage Summary -->
+  {% if usage_summary %}
+  <div class="row g-3 mb-3">
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted">Total Capacity</div>
+          <div class="h4 mb-0">{{ usage_summary.total_capacity or 0 }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted">Total Enrolled</div>
+          <div class="h4 mb-0">{{ usage_summary.total_enrolled or 0 }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center">
+            <span class="text-muted">Utilization</span>
+            <span class="fw-semibold">{{ usage_summary.overall_pct if usage_summary.overall_pct is not none else '-' }}%</span>
+          </div>
+          <div class="progress mt-2" style="height: 8px;">
+            <div class="progress-bar" role="progressbar" data-pct="{{ usage_summary.overall_pct if usage_summary.overall_pct is not none else 0 }}" style="width: 0%;" aria-valuenow="{{ usage_summary.overall_pct if usage_summary.overall_pct is not none else 0 }}" aria-valuemin="0" aria-valuemax="100"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-md-6">
+      <div class="card mod-card mod-card--quick">
+        <div class="card-header">{{ t('Quick Actions') }}</div>
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-grid-3x3-gap"></i></div>
+          <div class="list-group">
+            <a class="list-group-item list-group-item-action" href="{{ url_for('main.divisions_list') }}">{{ t('View Divisions') }}</a>
+            <a class="list-group-item list-group-item-action" href="{{ url_for('main.division_new') }}">{{ t('Add Division') }}</a>
+            <form method="post" action="{{ url_for('main.divisions_rebalance') }}" class="mt-2">
+              <button type="submit" class="btn btn-sm btn-outline-warning">{{ t('Rebalance Divisions & Roll Nos') }}</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card mod-card mod-card--links">
+        <div class="card-header">{{ t('Helpful Links') }}</div>
+        <div class="card-body">
+          <div class="card-icon" aria-hidden="true"><i class="bi bi-info-circle"></i></div>
+          <ul class="list-unstyled mb-0 soft-hint">
+            <li>{{ t('Use program and semester filters to narrow context.') }}</li>
+            <li>{{ t('Division code typically A/B/C; keep it unique per semester.') }}</li>
+            <li>{{ t('Capacity defaults to 67 for BCA; other programs are principal-set.') }}</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Principal Planning -->
+  <div class="row g-3 mt-3">
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header">{{ t('Division Planning (Principal)') }}</div>
+        <div class="card-body">
+          {% if selected_program %}
+          <form method="post" action="{{ url_for('main.divisions_planning_save', program_id=selected_program.program_id) }}" class="row g-2">
+            <div class="col-6">
+              <label class="form-label">{{ t('Semester') }}</label>
+              <input type="number" min="1" max="12" class="form-control" name="semester" required />
+            </div>
+            <div class="col-6">
+              <label class="form-label">{{ t('Capacity / Division') }}</label>
+              <input type="number" min="1" class="form-control" name="capacity_per_division" required />
+            </div>
+            <div class="col-6">
+              <label class="form-label">{{ t('Number of Divisions') }}</label>
+              <input type="number" min="1" class="form-control" name="num_divisions" required />
+            </div>
+            <div class="col-6">
+              <label class="form-label">{{ t('Roll Max / Division') }}</label>
+              <input type="number" min="1" value="200" class="form-control" name="roll_max_per_division" />
+            </div>
+            <div class="col-12 d-flex justify-content-end">
+              <button type="submit" class="btn btn-primary">{{ t('Save Planning') }}</button>
+            </div>
+          </form>
+          {% else %}
+            <div class="soft-hint">Admin: select a program via <code>?program_id=&lt;id&gt;</code> to plan divisions.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header">{{ t('Existing Plans') }}</div>
+        <div class="card-body">
+          {% if division_plans and division_plans|length > 0 %}
+          <div class="table-responsive">
+            <table class="table table-sm table-striped">
+              <thead>
+                <tr>
+                  <th>{{ t('Semester') }}</th>
+                  <th>{{ t('Divisions') }}</th>
+                  <th>{{ t('Capacity') }}</th>
+                  <th>{{ t('Roll Max') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for plan in division_plans %}
+                <tr>
+                  <td>{{ plan.semester }}</td>
+                  <td>{{ plan.num_divisions }}</td>
+                  <td>{{ plan.capacity_per_division }}</td>
+                  <td>{{ plan.roll_max_per_division or 200 }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+            <div class="soft-hint">{{ t('No plans yet. Create one using the form.') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  (function() {
+    try {
+      var bars = document.querySelectorAll('.progress-bar[data-pct]');
+      for (var i = 0; i < bars.length; i++) {
+        var el = bars[i];
+        var v = parseFloat(el.getAttribute('data-pct') || '0');
+        if (!isFinite(v)) v = 0;
+        if (v < 0) v = 0;
+        if (v > 100) v = 100;
+        el.style.width = v + '%';
+      }
+    } catch (e) {}
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,69 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex align-items-center justify-content-between mb-2">
+    <h3 class="mb-0 title">Bulk Import Subjects (Clerk)</h3>
+    <div class="actions"></div>
+  </div>
+  <p class="text-muted soft-hint">Upload an Excel file to import subjects for a program and semester. Supported formats: .xlsx, .xls</p>
+
+  {% if errors %}
+    <div class="alert alert-danger">
+      <ul class="mb-0">
+        {% for e in errors %}<li>{{ t(e) }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data">
+    <div class="mb-3">
+      <label class="form-label">Program</label>
+      {% if role == 'admin' %}
+        <select name="program_id_fk" class="form-select" required>
+          <option value="">-- Select Program --</option>
+          {% for p in programs %}
+            <option value="{{ p.program_id }}" {% if form and form.program_id_fk == p.program_id|string %}selected{% endif %}>{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+      {% else %}
+        <div class="form-control-plaintext">
+          {{ selected_program.program_name if selected_program else '—' }}
+        </div>
+        <input type="hidden" name="program_id_fk" value="{{ form.program_id_fk if form and form.program_id_fk else (selected_program.program_id if selected_program else '') }}" />
+        <div class="form-text">Program is fixed to your assignment.</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Semester</label>
+      <input type="number" name="semester" class="form-control" min="1" max="12" value="{{ (form.semester if form else '')|default('') }}" required>
+      <div class="form-text">Subjects will be imported into the selected semester by default.</div>
+    </div>
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" name="force_semester" id="force_semester" {% if form and form.force_semester %}checked{% endif %}>
+      <label class="form-check-label" for="force_semester">Force all imported rows to selected semester</label>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Excel File</label>
+      <input type="file" name="file" class="form-control" accept=".xlsx,.xls" required>
+      <div class="form-text">Download a sample: <a href="{{ url_for('main.subjects_import_template') }}">subjects_import_template.csv</a></div>
+      <div class="mt-2">
+        <small class="text-muted">Expected columns (order not strict, headers case-insensitive):</small>
+        <ul class="text-muted small mb-0">
+          <li><strong>subject_name</strong>, <strong>subject_code</strong> (required)</li>
+          <li>paper_code, subject_type (e.g. Core/Elective)</li>
+          <li>semester, theory_credits, practical_credits, total_credits</li>
+        </ul>
+      </div>
+    </div>
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" value="1" id="dryRun" name="dry_run" {% if form and form.dry_run %}checked{% endif %}>
+      <label class="form-check-label" for="dryRun">Dry-run (validate only)</label>
+      <div class="form-text">Runs validation and shows the report without saving data.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-primary">Import</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.subjects_list') }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

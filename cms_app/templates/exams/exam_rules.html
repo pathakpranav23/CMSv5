@@ -1,0 +1,317 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title d-flex align-items-center">Examination Rules <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.dashboard') }}">Dashboard</a>
+    </div>
+  </div>
+
+  <form method="get" class="row g-3 mb-3">
+    <div class="col-md-4">
+      <label class="form-label">Program</label>
+      <select name="program_id" class="form-select" required>
+        <option value="">Select Program</option>
+        {% for p in program_list %}
+          <option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Semester</label>
+      <select name="semester" class="form-select" required>
+        <option value="">Select</option>
+        {% for s in range(1, 9) %}
+          <option value="{{ s }}" {% if semester == s %}selected{% endif %}>Sem {{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Medium</label>
+      <select name="medium_tag" class="form-select">
+        <option value="" {% if not selected_medium %}selected{% endif %}>Not Applicable</option>
+        {% for m in available_mediums %}
+          <option value="{{ m }}" {% if selected_medium == m %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">For single-medium programs, use "Not Applicable".</div>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Academic Year</label>
+      <select name="academic_year" class="form-select" required>
+        {% for ay in academic_year_options %}
+          <option value="{{ ay }}" {% if academic_year == ay %}selected{% endif %}>{{ ay }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 d-flex align-items-end gap-2">
+      <button type="submit" class="btn btn-primary">Apply</button>
+      <a href="{{ url_for('exams.exam_rules') }}" class="btn btn-outline-secondary">Reset</a>
+    </div>
+  </form>
+
+  {% if not selected_program or not semester or not academic_year %}
+    <div class="alert alert-info">Select program, semester, and academic year to configure examination rules.</div>
+  {% else %}
+    <div class="card">
+      <div class="card-header card-header-standard">
+        <div class="card-title">
+          Rules for {{ selected_program.program_name }} &middot; Sem {{ semester }} &middot; {{ academic_year }}
+          {% if selected_medium %}
+            &middot; Medium: {{ selected_medium }}
+          {% endif %}
+        </div>
+      </div>
+      <div class="card-body">
+        <form method="post" class="row g-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <input type="hidden" name="program_id" value="{{ selected_program.program_id }}" />
+          <input type="hidden" name="semester" value="{{ semester }}" />
+          <input type="hidden" name="medium_tag" value="{{ selected_medium or '' }}" />
+          <input type="hidden" name="academic_year" value="{{ academic_year }}" />
+
+          <div class="col-md-6">
+            <label class="form-label">Scheme Name</label>
+            <input type="text" name="name" class="form-control" value="{{ scheme.name if scheme else '' }}" placeholder="e.g., Regular Exam April 2025" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Max Internal Marks</label>
+            <input type="number" step="0.5" name="max_internal_marks" class="form-control" value="{{ scheme.max_internal_marks if scheme and scheme.max_internal_marks is not none else 30 }}" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Max External Marks</label>
+            <input type="number" step="0.5" name="max_external_marks" class="form-control" value="{{ scheme.max_external_marks if scheme and scheme.max_external_marks is not none else 70 }}" />
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">Min Internal Marks (Pass)</label>
+            <input type="number" step="0.5" name="min_internal_marks" class="form-control" value="{{ scheme.min_internal_marks if scheme and scheme.min_internal_marks is not none else 12 }}" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Min External Marks (Pass)</label>
+            <input type="number" step="0.5" name="min_external_marks" class="form-control" value="{{ scheme.min_external_marks if scheme and scheme.min_external_marks is not none else 28 }}" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Min Total Marks (Pass)</label>
+            <input type="number" step="0.5" name="min_total_marks" class="form-control" value="{{ scheme.min_total_marks if scheme and scheme.min_total_marks is not none else 40 }}" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Max Total Marks</label>
+            <input type="number" step="0.5" name="max_total_marks" class="form-control" value="{{ scheme.max_total_marks if scheme and scheme.max_total_marks is not none else 100 }}" />
+          </div>
+
+          <!-- Credit Based Rules Section -->
+          <div class="col-12 mt-4">
+            <div class="d-flex align-items-center mb-2">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="use_credit_rules" name="use_credit_rules" onchange="toggleCreditRules()">
+                    <label class="form-check-label fw-bold" for="use_credit_rules">Enable Credit-Based Mark Rules</label>
+                </div>
+            </div>
+            <p class="text-muted small mb-2">If enabled, distinct passing/max marks can be set for different credit values (e.g., 1 Credit Practical vs 4 Credit Theory).</p>
+
+            <div class="card bg-light" id="credit_rules_container" style="display:none;">
+                <div class="card-body p-3">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered bg-white mb-2" id="credit_rules_table">
+                            <thead class="table-secondary">
+                                <tr>
+                                    <th style="width:80px">Credit</th>
+                                    <th>Subject Type</th> <!-- Optional filter -->
+                                    <th>Max Int.</th>
+                                    <th>Max Ext.</th>
+                                    <th>Max Total</th>
+                                    <th>Min Total</th>
+                                    <th style="width:50px"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Rows injected by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addCreditRuleRow()">+ Add Rule</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary ms-2" onclick="autoPopulateCredits()">Auto-Detect Credits</button>
+                </div>
+            </div>
+            <input type="hidden" name="credit_rules_json" id="credit_rules_json" value="{{ scheme.credit_rules_json if scheme and scheme.credit_rules_json else '' }}">
+          </div>
+
+          <div class="col-md-9">
+            <label class="form-label">Grading Scheme (JSON, optional)</label>
+            <textarea name="grading_scheme_json" rows="5" class="form-control" placeholder='{"bands":[{"min":90,"grade":"A+","gp":10.0}] }'>{{ scheme.grading_scheme_json or "" }}</textarea>
+            <div class="form-text">Optional: define grade bands and GPA mapping as JSON for future automation.</div>
+          </div>
+          <div class="col-md-3 d-flex flex-column justify-content-start">
+            <label class="form-label">Status</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="is_active" name="is_active" value="y" {% if not scheme or scheme.is_active %}checked{% endif %}>
+              <label class="form-check-label" for="is_active">
+                Active scheme for this Program/Sem/Year
+              </label>
+            </div>
+            {% if scheme %}
+              <div class="mt-2 small text-muted">
+                Scheme ID: {{ scheme.scheme_id }}<br>
+                Created: {{ scheme.created_at }}<br>
+                Updated: {{ scheme.updated_at }}
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="col-12 text-end">
+            <button type="submit" class="btn btn-primary">Save Rules</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% endif %}
+</div>
+
+<script>
+    // Data from backend
+    const existingCredits = JSON.parse('{{ (existing_credits or [])|tojson|safe }}');
+    const subjectTypes = JSON.parse('{{ (subject_type_codes or ["Theory", "Practical"])|tojson|safe }}');
+    const savedRulesJson = document.getElementById('credit_rules_json').value;
+    let rules = [];
+    
+    try {
+        if (savedRulesJson) {
+            rules = JSON.parse(savedRulesJson);
+            if (rules.length > 0) {
+                document.getElementById('use_credit_rules').checked = true;
+                document.getElementById('credit_rules_container').style.display = 'block';
+            }
+        }
+    } catch(e) { console.error("Error parsing rules", e); }
+
+    function toggleCreditRules() {
+        const isChecked = document.getElementById('use_credit_rules').checked;
+        document.getElementById('credit_rules_container').style.display = isChecked ? 'block' : 'none';
+        
+        if (!isChecked) {
+            // Clear rules if unchecked? No, maybe just hide.
+            // But if user unchecks, we should probably empty the hidden input on submit?
+            // For now, keep data.
+        } else {
+             if (rules.length === 0) {
+                autoPopulateCredits();
+            }
+        }
+    }
+
+    function autoPopulateCredits() {
+        if (!existingCredits || existingCredits.length === 0) return;
+
+        const ratioExt = 0.7;   // 70% external
+        const passRatio = 0.4;  // 40% pass
+
+        let added = false;
+
+        existingCredits.forEach(ec => {
+            const typeKey = ec.type || 'All';
+            const exists = rules.some(r => r.credit == ec.credits && (r.type == typeKey || r.type == 'All'));
+            if (exists) {
+                return;
+            }
+
+            let creditMaxExt;
+            if (ec.credits == 1) {
+                creditMaxExt = 15;
+            } else if (ec.credits == 2) {
+                creditMaxExt = 25;
+            } else if (ec.credits == 3) {
+                creditMaxExt = 35;
+            } else if (ec.credits == 4) {
+                creditMaxExt = 50;
+            } else {
+                creditMaxExt = 50;
+            }
+
+            let creditMaxTot = creditMaxExt;
+            if (ratioExt > 0) {
+                creditMaxTot = Math.round(creditMaxExt / ratioExt);
+            }
+            let creditMaxInt = creditMaxTot - creditMaxExt;
+
+            let creditMinTot = Math.round(creditMaxTot * passRatio);
+
+            rules.push({
+                credit: ec.credits,
+                type: typeKey,
+                max_int: creditMaxInt,
+                max_ext: creditMaxExt,
+                max_tot: creditMaxTot,
+                min_tot: creditMinTot
+            });
+            added = true;
+        });
+
+        if (!added && rules.length === 0) {
+            addCreditRuleRow();
+        } else {
+            renderRules();
+        }
+    }
+
+    function addCreditRuleRow(data = null) {
+        if (!data) {
+            data = { credit: 4, type: 'All', max_int: 30, max_ext: 70, max_tot: 100, min_tot: 40 };
+            rules.push(data);
+        }
+        renderRules();
+    }
+    
+    function removeRule(index) {
+        rules.splice(index, 1);
+        renderRules();
+    }
+    
+    function updateRule(index, field, value) {
+        if (field.startsWith('max_') || field.startsWith('min_') || field === 'credit') {
+            value = parseFloat(value) || 0;
+        }
+        rules[index][field] = value;
+        document.getElementById('credit_rules_json').value = JSON.stringify(rules);
+    }
+
+    function renderRules() {
+        const tbody = document.querySelector('#credit_rules_table tbody');
+        tbody.innerHTML = '';
+        
+        // Sort by credit
+        rules.sort((a, b) => a.credit - b.credit);
+        
+        rules.forEach((rule, index) => {
+            let typeOptions = `<option value="All" ${rule.type === 'All' ? 'selected' : ''}>All</option>`;
+            subjectTypes.forEach(t => {
+                typeOptions += `<option value="${t}" ${rule.type === t ? 'selected' : ''}>${t}</option>`;
+            });
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><input type="number" class="form-control form-control-sm" value="${rule.credit}" onchange="updateRule(${index}, 'credit', this.value)"></td>
+                <td>
+                    <select class="form-select form-select-sm" onchange="updateRule(${index}, 'type', this.value)">
+                        ${typeOptions}
+                    </select>
+                </td>
+                <td><input type="number" class="form-control form-control-sm" value="${rule.max_int}" onchange="updateRule(${index}, 'max_int', this.value)"></td>
+                <td><input type="number" class="form-control form-control-sm" value="${rule.max_ext}" onchange="updateRule(${index}, 'max_ext', this.value)"></td>
+                <td><input type="number" class="form-control form-control-sm" value="${rule.max_tot}" onchange="updateRule(${index}, 'max_tot', this.value)"></td>
+                <td><input type="number" class="form-control form-control-sm" value="${rule.min_tot}" onchange="updateRule(${index}, 'min_tot', this.value)"></td>
+                <td class="text-center"><button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="removeRule(${index})"><i class="bi bi-trash"></i></button></td>
+            `;
+            tbody.appendChild(tr);
+        });
+        
+        document.getElementById('credit_rules_json').value = JSON.stringify(rules);
+    }
+    
+    // Initial render
+    if (rules.length > 0) renderRules();
+</script>
+{% endblock %}

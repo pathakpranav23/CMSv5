@@ -1,0 +1,315 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-3 page-shell">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+    {% set role_display_lower = (role_display or '')|lower %}
+    {% set role_display_pretty = ('Staff' if role_display_lower == 'faculty' else (role_display|capitalize)) %}
+    <h2 class="mb-0 title d-flex align-items-center">Attendance Report <span class="role-badge ms-2">{{ role_display_pretty }}</span></h2>
+    <div class="actions">
+      <a class="btn btn-outline-light btn-sm" href="{{ csv_export_url }}">Export CSV</a>
+    </div>
+  </div>
+  <form class="row g-3 mb-3" method="get" action="{{ url_for('main.attendance_report_admin') }}">
+    {% if (current_user.role or '').lower() == 'admin' %}
+    <div class="col-md-3">
+      <label class="form-label">Program</label>
+      <select name="program_id" class="form-select">
+        <option value="">All</option>
+        {% for p in programs %}
+        <option value="{{ p.program_id }}" {% if program_id==p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% else %}
+    <div class="col-md-3">
+      <label class="form-label">Program</label>
+      <input class="form-control" value="Principal Program" disabled>
+    </div>
+    {% endif %}
+    <div class="col-md-2">
+      <label class="form-label">Semester</label>
+      <select name="semester" class="form-select">
+        <option value="">All</option>
+        {% if semesters %}
+          {% for sem in semesters %}
+          <option value="{{ sem }}" {% if (filters.semester or '') == (sem|string) %}selected{% endif %}>Sem {{ sem }}</option>
+          {% endfor %}
+        {% endif %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Subject</label>
+      <select name="subject_id" class="form-select">
+        <option value="">All</option>
+        {% for s in subjects %}
+        <option value="{{ s.subject_id }}" {% if (filters.subject_id or '') == (s.subject_id|string) %}selected{% endif %}>{{ s.subject_name }} (Sem {{ s.semester }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Division</label>
+      <select name="division_id" class="form-select">
+        <option value="">All</option>
+        {% if divisions %}
+          {% for d in divisions %}
+          <option value="{{ d.division_id }}" {% if (filters.division_id or '') == (d.division_id|string) %}selected{% endif %}>{{ d.division_code }}</option>
+          {% endfor %}
+        {% endif %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Start</label>
+      <input type="date" class="form-control" name="start" value="{{ filters.start or '' }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">End</label>
+      <input type="date" class="form-control" name="end" value="{{ filters.end or '' }}">
+    </div>
+    <div class="col-12">
+      <button class="btn btn-primary">Apply Filters</button>
+      <a class="btn btn-outline-secondary" href="{{ csv_export_url }}">Export CSV</a>
+    </div>
+  </form>
+
+  <div class="row mb-3">
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <div class="small text-muted">Total lectures in period</div>
+          <div class="h4 mb-0">{{ lecture_sessions_total or 0 }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <div class="small text-muted">Active teaching days</div>
+          <div class="h4 mb-0">{{ lecture_days|length }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <div class="small text-muted">Average lectures per active day</div>
+          <div class="h4 mb-0">{% if avg_lectures_per_day is not none %}{{ avg_lectures_per_day }}{% else %}-{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row mb-3">
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header card-header-standard"><div class="card-title">Lectures by Day</div></div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-modern table-striped table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Date</th>
+                  <th>Lectures</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for d, c in lecture_days %}
+                <tr>
+                  <td>{{ d.strftime('%d %b %Y') }}</td>
+                  <td>{{ c }}</td>
+                </tr>
+                {% endfor %}
+                {% if lecture_days|length == 0 %}
+                <tr>
+                  <td colspan="2" class="text-muted">No lectures in this period.</td>
+                </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-md-6">
+      <h6>Subject Attendance (Percent Only)</h6>
+      <div class="card mb-3">
+        <div class="card-header card-header-standard"><div class="card-title">By Subject</div></div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-modern table-striped table-hover mb-0">
+              <thead class="table-light">
+          <tr>
+            <th>Subject</th>
+            <th>Present % (P+L)</th>
+            <th>Absent %</th>
+            <th>Reach Present %</th>
+            <th>Reach Absent %</th>
+          </tr>
+              </thead>
+              <tbody>
+        {% for sid, t in totals_by_subject.items() %}
+          <tr>
+            <td>{{ t.name }}</td>
+            <td>{% if t.total %}{{ t.present_pct }}{% else %}N/A{% endif %}</td>
+            <td>{% if t.total %}{{ t.absent_pct }}{% else %}N/A{% endif %}</td>
+            <td>{% if t.enrolled %}{{ t.reach_present_pct }}{% else %}N/A{% endif %}</td>
+            <td>{% if t.enrolled %}{{ t.reach_absent_pct }}{% else %}N/A{% endif %}</td>
+          </tr>
+        {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <canvas id="chartSubjects" height="160"></canvas>
+    </div>
+    <div class="col-md-6">
+      <h6>Division Attendance (Percent Only)</h6>
+      <div class="card mb-3">
+        <div class="card-header card-header-standard"><div class="card-title">By Division</div></div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-modern table-striped table-hover mb-0">
+              <thead class="table-light">
+          <tr>
+            <th>Division</th>
+            <th>Present % (P+L)</th>
+            <th>Absent %</th>
+            <th>Reach Present %</th>
+            <th>Reach Absent %</th>
+          </tr>
+              </thead>
+              <tbody>
+        {% for did, t in totals_by_division.items() %}
+          <tr>
+            <td>{{ t.name }}</td>
+            <td>{% if t.total %}{{ t.present_pct }}{% else %}N/A{% endif %}</td>
+            <td>{% if t.total %}{{ t.absent_pct }}{% else %}N/A{% endif %}</td>
+            <td>{% if t.enrolled %}{{ t.reach_present_pct }}{% else %}N/A{% endif %}</td>
+            <td>{% if t.enrolled %}{{ t.reach_absent_pct }}{% else %}N/A{% endif %}</td>
+          </tr>
+        {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <canvas id="chartDivisions" height="160"></canvas>
+    </div>
+  </div>
+
+  <div class="row mt-3">
+    <div class="col-12">
+      <h6>Student Presence Leaderboard (Selected Subject)</h6>
+      {% if (filters.subject_id or '') %}
+      <div class="card">
+        <div class="card-header card-header-standard"><div class="card-title">Student Presence Leaderboard</div></div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-modern table-striped table-hover mb-0">
+              <thead class="table-light">
+          <tr>
+            <th>Sr#</th>
+            <th>Roll No</th>
+            <th>Enrollment</th>
+            <th>Student</th>
+            <th>Present % (P+L)</th>
+            <th>Absent %</th>
+            <th>Entries</th>
+          </tr>
+              </thead>
+              <tbody>
+        {% for s in student_leaderboard %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ s.roll_no or '-' }}</td>
+            <td>{{ s.enrollment_no }}</td>
+            <td>{{ s.name }}</td>
+            <td>{% if s.entries %}{{ s.present_pct }}{% else %}N/A{% endif %}</td>
+            <td>{% if s.entries %}{{ s.absent_pct }}{% else %}N/A{% endif %}</td>
+            <td>{{ s.entries }}</td>
+          </tr>
+        {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div class="alert alert-info">Select a subject above to view the student presence leaderboard.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  // Build charts from server totals
+  (function(){
+    const labelsS = JSON.parse('{{ chart_subject_labels | tojson | safe }}');
+    const pctSP = JSON.parse('{{ chart_subject_present_pct | tojson | safe }}');
+    const pctSA = JSON.parse('{{ chart_subject_absent_pct | tojson | safe }}');
+    const ctxS = document.getElementById('chartSubjects');
+    if (ctxS) {
+      new Chart(ctxS, {
+        type: 'bar',
+        data: {
+          labels: labelsS,
+          datasets: [
+            {label:'Present % (P+L)', data:pctSP, backgroundColor:'#198754'},
+            {label:'Absent %', data:pctSA, backgroundColor:'#dc3545'}
+          ]
+        },
+        options: {
+          responsive:true,
+          plugins:{
+            legend:{position:'bottom'},
+            tooltip:{
+              callbacks:{
+                label:(ctx)=> `${ctx.dataset.label}: ${ctx.parsed.y}%`
+              }
+            }
+          },
+          scales:{
+            x:{stacked:false},
+            y:{stacked:false, beginAtZero:true, max:100, ticks:{callback:(v)=> v + '%'}}
+          }
+        }
+      });
+    }
+    const labelsD = JSON.parse('{{ chart_division_labels | tojson | safe }}');
+    const pctDP = JSON.parse('{{ chart_division_present_pct | tojson | safe }}');
+    const pctDA = JSON.parse('{{ chart_division_absent_pct | tojson | safe }}');
+    const ctxD = document.getElementById('chartDivisions');
+    if (ctxD) {
+      new Chart(ctxD, {
+        type: 'bar',
+        data: {
+          labels: labelsD,
+          datasets: [
+            {label:'Present % (P+L)', data:pctDP, backgroundColor:'#198754'},
+            {label:'Absent %', data:pctDA, backgroundColor:'#dc3545'}
+          ]
+        },
+        options: {
+          responsive:true,
+          plugins:{
+            legend:{position:'bottom'},
+            tooltip:{
+              callbacks:{
+                label:(ctx)=> `${ctx.dataset.label}: ${ctx.parsed.y}%`
+              }
+            }
+          },
+          scales:{
+            x:{stacked:false},
+            y:{stacked:false, beginAtZero:true, max:100, ticks:{callback:(v)=> v + '%'}}
+          }
+        }
+      });
+    }
+  })();
+</script>
+{% endblock %}

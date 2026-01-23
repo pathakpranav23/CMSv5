@@ -1,0 +1,77 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1">Results: {{ scheme.name }}</h2>
+            <p class="text-muted mb-0">
+                {{ program.program_name }} | Sem {{ scheme.semester }} | {{ scheme.academic_year }}
+            </p>
+        </div>
+        <a href="{{ url_for('exams.debug_exam_schemes') }}" class="btn btn-outline-secondary">Back to Schemes</a>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            {% if rows %}
+            <div class="table-responsive">
+                <table class="table table-bordered table-sm align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th rowspan="2">Enrollment</th>
+                            <th rowspan="2">Student Name</th>
+                            <th colspan="{{ rows[0].marks|length }}" class="text-center">Subjects</th>
+                            <th rowspan="2" class="text-center">SGPA</th>
+                            <th rowspan="2" class="text-center">Result</th>
+                            <th rowspan="2">Remarks</th>
+                        </tr>
+                        <tr>
+                            {% for m in rows[0].marks %}
+                            <th class="text-center" style="min-width: 100px;">
+                                <small>{{ m.subject_code }}</small><br>
+                                {{ m.subject_name|truncate(15) }}
+                            </th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                        <tr>
+                            <td>{{ row.student.enrollment_no }}</td>
+                            <td>{{ row.student.first_name }} {{ row.student.last_name }} {{ row.student.surname }}</td>
+                            
+                            {% for m in row.marks %}
+                            <td class="text-center">
+                                {% if m.is_absent %}
+                                    <span class="text-danger fw-bold">Ab</span>
+                                {% else %}
+                                    <div>{{ m.total }} <small class="text-muted">({{ m.grade }})</small></div>
+                                    <div style="font-size: 0.75rem; color: #888;">
+                                        I:{{ m.internal }} / E:{{ m.external }}
+                                    </div>
+                                {% endif %}
+                            </td>
+                            {% endfor %}
+                            
+                            <td class="text-center fw-bold">{{ row.result.sgpa }}</td>
+                            <td class="text-center">
+                                {% if row.result.result_status == 'PASS' %}
+                                    <span class="badge bg-success">PASS</span>
+                                {% else %}
+                                    <span class="badge bg-danger">FAIL</span>
+                                {% endif %}
+                            </td>
+                            <td><small>{{ row.result.remarks }}</small></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info">No results found for this scheme.</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

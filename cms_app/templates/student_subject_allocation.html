@@ -1,0 +1,166 @@
+{% extends 'layout.html' %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">Student Subject Allocation</h2>
+    <a href="{{ url_for('main.module_students') }}" class="btn btn-outline-secondary">Back to Students</a>
+  </div>
+
+  <!-- Filter Form -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <form method="get" action="{{ url_for('main.student_subject_allocation') }}" class="row g-3">
+        <div class="col-md-3">
+          <label class="form-label">Program</label>
+          <select name="program_id" class="form-select" onchange="this.form.submit()">
+            <option value="">-- Select --</option>
+            {% for p in programs %}
+              <option value="{{ p.program_id }}" {% if selected_program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Semester</label>
+          <select name="semester" class="form-select" onchange="this.form.submit()">
+            <option value="">-- Select --</option>
+            {% for i in range(1, 9) %}
+              <option value="{{ i }}" {% if selected_semester == i %}selected{% endif %}>{{ i }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Medium</label>
+          <select name="medium" class="form-select" onchange="this.form.submit()">
+             <option value="">All</option>
+             {% for m in available_mediums %}
+               <option value="{{ m }}" {% if selected_medium == m %}selected{% endif %}>{{ m }}</option>
+             {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-5">
+          <label class="form-label">Subject (to assign)</label>
+          <select name="subject_id" class="form-select" onchange="this.form.submit()">
+            <option value="">-- Select Subject --</option>
+            {% for s in subjects %}
+              <option value="{{ s.subject_id }}" {% if selected_subject_id == s.subject_id %}selected{% endif %}>
+                [{{ s.subject_code }}] {{ s.subject_name }} ({{ s.subject_type }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if selected_program_id and selected_semester %}
+  <div class="accordion mb-4" id="bulkUploadAccordion">
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="headingOne">
+        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseUpload" aria-expanded="false" aria-controls="collapseUpload">
+          Bulk Upload via CSV
+        </button>
+      </h2>
+      <div id="collapseUpload" class="accordion-collapse collapse" aria-labelledby="headingOne" data-bs-parent="#bulkUploadAccordion">
+        <div class="accordion-body">
+          <form method="post" action="{{ url_for('main.student_subject_allocation_bulk_csv') }}" enctype="multipart/form-data" class="row align-items-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <input type="hidden" name="program_id" value="{{ selected_program_id }}" />
+            <input type="hidden" name="semester" value="{{ selected_semester }}" />
+            <input type="hidden" name="subject_id" value="{{ selected_subject_id or '' }}" />
+            
+            <div class="col-md-8">
+              <label class="form-label">Upload CSV File</label>
+              <input type="file" name="file" class="form-control" accept=".csv" required>
+              <div class="form-text">
+                Required Column: <strong>EnrollmentNo</strong>. 
+                {% if not selected_subject_id %}
+                  Also required: <strong>SubjectCode</strong>.
+                {% else %}
+                  (Assigns all listed students to <strong>{{ subject.subject_code }}</strong>)
+                {% endif %}
+              </div>
+            </div>
+            <div class="col-md-4">
+              <button type="submit" class="btn btn-primary w-100">Upload & Process</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if selected_program_id and selected_semester and selected_subject_id %}
+    <form method="post" action="{{ url_for('main.student_subject_allocation_save') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="program_id" value="{{ selected_program_id }}" />
+      <input type="hidden" name="semester" value="{{ selected_semester }}" />
+      <input type="hidden" name="subject_id" value="{{ selected_subject_id }}" />
+      <input type="hidden" name="medium" value="{{ selected_medium or '' }}" />
+
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>
+            Allocating: <strong>{{ subject.subject_name }}</strong>
+            <span class="badge bg-info text-dark ms-2">{{ subject.subject_type }}</span>
+          </span>
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="toggleAll(true)">Select All</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAll(false)">Deselect All</button>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+            <table class="table table-hover table-striped mb-0">
+              <thead class="table-light sticky-top">
+                <tr>
+                  <th width="40">#</th>
+                  <th>Enrollment</th>
+                  <th>Name</th>
+                  <th>Medium</th>
+                  <th class="text-center">Assigned?</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for student in students %}
+                  {% set is_enrolled = student.enrollment_no in enrolled_student_ids %}
+                  <tr class="{{ 'table-success' if is_enrolled else '' }}">
+                    <td>{{ loop.index }}</td>
+                    <td>{{ student.enrollment_no }}</td>
+                    <td>{{ student.first_name }} {{ student.surname }}</td>
+                    <td>{{ student.medium_tag }}</td>
+                    <td class="text-center">
+                      <div class="form-check d-inline-block">
+                        <input class="form-check-input student-checkbox" type="checkbox" 
+                               name="student_ids" value="{{ student.enrollment_no }}"
+                               {% if is_enrolled %}checked{% endif %}>
+                      </div>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card-footer text-end sticky-bottom bg-white border-top">
+          <span class="text-muted me-3 small">
+            Saving will <strong>overwrite</strong> the allocation list for this subject. Unchecked students will be removed.
+          </span>
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+        </div>
+      </div>
+    </form>
+
+    <script>
+      function toggleAll(state) {
+        document.querySelectorAll('.student-checkbox').forEach(cb => cb.checked = state);
+      }
+    </script>
+  {% elif selected_program_id and selected_semester %}
+    <div class="alert alert-info">Please select a <strong>Subject</strong> to proceed with allocation.</div>
+  {% else %}
+    <div class="alert alert-secondary">Select Program and Semester to start.</div>
+  {% endif %}
+</div>
+{% endblock %}

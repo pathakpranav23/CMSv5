@@ -1,0 +1,135 @@
+{% extends 'layout.html' %}
+{% block title %}Edit Staff{% endblock %}
+{% import '_macros.html' as ui %}
+{% block content %}
+<div class="container mt-4">
+  <div class="section-header">
+    <h2 class="mb-0">Edit Staff</h2>
+    <div class="d-flex align-items-center gap-2">
+      {{ ui.back_link(url_for('main.faculty_profile', faculty_id=faculty_id), 'Back to Profile') }}
+    </div>
+  </div>
+  {{ ui.breadcrumbs([
+    ('Dashboard', url_for('main.dashboard')),
+    ('Staff', url_for('main.faculty_list')),
+    ('Edit', '')
+  ]) }}
+
+  {% if errors and errors|length %}
+    <div class="alert alert-danger">
+      <ul class="mb-0">
+        {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('main.faculty_edit', faculty_id=faculty_id) }}" class="needs-validation" novalidate>
+    <div class="row">
+      <div class="col-md-6">
+        <div class="mb-3">
+          <label class="form-label">Full Name *</label>
+          <input type="text" name="full_name" class="form-control" value="{{ form_data.full_name or '' }}" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Program *</label>
+          <select name="program_id_fk" class="form-select" required>
+            <option value="">Select program</option>
+            {% for p in programs %}
+              <option value="{{p.program_id}}" {% if form_data.program_id_fk|string == p.program_id|string %}selected{% endif %}>{{ p.program_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Email</label>
+          <input type="email" name="email" class="form-control" value="{{ form_data.email or '' }}" placeholder="name@example.com">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Mobile</label>
+          <input type="text" name="mobile" class="form-control" value="{{ form_data.mobile or '' }}" placeholder="10–15 digits">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Designation</label>
+          <input type="text" name="designation" class="form-control" value="{{ form_data.designation or '' }}">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Department</label>
+          <input type="text" name="department" class="form-control" value="{{ form_data.department or '' }}">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Medium Expertise</label>
+          <select name="medium_expertise" class="form-select">
+            <option value="">Select medium</option>
+            <option value="English" {% if (form_data.medium_expertise or '')|lower == 'english' %}selected{% endif %}>English</option>
+            <option value="Gujarati" {% if (form_data.medium_expertise or '')|lower == 'gujarati' %}selected{% endif %}>Gujarati</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="col-md-6">
+        <div class="mb-3">
+          <label class="form-label">Emp ID *</label>
+          <input type="text" name="emp_id" class="form-control" value="{{ form_data.emp_id or '' }}" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Date of Joining</label>
+          <input type="text" name="date_of_joining" class="form-control" value="{{ form_data.date_of_joining or '' }}" placeholder="YYYY-MM-DD or text">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Highest Qualification</label>
+          <input type="text" name="highest_qualification" class="form-control" value="{{ form_data.highest_qualification or '' }}">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Experience Years</label>
+          <input type="text" name="experience_years" class="form-control" value="{{ form_data.experience_years or '' }}">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Specialization</label>
+          <input type="text" name="specialization" class="form-control" value="{{ form_data.specialization or '' }}" placeholder="e.g., Data Science">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Certifications</label>
+          <input type="text" name="certifications" class="form-control" value="{{ form_data.certifications or '' }}" placeholder="Comma-separated">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Notes</label>
+          <textarea name="notes" class="form-control" rows="3">{{ form_data.notes or '' }}</textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Photo (PNG/JPG/GIF, max 5MB)</label>
+          <input type="file" name="photo_file" accept=".png,.jpg,.jpeg,.gif" class="form-control">
+          {% if form_data.photo_url %}
+            <div class="form-text">Current: {{ form_data.photo_url }}</div>
+            <div class="mt-2">
+              <img src="{{ form_data.photo_url }}" alt="Current photo" class="img-thumbnail" style="max-height:160px; object-fit:contain;" />
+            </div>
+            <div class="form-check mt-2">
+              <input class="form-check-input" type="checkbox" value="1" id="remove_photo" name="remove_photo">
+              <label class="form-check-label" for="remove_photo">Remove photo</label>
+            </div>
+          {% else %}
+            <div class="form-text">Upload to replace or add a photo.</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Linked Account</label>
+          <div class="form-text mb-1">Current: {{ form_data.linked_username or '—' }}</div>
+          <input type="text" name="link_username" class="form-control" value="" placeholder="Enter username/email to link">
+          <div class="form-text">Leave blank to keep current link.</div>
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" value="1" id="unlink_user" name="unlink_user">
+            <label class="form-check-label" for="unlink_user">Unlink account</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="d-flex gap-2">
+      <button class="btn btn-primary" type="submit">Update Staff</button>
+    </div>
+  </form>
+  <form method="post" action="{{ url_for('main.faculty_delete', faculty_id=faculty_id) }}" onsubmit="return confirm('Delete this staff member? This cannot be undone.')" class="mt-2">
+    <button class="btn btn-danger" type="submit">Delete Staff</button>
+  </form>
+</div>
+{% endblock %}

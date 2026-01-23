@@ -1,0 +1,96 @@
+{% extends 'layout.html' %}
+{% import '_macros.html' as ui %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header">
+    <h2 class="mb-0">Edit Subject</h2>
+    <div class="d-flex align-items-center gap-2">
+      {{ ui.back_link(url_for('main.subjects_list', program_id=subject.program_id_fk, semester=subject.semester), 'Back to Subjects') }}
+      {% set role_display_lower = (current_user.role|lower if current_user.is_authenticated else 'guest') %}
+      {% if role_display_lower in ['admin','principal'] %}
+        <a class="btn btn-primary btn-sm" href="{{ url_for('main.subject_assign', subject_id=subject.subject_id) }}">Assign</a>
+      {% endif %}
+    </div>
+  </div>
+  {{ ui.breadcrumbs([
+    ('Dashboard', url_for('main.dashboard')),
+    ('Subjects', url_for('main.subjects_list', program_id=subject.program_id_fk, semester=subject.semester)),
+    ('Edit', '')
+  ]) }}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="row">
+        <div class="col-md-8">
+          <div><strong>Program:</strong> {{ program.program_name }}</div>
+          <div><strong>Current Semester:</strong> {{ subject.semester }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if errors and errors|length %}
+  <div class="alert alert-danger">
+    <ul class="mb-0">
+      {% for e in errors %}
+      <li>{{ e }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('main.subject_edit', subject_id=subject.subject_id) }}" class="row g-3">
+    <div class="col-md-6">
+      <label for="subject_name" class="form-label">Subject Name *</label>
+      <input type="text" id="subject_name" name="subject_name" class="form-control" value="{{ form_data.subject_name or '' }}" required />
+    </div>
+    <div class="col-md-3">
+      <label for="subject_code" class="form-label">Subject Code</label>
+      <input type="text" id="subject_code" name="subject_code" class="form-control" value="{{ form_data.subject_code or '' }}" />
+    </div>
+    <div class="col-md-3">
+      <label for="paper_code" class="form-label">Paper Code</label>
+      <input type="text" id="paper_code" name="paper_code" class="form-control" value="{{ form_data.paper_code or '' }}" />
+    </div>
+
+    <div class="col-md-4">
+      <label for="subject_type_id" class="form-label">Subject Type *</label>
+      <select id="subject_type_id" name="subject_type_id" class="form-select" required>
+        <option value="">-- Select Type --</option>
+        {% for st in subject_types %}
+          <option value="{{ st.type_id }}" {{ 'selected' if form_data.subject_type_id|string == st.type_id|string else '' }}>{{ st.type_code }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label for="semester" class="form-label">Semester</label>
+      <select id="semester" name="semester" class="form-select">
+        {% for s in range(1, 9) %}
+          <option value="{{ s }}" {{ 'selected' if form_data.semester == s else '' }}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label for="medium_tag" class="form-label">Medium *</label>
+      <select id="medium_tag" name="medium_tag" class="form-select" required>
+        <option value="">-- Select Medium --</option>
+        <option value="English" {{ 'selected' if (form_data.medium_tag or '') == 'English' else '' }}>English</option>
+        <option value="Gujarati" {{ 'selected' if (form_data.medium_tag or '') == 'Gujarati' else '' }}>Gujarati</option>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label for="theory_credits" class="form-label">Theory Credits</label>
+      <input type="number" id="theory_credits" name="theory_credits" min="0" class="form-control" value="{{ form_data.theory_credits or 0 }}" />
+    </div>
+    <div class="col-md-2">
+      <label for="practical_credits" class="form-label">Practical Credits</label>
+      <input type="number" id="practical_credits" name="practical_credits" min="0" class="form-control" value="{{ form_data.practical_credits or 0 }}" />
+    </div>
+
+    <div class="col-12">
+      <button type="submit" class="btn btn-primary">Save Changes</button>
+      <a class="btn btn-outline-secondary ms-1" href="{{ url_for('main.subjects_list', program_id=subject.program_id_fk, semester=subject.semester) }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

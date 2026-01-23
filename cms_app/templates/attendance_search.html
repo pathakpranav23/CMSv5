@@ -78,7 +78,7 @@
             {% for r in results %}
             <tr>
               <td>{{ r.student.enrollment_no }}</td>
-              <td>{{ (r.student.surname or '') ~ ' ' ~ (r.student.student_name or '') }}</td>
+              <td>{{ (r.student.last_name or '') ~ ' ' ~ (r.student.first_name or '') }}</td>
               <td>{{ r.semester or '-' }}</td>
               <td>{{ r.division or '-' }}</td>
               <td class="text-center">{{ r.total }}</td>

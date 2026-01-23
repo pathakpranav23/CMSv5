@@ -151,6 +151,26 @@
         </div>
       </div>
     </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header card-header-standard"><div class="card-title">{{ t('My Results') }}</div></div>
+        <div class="card-body">
+          {% if student_view.results %}
+            <div class="mb-1 fw-semibold">{{ student_view.results.scheme_name }}</div>
+            {% if student_view.results.status %}
+              <div class="small mb-1">{{ t('Status') }}: {{ student_view.results.status }}</div>
+            {% endif %}
+            {% if student_view.results.sgpa %}
+              <div class="small mb-2">{{ t('SGPA') }}: {{ student_view.results.sgpa }}</div>
+            {% endif %}
+            <a href="{{ url_for('exams.student_result_view') }}" class="btn btn-sm btn-outline-primary">{{ t('View Full Results') }}</a>
+          {% else %}
+            <div class="text-muted small mb-2">{{ t('No exam results yet.') }}</div>
+            <a href="{{ url_for('exams.student_result_view') }}" class="btn btn-sm btn-outline-secondary">{{ t('Open Results Page') }}</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
   </div>
   {% endif %}
 
@@ -444,7 +464,15 @@
                         <td>{{ st.subject }}</td>
                         <td>
                           <div class="progress" style="height: 20px;">
-                            <div class="progress-bar bg-danger" role="progressbar" style="width: {{ st.attendance }}%;" aria-valuenow="{{ st.attendance }}" aria-valuemin="0" aria-valuemax="100">{{ st.attendance }}%</div>
+                            <div
+                              class="progress-bar bg-danger js-att-risk-bar"
+                              role="progressbar"
+                              style="width: 0%;"
+                              data-width="{{ st.attendance|default(0) }}"
+                              aria-valuenow="0"
+                              aria-valuemin="0"
+                              aria-valuemax="100"
+                            >{{ st.attendance }}%</div>
                           </div>
                         </td>
                         <td>

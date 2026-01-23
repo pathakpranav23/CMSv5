@@ -1,0 +1,99 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb mb-1">
+                <li class="breadcrumb-item"><a href="{{ url_for('exams.dashboard') }}">Exams</a></li>
+                <li class="breadcrumb-item active">Result View</li>
+            </ol>
+        </nav>
+        <h2 class="h4 mb-0">Result: {{ scheme.name }}</h2>
+    </div>
+    <div class="btn-group">
+        <a href="{{ url_for('exams.dashboard') }}" class="btn btn-outline-secondary">Back</a>
+        <button class="btn btn-outline-primary" onclick="window.print()"><i class="bi bi-printer"></i> Print</button>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-bordered table-hover table-sm mb-0 text-center align-middle" style="font-size: 0.9rem;">
+                <thead class="table-light">
+                    <tr>
+                        <th rowspan="2" class="align-middle" style="width: 50px;">#</th>
+                        <th rowspan="2" class="align-middle text-start" style="width: 150px;">Student</th>
+                        <th rowspan="2" class="align-middle" style="width: 100px;">Enrollment</th>
+                        {% for sub in subjects %}
+                            <th colspan="3" class="text-center" style="min-width: 120px;">
+                                <span data-bs-toggle="tooltip" data-bs-placement="top" title="{{ sub.subject_name }}">
+                                    {{ sub.subject_code }} <i class="bi bi-info-circle-fill text-muted small" style="font-size: 0.7em;"></i>
+                                </span>
+                            </th>
+                        {% endfor %}
+                        <th rowspan="2" class="align-middle table-primary" style="width: 80px;">Grand Total</th>
+                    </tr>
+                    <tr>
+                        {% for sub in subjects %}
+                            <th class="text-muted small" style="font-size: 0.75rem;">Int</th>
+                            <th class="text-muted small" style="font-size: 0.75rem;">Ext</th>
+                            <th class="fw-bold small" style="font-size: 0.75rem;">Tot</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for student in students %}
+                        {% set row_total = 0 %}
+                        <tr>
+                            <td class="text-muted">{{ loop.index }}</td>
+                            <td class="text-start fw-bold text-nowrap">
+                                {{ student.last_name }} {{ student.first_name }}
+                            </td>
+                            <td class="text-muted">{{ student.enrollment_no }}</td>
+                            
+                            {% for sub in subjects %}
+                                {% set mark = matrix.get(student.enrollment_no, {}).get(sub.subject_id) %}
+                                {% if mark %}
+                                    {% if mark.is_absent %}
+                                        <td colspan="3" class="bg-danger-subtle text-danger small">ABS</td>
+                                    {% else %}
+                                        <td class="{% if mark.internal_marks is not none and mark.internal_marks < scheme.min_internal_marks %}text-danger{% endif %}">
+                                            {{ mark.internal_marks if mark.internal_marks is not none else '-' }}
+                                        </td>
+                                        <td class="{% if mark.external_marks is not none and mark.external_marks < scheme.min_external_marks %}text-danger{% endif %}">
+                                            {{ mark.external_marks if mark.external_marks is not none else '-' }}
+                                        </td>
+                                        <td class="fw-bold {% if mark.total_marks < scheme.min_total_marks %}text-danger{% else %}text-success{% endif %} bg-light">
+                                            {{ mark.total_marks }}
+                                        </td>
+                                        {% if mark.total_marks %}
+                                            {% set row_total = row_total + mark.total_marks %}
+                                        {% endif %}
+                                    {% endif %}
+                                {% else %}
+                                    <td colspan="3" class="text-muted text-opacity-25">-</td>
+                                {% endif %}
+                            {% endfor %}
+                            
+                            <td class="fw-bold table-primary">{{ row_total }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+  </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl)
+        })
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,72 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h3>Edit Bank Details &mdash; {{ program.program_name }}</h3>
+  <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="program_id" value="{{ program.program_id }}">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Bank Name *</label>
+        <input class="form-control" name="bank_name" value="{{ details.bank_name if details else '' }}" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Account Name *</label>
+        <input class="form-control" name="account_name" value="{{ details.account_name if details else '' }}" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Account Number *</label>
+        <input class="form-control" name="account_number" value="{{ details.account_number if details else '' }}" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">IFSC *</label>
+        <input class="form-control" name="ifsc" value="{{ details.ifsc if details else '' }}" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Branch *</label>
+        <input class="form-control" name="branch" value="{{ details.branch if details else '' }}" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">UPI VPA</label>
+        <input class="form-control" name="upi_vpa" value="{{ details.upi_vpa if details else '' }}" placeholder="e.g., trust@bank">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Payee Display</label>
+        <input class="form-control" name="payee_display" value="{{ details.payee_display if details else '' }}" placeholder="e.g., SBPET">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">GSTIN</label>
+        <input class="form-control" name="gstin" value="{{ details.gstin if details else '' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">PAN</label>
+        <input class="form-control" name="pan" value="{{ details.pan if details else '' }}">
+      </div>
+      <div class="col-md-3">
+        <div class="form-check mt-4">
+          <input class="form-check-input" type="checkbox" name="active" id="active" {% if details and details.active %}checked{% endif %}>
+          <label class="form-check-label" for="active">Active</label>
+        </div>
+      </div>
+      <div class="col-md-12">
+        <label class="form-label">UPI QR Image (png/jpg/jpeg/webp)</label>
+        <input class="form-control" type="file" name="qr_image" accept="image/png,image/jpeg,image/jpg,image/webp">
+        {% if details and details.qr_image_path %}
+          <div class="form-text">Existing: <a href="{{ url_for('static', filename=details.qr_image_path) }}" target="_blank">View current QR</a></div>
+          <div class="form-check mt-1">
+            <input class="form-check-input" type="checkbox" id="qr_remove" name="qr_remove">
+            <label class="form-check-label" for="qr_remove">Remove current QR image</label>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="mt-3">
+      <button class="btn btn-primary" type="submit">Save</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.fees_bank_details') }}">Cancel</a>
+    </div>
+  </form>
+  <div class="mt-3">
+    <small class="text-muted">Tip: If no QR is uploaded, receipts can show text-only bank/UPI info; uploading later will overwrite auto-generated QR if enabled.</small>
+  </div>
+</div>
+{% endblock %}

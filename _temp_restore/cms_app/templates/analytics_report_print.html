@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ report_title }}</title>
+    <!-- Bootstrap CSS for Layout -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    
+    <style>
+        /* Print Optimization */
+        @page {
+            size: A4;
+            margin: 1.5cm;
+        }
+        @media print {
+            body { 
+                background: white; 
+                font-family: 'Times New Roman', Times, serif; /* Classic Report Font */
+            }
+            .no-print { display: none !important; }
+            .card { border: 1px solid #ddd !important; box-shadow: none !important; }
+            .bg-light { background-color: #f8f9fa !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .text-primary { color: #0d6efd !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+        
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f3f4f6; }
+        .report-container { max-width: 210mm; margin: 2rem auto; background: white; padding: 2cm; min-height: 297mm; box-shadow: 0 0 15px rgba(0,0,0,0.1); }
+        .header-line { border-bottom: 2px solid #000; margin-bottom: 2rem; padding-bottom: 1rem; }
+        .stat-box { border: 1px solid #eee; padding: 1.5rem; border-radius: 8px; text-align: center; }
+        .stat-value { font-size: 2rem; font-weight: bold; color: #2c3e50; }
+        .stat-label { color: #7f8c8d; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; }
+    </style>
+</head>
+<body>
+
+    <!-- Print Controls -->
+    <div class="container mt-3 mb-3 no-print d-flex justify-content-between align-items-center">
+        <a href="javascript:window.close()" class="btn btn-outline-secondary">Close</a>
+        <button onclick="window.print()" class="btn btn-primary fw-bold"><i class="bi bi-printer-fill me-2"></i>Print / Save PDF</button>
+    </div>
+
+    <!-- A4 Page Content -->
+    <div class="report-container">
+        
+        <!-- Header -->
+        <div class="header-line d-flex justify-content-between align-items-center mb-5">
+            <div class="d-flex align-items-center">
+                <!-- SBPET Logo -->
+                <img src="{{ url_for('static', filename='logo.png') }}" alt="SBPET Logo" style="height: 80px; width: auto;" class="me-3">
+                <div>
+                    <h1 class="h4 fw-bold text-uppercase mb-0 text-dark">Shree Balvant Parekh Education Trust - Mahuva</h1>
+                    <div class="text-muted small">Managed by SBPET</div>
+                </div>
+            </div>
+            <div class="text-end">
+                <div class="h5 mb-0 fw-bold text-primary">{{ report_title }}</div>
+                <div class="small text-muted">{{ start_date.strftime('%d %b %Y') }} - {{ end_date.strftime('%d %b %Y') }}</div>
+            </div>
+        </div>
+
+        <!-- 1. Financial Highlights -->
+        <h5 class="fw-bold text-uppercase text-secondary mb-3"><i class="bi bi-cash-stack me-2"></i>Financial Overview</h5>
+        <div class="row g-4 mb-5">
+            <div class="col-6">
+                <div class="stat-box bg-light">
+                    <div class="stat-value text-success">₹ {{ "{:,.2f}".format(fees_total) }}</div>
+                    <div class="stat-label">Total Fees Collected</div>
+                </div>
+            </div>
+            <div class="col-6">
+                <div class="card border-0 h-100">
+                    <div class="card-body p-0">
+                        <table class="table table-sm table-borderless mb-0">
+                            <thead class="border-bottom">
+                                <tr>
+                                    <th class="text-uppercase small text-muted">Program Breakdown</th>
+                                    <th class="text-end text-uppercase small text-muted">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for prog in fees_by_program %}
+                                <tr>
+                                    <td>{{ prog[0] }}</td>
+                                    <td class="text-end fw-bold">₹ {{ "{:,.0f}".format(prog[1]) }}</td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="2" class="text-muted text-center py-3">No verified collections</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Academic Pulse -->
+        <h5 class="fw-bold text-uppercase text-secondary mb-3"><i class="bi bi-mortarboard me-2"></i>Academic Delivery</h5>
+        <div class="row g-4 mb-5">
+            <div class="col-4">
+                <div class="stat-box">
+                    <div class="stat-value text-primary">{{ lectures_count }}</div>
+                    <div class="stat-label">Lectures Conducted</div>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="stat-box">
+                    <div class="stat-value text-dark">{{ active_faculty }}</div>
+                    <div class="stat-label">Active Faculty</div>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="stat-box">
+                    <div class="stat-value text-info">{{ materials_count }}</div>
+                    <div class="stat-label">Resources Shared</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Program Performance Matrix (The World Class View) -->
+        <h5 class="fw-bold text-uppercase text-secondary mb-3"><i class="bi bi-trophy-fill me-2"></i>360° Program Performance Matrix</h5>
+        <div class="card border-0 mb-5">
+            <div class="table-responsive">
+                <table class="table table-bordered align-middle mb-0 text-center">
+                    <thead class="bg-light">
+                        <tr>
+                            <th class="text-start">Program</th>
+                            <th>Fees Collected</th>
+                            <th>Faculty Strength</th>
+                            <th>Engagement (Mat.)</th>
+                            <th>Avg. Attendance</th>
+                            <th>Performance Badge</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for prog in program_matrix %}
+                        <tr>
+                            <td class="text-start fw-bold">{{ prog.name }}</td>
+                            <td class="text-muted">₹ {{ "{:,.0f}".format(prog.fees) }}</td>
+                            <td>{{ prog.faculty }}</td>
+                            <td>{{ prog.materials }}</td>
+                            <td>
+                                <div class="progress" style="height: 6px; width: 80px; margin: 0 auto 5px;">
+                                    <div class="progress-bar bg-info" role="progressbar" style="width: 0%" data-width="{{ prog.attendance }}"></div>
+<script>
+    document.querySelectorAll('.progress-bar').forEach(bar => {
+        const width = bar.getAttribute('data-width');
+        if(width) bar.style.width = width + '%';
+    });
+</script>
+                                </div>
+                                <span class="small fw-bold">{{ "{:.1f}".format(prog.attendance) }}%</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-{{ prog.badge_color }} text-uppercase">{{ prog.badge }}</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 4. Growth & Operations -->
+        <h5 class="fw-bold text-uppercase text-secondary mb-3"><i class="bi bi-graph-up-arrow me-2"></i>Growth & Operations</h5>
+        <table class="table table-bordered mb-0">
+            <tbody>
+                <tr>
+                    <td class="bg-light fw-bold" style="width: 40%;">New Student Admissions</td>
+                    <td>{{ new_admissions }} Students enrolled via import</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">Announcements Posted</td>
+                    <td>{{ announcements_count }} Updates broadcasted</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">Report Generated On</td>
+                    <td>{{ generated_at.strftime('%d %b %Y, %I:%M %p') }}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Footer -->
+        <div class="mt-5 pt-4 border-top d-flex justify-content-between align-items-center">
+            <div class="text-start">
+                <div class="small fw-bold text-dark">System Generated Report</div>
+                <div class="text-muted" style="font-size: 0.75rem;">Generated on {{ generated_at.strftime('%d %b %Y at %I:%M %p') }}</div>
+            </div>
+            <div class="text-end d-flex align-items-center">
+                <div class="me-2 text-end">
+                    <div class="small fw-bold text-dark">Powered by</div>
+                    <div class="text-muted" style="font-size: 0.75rem;">CodeP Technologies</div>
+                </div>
+                <!-- CodeP Logo -->
+                <img src="{{ url_for('static', filename='CODEP-LOGO-6.png') }}" alt="CodeP" style="height: 32px; width: auto;" class="ms-2">
+            </div>
+        </div>
+
+    </div>
+
+</body>
+</html>

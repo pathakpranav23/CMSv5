@@ -1,0 +1,70 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h2 class="mb-3">Attendance — {{ student.enrollment_no }}</h2>
+
+<div class="mb-3">
+  <a class="btn btn-primary btn-sm" href="{{ url_for('main.students_show', enrollment_no=student.enrollment_no) }}">Back to Profile</a>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.students') }}">Students</a>
+  <a class="btn btn-outline-info btn-sm" href="{{ url_for('main.students_attendance_export', enrollment_no=student.enrollment_no, a_start=a_filters.a_start, a_end=a_filters.a_end, a_sem=a_filters.a_sem, subject_id=a_filters.subject_id) }}">Export CSV</a>
+</div>
+
+<form class="row g-2 align-items-end" method="get" action="">
+  <div class="col-6 col-md-3">
+    <label class="form-label">Start Date</label>
+    <input type="date" name="a_start" class="form-control" value="{{ a_filters.a_start }}" />
+  </div>
+  <div class="col-6 col-md-3">
+    <label class="form-label">End Date</label>
+    <input type="date" name="a_end" class="form-control" value="{{ a_filters.a_end }}" />
+  </div>
+  <div class="col-6 col-md-3">
+    <label class="form-label">Semester</label>
+    <input type="number" min="1" max="12" name="a_sem" class="form-control" value="{{ a_filters.a_sem }}" />
+  </div>
+  <div class="col-6 col-md-3">
+    <label class="form-label">Subject ID</label>
+    <input type="number" name="subject_id" class="form-control" value="{{ a_filters.subject_id }}" />
+  </div>
+  <div class="col-6 col-md-2">
+    <label class="form-label">Per Page</label>
+    <input type="number" min="5" max="100" name="a_per" class="form-control" value="{{ a_filters.a_per }}" />
+  </div>
+  <div class="col-6 col-md-2">
+    <button type="submit" class="btn btn-primary w-100">Apply</button>
+  </div>
+</form>
+
+<div class="table-responsive mt-3">
+  <table class="table table-sm table-striped align-middle">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Subject</th>
+        <th>Status</th>
+        <th>Semester</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.date_marked }}</td>
+        <td>{{ subject_map.get(r.subject_id_fk) or (r.subject_id_fk or '-') }}</td>
+        <td>{{ r.status }}</td>
+        <td>{{ r.semester or '-' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mt-2">
+  <div class="text-muted">Total records: {{ total }}</div>
+  <div>
+    {% set page = a_filters.a_page %}
+    {% set per = a_filters.a_per %}
+    <a class="btn btn-sm btn-outline-secondary {% if page <= 1 %}disabled{% endif %}" href="?a_start={{ a_filters.a_start }}&a_end={{ a_filters.a_end }}&a_sem={{ a_filters.a_sem }}&subject_id={{ a_filters.subject_id }}&a_page={{ (page - 1 if page > 1 else 1) }}&a_per={{ per }}">Prev</a>
+    <a class="btn btn-sm btn-outline-secondary" href="?a_start={{ a_filters.a_start }}&a_end={{ a_filters.a_end }}&a_sem={{ a_filters.a_sem }}&subject_id={{ a_filters.subject_id }}&a_page={{ page + 1 }}&a_per={{ per }}">Next</a>
+  </div>
+  <div>Page {{ page }}</div>
+  </div>
+{% endblock %}

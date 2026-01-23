@@ -1,0 +1,164 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+  <div class="section-header d-flex align-items-center justify-content-between mb-3">
+    <h3 class="mb-0 title d-flex align-items-center">Fees Entry <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h3>
+    <div class="actions"></div>
+  </div>
+
+  <form class="row g-3 mb-3" method="get" action="{{ url_for('main.fees_entry') }}">
+    <div class="col-md-6">
+      <label class="form-label">Program</label>
+      {% set role_lower = (current_user.role or '')|lower %}
+      {% if role_lower in ['clerk','principal'] %}
+        <div class="form-control-plaintext">{{ selected_program and selected_program.program_name or (programs and programs[0].program_name) }}</div>
+        <input type="hidden" name="program_id" value="{{ (selected_program and selected_program.program_id) or (programs and programs[0].program_id) }}" />
+      {% else %}
+        <select class="form-select" name="program_id" required>
+          <option value="">Select program</option>
+          {% for p in programs %}
+            <option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+      {% endif %}
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Semester</label>
+      <select class="form-select" name="semester" required>
+        <option value="">Select semester</option>
+        {% for s in range(1, 7) %}
+          <option value="{{ s }}" {% if semester == s %}selected{% endif %}>Semester {{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% set prog_lower = (selected_program.program_name if selected_program else '')|lower %}
+    {% set show_medium = ('bcom' in prog_lower) or ('b.com' in prog_lower) %}
+    {% if show_medium %}
+      <div class="col-md-3">
+        <label class="form-label">Medium</label>
+        <select class="form-select" name="medium" required>
+          <option value="" {% if not medium %}selected{% endif %}>Select Medium</option>
+          <option value="English" {% if (medium or '')|lower == 'english' %}selected{% endif %}>English</option>
+          <option value="Gujarati" {% if (medium or '')|lower == 'gujarati' %}selected{% endif %}>Gujarati</option>
+        </select>
+      </div>
+    {% endif %}
+    <div class="col-md-3 d-flex align-items-end">
+      <button class="btn btn-primary w-100" type="submit">Load</button>
+    </div>
+  </form>
+
+  {% if selected_program and semester %}
+    {% if has_frozen %}
+      <div class="alert alert-info d-flex justify-content-between align-items-center">
+        <div>Fees are frozen for this semester.</div>
+        {% if show_medium %}
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.fees_receipt', program_id=selected_program.program_id, semester=semester, medium=medium or '') }}">View Receipt</a>
+        {% else %}
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.fees_receipt', program_id=selected_program.program_id, semester=semester) }}">View Receipt</a>
+        {% endif %}
+      </div>
+    {% endif %}
+    {% if show_medium %}
+      <form method="post" action="{{ url_for('main.fees_entry', program_id=selected_program.program_id, semester=semester, medium=medium or '') }}">
+        <input type="hidden" name="medium" value="{{ medium or '' }}" />
+    {% else %}
+      <form method="post" action="{{ url_for('main.fees_entry', program_id=selected_program.program_id, semester=semester) }}">
+    {% endif %}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="action" value="review" />
+
+      <div class="table-responsive mb-3">
+        <table class="table table-bordered align-middle">
+          <thead>
+            <tr>
+              <th style="width:50%">Component (Fees Head)
+                {% if selected_program and semester %}
+                  <a class="ms-2 small" href="{{ url_for('main.fees_heads', program_id=selected_program.program_id, semester=semester) }}" title="Manage fee heads for this program/semester">Manage Heads</a>
+                {% endif %}
+              </th>
+              <th style="width:25%" class="text-end">Amount (INR)</th>
+              <th style="width:25%" class="text-center">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for comp in components %}
+              {% set slug = comp|lower|replace(' ', '_') %}
+              {% set existing = existing_map.get(comp) %}
+              <tr>
+                <td>{{ comp }}</td>
+                <td class="text-end">
+                  <input type="number" step="0.01" min="0" class="form-control text-end" name="amount_{{ slug }}" value="{{ (existing.amount if existing else 0) }}" {% if existing and existing.is_frozen %}disabled{% endif %} />
+                </td>
+                <td class="text-center">
+                  {% if existing and existing.is_frozen %}
+                    <span class="badge bg-success">Frozen</span>
+                  {% else %}
+                    <span class="text-muted">Editable</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" type="submit">Save and Review</button>
+      </div>
+    </form>
+
+    {% if review_data %}
+      <hr />
+      <div class="mb-2 d-flex align-items-center justify-content-between">
+        <h5 class="mb-0">Review Totals</h5>
+        <div class="text-muted">Program: {{ selected_program.program_name }} · Semester {{ semester }}</div>
+      </div>
+      <div class="table-responsive mb-3">
+        <table class="table table-striped">
+          <thead>
+            <tr>
+              <th>Component</th>
+              <th class="text-end">Amount (INR)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in review_data %}
+              <tr>
+                <td>{{ row.component }}</td>
+                <td class="text-end">{{ (row.amount or 0)|round(2) }}</td>
+              </tr>
+            {% endfor %}
+            <tr>
+              <th class="text-end">Total</th>
+              <th class="text-end">{{ (total_preview or 0)|round(2) }}</th>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {% if show_medium %}
+        <form method="post" action="{{ url_for('main.fees_entry', program_id=selected_program.program_id, semester=semester, medium=medium or '') }}">
+          <input type="hidden" name="medium" value="{{ medium or '' }}" />
+      {% else %}
+        <form method="post" action="{{ url_for('main.fees_entry', program_id=selected_program.program_id, semester=semester) }}">
+      {% endif %}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="action" value="freeze" />
+        <div class="d-flex gap-2">
+          <button class="btn btn-success" type="submit">Confirm and Freeze</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('main.fees_entry', program_id=selected_program.program_id, semester=semester) }}">Edit Again</a>
+          {% if has_frozen %}
+            {% if show_medium %}
+              <a class="btn btn-outline-primary" href="{{ url_for('main.fees_receipt', program_id=selected_program.program_id, semester=semester, medium=medium or '') }}">View Receipt</a>
+            {% else %}
+              <a class="btn btn-outline-primary" href="{{ url_for('main.fees_receipt', program_id=selected_program.program_id, semester=semester) }}">View Receipt</a>
+            {% endif %}
+          {% endif %}
+        </div>
+      </form>
+    {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

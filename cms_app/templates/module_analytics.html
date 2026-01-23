@@ -1,0 +1,413 @@
+{% extends "layout.html" %}
+{% block page_class %}analytics-module module-cards{% endblock %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (role or (current_user.role if current_user.is_authenticated else 'Guest')) %}
+  {% set role_display_lower = (role_display or '')|lower %}
+  <div class="section-header d-flex align-items-center justify-content-between mb-2">
+    <h3 class="mb-0 title d-flex align-items-center">
+      <span class="me-2 text-primary"><i class="bi bi-graph-up-arrow"></i></span>
+      <span>{{ t('Analytics Dashboard') }}</span>
+      <span class="role-badge ms-2">{{ role_display|capitalize }}</span>
+    </h3>
+    <div class="actions d-flex align-items-center gap-2">
+      <form method="get" action="{{ url_for('main.module_analytics') }}" class="d-flex flex-wrap align-items-center gap-2 me-2">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text bg-white border-end-0"><i class="bi bi-calendar-range text-muted"></i></span>
+          <input type="date" name="start_date" class="form-control border-start-0" value="{{ start_date }}" required title="{{ t('Start Date') }}" style="max-width: 110px;">
+          <span class="input-group-text bg-light border-start-0 border-end-0 text-muted small">to</span>
+          <input type="date" name="end_date" class="form-control border-start-0" value="{{ end_date }}" required title="{{ t('End Date') }}" style="max-width: 110px;">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-arrow-right"></i></button>
+        </div>
+        {% if demo_mode %}
+        <a href="{{ url_for('main.module_analytics') }}" class="btn btn-sm btn-warning text-white shadow-sm" title="{{ t('Exit Sample Data') }}">
+          <i class="bi bi-lightning-fill"></i> <span class="d-none d-sm-inline">{{ t('Exit Demo') }}</span>
+        </a>
+        {% else %}
+        <a href="{{ url_for('main.module_analytics', demo='1') }}" class="btn btn-sm btn-outline-warning shadow-sm" title="{{ t('Show Sample Data') }}">
+          <i class="bi bi-lightning"></i> <span class="d-none d-sm-inline">{{ t('Demo Data') }}</span>
+        </a>
+        {% endif %}
+      </form>
+      <span class="badge bg-white text-muted border d-none d-md-inline shadow-sm">{{ today_date }}</span>
+      <a href="{{ url_for('main.reports_hub') }}" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center shadow-sm" title="{{ t('Reports Hub') }}">
+        <i class="bi bi-file-earmark-bar-graph"></i> <span class="d-none d-lg-inline ms-1">{{ t('Reports Hub') }}</span>
+      </a>
+      <a href="{{ url_for('main.reports_hub') }}#analytics-print" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center shadow-sm" title="{{ t('Print') }}">
+        <i class="bi bi-printer"></i> <span class="d-none d-lg-inline ms-1">{{ t('Print Report') }}</span>
+      </a>
+    </div>
+  </div>
+  {% if role_display_lower in ['admin','principal'] %}
+    <div class="small text-muted mb-3" data-bs-toggle="tooltip" data-bs-placement="right" title="{{ t('Analytics view for monitoring lectures and faculty activity.') }}">
+        <i class="bi bi-info-circle me-1"></i> {{ t('Admin/Principal: Analytics overview.') }}
+    </div>
+  {% endif %}
+  
+  <div class="row g-3 mb-4">
+    <div class="col-md-4">
+      <div class="card h-100 shadow-sm border-0 border-start border-4 border-primary">
+        <div class="card-body d-flex align-items-center justify-content-between">
+            <div>
+                <div class="text-muted small text-uppercase fw-bold mb-1">{{ t('Daily Lectures') }}</div>
+                <div class="display-5 fw-bold text-dark">{{ lecture_stats.total_today }}</div>
+                <div class="text-muted small mt-1"><i class="bi bi-calendar-event me-1"></i> {{ t('Logged today') }}</div>
+            </div>
+            <div class="icon-circle bg-primary bg-opacity-10 text-primary p-3 rounded-circle">
+                <i class="bi bi-easel display-6"></i>
+            </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100 shadow-sm border-0 border-start border-4 border-success">
+        <div class="card-body d-flex align-items-center justify-content-between">
+            <div>
+                <div class="text-muted small text-uppercase fw-bold mb-1">{{ t('High Performers') }}</div>
+                {% set high_count = (performance_alerts.high|length) if performance_alerts and performance_alerts.high is defined else 0 %}
+                <div class="display-5 fw-bold text-dark">{{ high_count }}</div>
+                <div class="text-muted small mt-1"><i class="bi bi-graph-up-arrow me-1"></i> {{ t('Above target') }}</div>
+            </div>
+            <div class="icon-circle bg-success bg-opacity-10 text-success p-3 rounded-circle">
+                <i class="bi bi-trophy display-6"></i>
+            </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100 shadow-sm border-0 border-start border-4 border-danger">
+        <div class="card-body d-flex align-items-center justify-content-between">
+            <div>
+                <div class="text-muted small text-uppercase fw-bold mb-1">{{ t('Needs Attention') }}</div>
+                {% set low_count = (performance_alerts.low|length) if performance_alerts and performance_alerts.low is defined else 0 %}
+                <div class="display-5 fw-bold text-dark">{{ low_count }}</div>
+                <div class="text-muted small mt-1"><i class="bi bi-exclamation-circle me-1"></i> {{ t('Below target') }}</div>
+            </div>
+            <div class="icon-circle bg-danger bg-opacity-10 text-danger p-3 rounded-circle">
+                <i class="bi bi-bell display-6"></i>
+            </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% set has_daily = daily_logs and daily_logs|length > 0 %}
+  {% set has_weekly = weekly_grid and weekly_grid|length > 0 %}
+  {% set has_high = performance_alerts and performance_alerts.high and performance_alerts.high|length > 0 %}
+  {% set has_low = performance_alerts and performance_alerts.low and performance_alerts.low|length > 0 %}
+  {% set has_any = has_daily or has_weekly or has_high or has_low %}
+
+  {% if has_any %}
+  <div class="row g-3 mb-3">
+    <div class="col-lg-7">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div class="card-title mb-0">{{ t('Lecture Log') }}</div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>{{ t('Date') }}</th>
+                  <th>{{ t('Period') }}</th>
+                  <th>{{ t('Faculty') }}</th>
+                  <th>{{ t('Subject') }}</th>
+                  <th>{{ t('Division') }}</th>
+                  <th>{{ t('Program') }}</th>
+                  <th class="text-end">{{ t('Attendance') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in daily_logs %}
+                <tr>
+                  <td>{{ row.date }}</td>
+                  <td>{{ row.period_no }}</td>
+                  <td>{{ row.faculty_name }}</td>
+                  <td>{{ row.subject_name }}</td>
+                  <td>{{ row.division }}</td>
+                  <td>{{ row.program_name }}</td>
+                  {% set pct = (row.present_count * 100 // row.total_students) if row.total_students else 0 %}
+                  <td class="text-end">
+                    <div class="small fw-semibold">{{ row.present_count }}/{{ row.total_students }}</div>
+                    <div class="progress" style="height: 6px;">
+                      <div
+                        class="progress-bar analytics-attendance-bar {% if pct >= 85 %}bg-success{% elif pct >= 60 %}bg-warning{% else %}bg-danger{% endif %}"
+                        role="progressbar"
+                        style="width: 0%"
+                        data-width="{{ pct }}"
+                        aria-valuenow="{{ pct }}"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                      ></div>
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div class="card-title mb-0">{{ t('Weekly Faculty Grid') }}</div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered mb-0 text-center align-middle">
+              <thead class="table-light">
+                <tr>
+                  <th class="text-start">{{ t('Faculty') }}</th>
+                  <th>Mon</th>
+                  <th>Tue</th>
+                  <th>Wed</th>
+                  <th>Thu</th>
+                  <th>Fri</th>
+                  <th>Sat</th>
+                  <th>Sun</th>
+                  <th>{{ t('Total') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in weekly_grid %}
+                <tr>
+                  <td class="text-start">{{ row.faculty_name or t('Unknown') }}</td>
+                  {% set days = row.days or {} %}
+                  {% for key in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
+                  {% set val = days.get(key, 0) %}
+                  <td class="{% if val %}{% if val >= 4 %}table-success{% elif val >= 2 %}table-warning{% else %}table-light{% endif %}{% endif %}">{{ val if val else '' }}</td>
+                  {% endfor %}
+                  <td>{{ row.total }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div class="card-title mb-0 text-success">{{ t('High Performing Faculty') }}</div>
+        </div>
+        <div class="card-body">
+          {% if has_high %}
+          <div class="list-group">
+            {% for item in performance_alerts.high %}
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold">{{ item.name }}</div>
+                <div class="small text-muted">{{ t('Lectures this week:') }} {{ item.lectures_taken }} • {{ t('Avg attendance:') }} {{ item.avg_attendance }}%</div>
+              </div>
+              <form method="post" action="{{ url_for('main.analytics_notify') }}" class="ms-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="faculty_id" value="{{ item.id }}">
+                <input type="hidden" name="type" value="appreciation">
+                <button type="submit" class="btn btn-sm btn-outline-success">{{ t('Send Thanks') }}</button>
+              </form>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="text-muted small">{{ t('No high-performing faculty alerts yet.') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div class="card-title mb-0 text-danger">{{ t('Attention Required') }}</div>
+        </div>
+        <div class="card-body">
+          {% if has_low %}
+          <div class="list-group">
+            {% for item in performance_alerts.low %}
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold">{{ item.name }}</div>
+                <div class="small text-muted">{{ t('Lectures this week:') }} {{ item.lectures_taken }} / {{ item.target }}</div>
+              </div>
+              <form method="post" action="{{ url_for('main.analytics_notify') }}" class="ms-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="faculty_id" value="{{ item.id }}">
+                <input type="hidden" name="type" value="warning">
+                <button type="submit" class="btn btn-sm btn-outline-danger">{{ t('Send Alert') }}</button>
+              </form>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="text-muted small">{{ t('No low-activity alerts this week.') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mt-3 d-none d-md-flex">
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div class="card-title mb-0 d-flex align-items-center">
+            <i class="bi bi-bar-chart-line text-primary me-2"></i>
+            <span>{{ t('Lectures by Period') }}</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <canvas id="chartLecturesByPeriod" height="140"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <div class="card-title mb-0 d-flex align-items-center">
+            <i class="bi bi-people-fill text-success me-2"></i>
+            <span>{{ t('Top Faculty by Lectures') }}</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <canvas id="chartTopFacultyWeek" height="140"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="row g-3 mt-3">
+    <div class="col-12">
+      <div class="card text-center">
+        <div class="card-body py-5">
+          <div class="display-6 mb-2"><i class="bi bi-activity text-primary"></i></div>
+          <div class="h5 mb-1">{{ t('No analytics activity yet') }}</div>
+          <div class="text-muted small">{{ t('As attendance and lectures are recorded, this page will show live insights.') }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  <div class="row g-3 mt-4" id="problems_and_diagnostics">
+    <div class="col-12">
+      <div class="card border-0 shadow-sm">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <div class="card-title mb-0 d-flex align-items-center">
+            <i class="bi bi-bug text-danger me-2"></i>
+            <span>{{ t('Problems & Diagnostics') }}</span>
+          </div>
+          {% if demo_mode %}
+          <span class="badge bg-warning text-dark">{{ t('Demo mode') }}</span>
+          {% endif %}
+        </div>
+        <div class="card-body">
+          {% if diagnostics and diagnostics|length %}
+          <ul class="mb-0">
+            {% for item in diagnostics %}
+            <li class="small">{{ item }}</li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <div class="text-muted small">{{ t('No issues detected. Live data is flowing correctly.') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script id="analyticsDaily" type="application/json">{{ daily_logs | tojson | safe }}</script>
+<script id="analyticsWeekly" type="application/json">{{ weekly_grid | tojson | safe }}</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  (function () {
+    var attendanceBars = document.querySelectorAll('.analytics-attendance-bar[data-width]');
+    attendanceBars.forEach(function (bar) {
+      var w = parseInt(bar.getAttribute('data-width') || '0', 10);
+      if (!isNaN(w) && w >= 0) {
+        if (w > 100) { w = 100; }
+        bar.style.width = w + '%';
+      }
+    });
+
+    var daily = [];
+    var weekly = [];
+    var dailyEl = document.getElementById('analyticsDaily');
+    var weeklyEl = document.getElementById('analyticsWeekly');
+    if (dailyEl) {
+      try { daily = JSON.parse(dailyEl.textContent || '[]'); } catch (e) { daily = []; }
+    }
+    if (weeklyEl) {
+      try { weekly = JSON.parse(weeklyEl.textContent || '[]'); } catch (e) { weekly = []; }
+    }
+
+    var ctxPeriod = document.getElementById('chartLecturesByPeriod');
+    if (ctxPeriod && daily && daily.length) {
+      var periodMap = {};
+      daily.forEach(function (row) {
+        var p = row.period_no || 0;
+        if (!p) return;
+        periodMap[p] = (periodMap[p] || 0) + 1;
+      });
+      var periods = Object.keys(periodMap).map(function (k) { return parseInt(k, 10); }).sort(function (a, b) { return a - b; });
+      var counts = periods.map(function (p) { return periodMap[p] || 0; });
+      if (periods.length) {
+        new Chart(ctxPeriod, {
+          type: 'bar',
+          data: {
+            labels: periods.map(function (p) { return 'P' + p; }),
+            datasets: [{
+              label: 'Lectures',
+              data: counts,
+              backgroundColor: '#0d6efd'
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+              y: { beginAtZero: true, ticks: { precision: 0 } }
+            }
+          }
+        });
+      }
+    }
+
+    var ctxFaculty = document.getElementById('chartTopFacultyWeek');
+    if (ctxFaculty && weekly && weekly.length) {
+      var sorted = weekly.slice().sort(function (a, b) {
+        var ta = a.total || 0;
+        var tb = b.total || 0;
+        return tb - ta;
+      }).slice(0, 5);
+      var labels = sorted.map(function (row) { return row.faculty_name || 'Unknown'; });
+      var totals = sorted.map(function (row) { return row.total || 0; });
+      if (labels.length) {
+        new Chart(ctxFaculty, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: 'Lectures this week',
+              data: totals,
+              backgroundColor: '#198754'
+            }]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { beginAtZero: true, ticks: { precision: 0 } }
+            }
+          }
+        });
+      }
+    }
+  })();
+</script>
+{% endblock %}

@@ -99,7 +99,7 @@
           <tr data-status="{{ r.status }}" data-pending="{{ 'Yes' if r.has_submitted else 'No' }}" data-rejected="{{ 'Yes' if r.has_rejected else 'No' }}">
             <td>{{ s.enrollment_no }}</td>
             <td>
-              {{ ((s.student_name or '') ~ (s.father_name and (' ' ~ s.father_name) or '') ~ (s.surname and (' ' ~ s.surname) or ''))|trim }}
+              {{ ((s.first_name or '') ~ (s.father_name and (' ' ~ s.father_name) or '') ~ (s.last_name and (' ' ~ s.last_name) or ''))|trim }}
               {% if r.has_submitted and r.status != 'Paid' %}
                 <span class="badge bg-secondary ms-2">Submitted</span>
               {% endif %}

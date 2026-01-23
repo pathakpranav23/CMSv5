@@ -1,0 +1,39 @@
+{% extends "layout.html" %}
+{% import "_macros.html" as ui %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex align-items-center justify-content-between mb-2">
+    <h3 class="mb-0 title">Edit Program</h3>
+    <div class="actions">{{ ui.back_link(url_for('main.programs_list'), 'Back to Programs') }}</div>
+  </div>
+  {{ ui.breadcrumbs([
+    ('Dashboard', url_for('main.dashboard')),
+    ('Programs', url_for('main.programs_list')),
+    ('Edit', '')
+  ]) }}
+  <p class="text-muted soft-hint">Update program details.</p>
+
+  {% if errors %}
+    <div class="alert alert-danger">
+      <ul class="mb-0">
+        {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <form method="post">
+    <div class="mb-3">
+      <label class="form-label">Program Name</label>
+      <input type="text" name="program_name" class="form-control" value="{{ (form.program_name if form else program.program_name)|default(program.program_name) }}" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Duration (years)</label>
+      <input type="number" name="program_duration_years" class="form-control" min="1" max="6" value="{{ (form.program_duration_years if form else program.program_duration_years)|default(program.program_duration_years) }}">
+    </div>
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-primary">Save Changes</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.programs_list') }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,168 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container-fluid py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb mb-1">
+                <li class="breadcrumb-item"><a href="{{ url_for('exams.dashboard') }}">Exams</a></li>
+                <li class="breadcrumb-item active">Marks Entry</li>
+            </ol>
+        </nav>
+        <h2 class="h4 mb-0">{{ scheme.name }}</h2>
+        <div class="text-muted small">
+            {{ program.program_name }} Sem {{ scheme.semester }} ({{ scheme.academic_year }})
+            {% if scheme.medium_tag %} &middot; {{ scheme.medium_tag }}{% endif %}
+        </div>
+    </div>
+    <div>
+        <a href="{{ url_for('exams.dashboard') }}" class="btn btn-outline-secondary btn-sm">Back</a>
+    </div>
+  </div>
+
+  <div class="row">
+    <!-- Subject List Sidebar -->
+    <div class="col-md-3 mb-3">
+        <div class="list-group shadow-sm">
+            <div class="list-group-item list-group-item-light fw-bold">Select Subject</div>
+            {% for sub in subjects %}
+                <a href="{{ url_for('exams.marks_entry', scheme_id=scheme.scheme_id, subject_id=sub.subject_id) }}" 
+                   class="list-group-item list-group-item-action d-flex justify-content-between align-items-center {% if selected_subject and selected_subject.subject_id == sub.subject_id %}active{% endif %}">
+                    <div>
+                        <div class="fw-bold">{{ sub.subject_code }}</div>
+                        <div class="small text-truncate" style="max-width: 180px;" title="{{ sub.subject_name }}">{{ sub.subject_name }}</div>
+                    </div>
+                </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Marks Entry Area -->
+    <div class="col-md-9">
+        {% if not selected_subject %}
+            <div class="alert alert-info shadow-sm">
+                <h5 class="alert-heading"><i class="bi bi-arrow-left-circle"></i> Select a Subject</h5>
+                <p class="mb-0">Please select a subject from the list to start entering marks.</p>
+            </div>
+        {% else %}
+            <div class="card shadow-sm">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0 text-primary">
+                        <i class="bi bi-pencil-square me-2"></i>{{ selected_subject.subject_name }}
+                        <span class="text-muted small">({{ selected_subject.subject_code }})</span>
+                    </h5>
+                    <div class="small text-muted">
+                        Max Int: <strong>{{ scheme.max_internal_marks }}</strong> | 
+                        Max Ext: <strong>{{ scheme.max_external_marks }}</strong>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <form method="post" action="{{ url_for('exams.save_marks', scheme_id=scheme.scheme_id) }}" id="marksForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input type="hidden" name="subject_id" value="{{ selected_subject.subject_id }}">
+                        
+                        {% if not students %}
+                            <div class="p-5 text-center text-muted">
+                                <i class="bi bi-people display-4 mb-3 d-block"></i>
+                                <p>No enrolled students found for this subject/semester.</p>
+                                <a href="{{ url_for('main.student_subject_allocation') }}" class="btn btn-sm btn-outline-primary">Check Subject Allocation</a>
+                            </div>
+                        {% else %}
+                            <div class="table-responsive" style="max-height: 70vh;">
+                                <table class="table table-hover table-striped align-middle mb-0 table-fixed-head">
+                                    <thead class="table-light sticky-top" style="z-index: 5;">
+                                        <tr>
+                                            <th style="width: 50px;">#</th>
+                                            <th style="width: 120px;">Enrollment</th>
+                                            <th>Student Name</th>
+                                            <th style="width: 100px;" class="text-center">Internal</th>
+                                            <th style="width: 100px;" class="text-center">External</th>
+                                            <th style="width: 80px;" class="text-center">Absent?</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for student in students %}
+                                            {% set mark = marks_map.get(student.enrollment_no) %}
+                                            <tr>
+                                                <td class="text-muted small">{{ loop.index }}</td>
+                                                <td class="fw-bold text-secondary">{{ student.enrollment_no }}</td>
+                                                <td>
+                                                    {{ student.last_name }} {{ student.first_name }}
+                                                    {% if student.father_name %}<span class="text-muted small">{{ student.father_name }}</span>{% endif %}
+                                                    <input type="hidden" name="student_ids" value="{{ student.enrollment_no }}">
+                                                </td>
+                                                <td>
+                                                    <input type="number" step="0.5" min="0" max="{{ current_limits.max_internal }}" 
+                                                           name="internal_{{ student.enrollment_no }}" 
+                                                           class="form-control form-control-sm text-center mark-input" 
+                                                           value="{{ mark.internal_marks if mark and mark.internal_marks is not none else '' }}"
+                                                           placeholder="-">
+                                                </td>
+                                                <td>
+                                                    <input type="number" step="0.5" min="0" max="{{ current_limits.max_external }}" 
+                                                           name="external_{{ student.enrollment_no }}" 
+                                                           class="form-control form-control-sm text-center mark-input" 
+                                                           value="{{ mark.external_marks if mark and mark.external_marks is not none else '' }}"
+                                                           placeholder="-">
+                                                </td>
+                                                <td class="text-center">
+                                                    <div class="form-check d-flex justify-content-center">
+                                                        <input class="form-check-input" type="checkbox" 
+                                                               name="absent_{{ student.enrollment_no }}" 
+                                                               {% if mark and mark.is_absent %}checked{% endif %}>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="card-footer bg-light sticky-bottom p-3 text-end border-top">
+                                <button type="reset" class="btn btn-outline-secondary me-2">Discard Changes</button>
+                                <button type="submit" class="btn btn-primary px-4">Save Marks</button>
+                            </div>
+                        {% endif %}
+                    </form>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+  </div>
+</div>
+
+<style>
+    /* Sticky header support */
+    .table-fixed-head thead th {
+        position: sticky;
+        top: 0;
+        background-color: #f8f9fa;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+    /* Input focus highlight */
+    .mark-input:focus {
+        background-color: #fff8e1;
+        border-color: #ffc107;
+        box-shadow: 0 0 0 0.2rem rgba(255, 193, 7, 0.25);
+    }
+</style>
+
+<script>
+    // Simple validation and auto-tabbing logic could go here
+    document.addEventListener('DOMContentLoaded', function() {
+        const inputs = document.querySelectorAll('.mark-input');
+        inputs.forEach(input => {
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // Move to next input
+                    const index = Array.from(inputs).indexOf(this);
+                    if (index > -1 && index < inputs.length - 1) {
+                        inputs[index + 1].focus();
+                    }
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}

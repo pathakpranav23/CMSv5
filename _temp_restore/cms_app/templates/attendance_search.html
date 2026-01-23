@@ -1,0 +1,120 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container-fluid">
+  <div class="section-header d-flex align-items-center justify-content-between mb-3">
+    {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+    {% set role_display_lower = (role_display or '')|lower %}
+    {% set role_display_pretty = ('Staff' if role_display_lower == 'faculty' else (role_display|capitalize)) %}
+    <h2 class="mb-0 title d-flex align-items-center">Attendance Search <span class="role-badge ms-2">{{ role_display_pretty }}</span></h2>
+    <div class="actions">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.dashboard') }}">Dashboard</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.attendance_mark') }}">Mark Attendance</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.attendance_show') }}">Show Attendance</a>
+    </div>
+  </div>
+
+  <form method="get" action="{{ url_for('main.attendance_search') }}" class="card mb-3">
+    <div class="card-header">Search Filters</div>
+    <div class="card-body row g-3">
+      <div class="col-md-5">
+        <label class="form-label">Student Name or Enrollment</label>
+        <input type="text" name="q" class="form-control" value="{{ q }}" placeholder="e.g., 23BCA001 or 'Amit'" required />
+      </div>
+      <div class="col-md-7">
+        <label class="form-label">Period</label>
+        <div class="d-flex flex-wrap gap-3">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="period" id="periodDate" value="date" {% if period_type=='date' %}checked{% endif %}>
+            <label class="form-check-label" for="periodDate">Date</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="period" id="periodWeek" value="week" {% if period_type=='week' %}checked{% endif %}>
+            <label class="form-check-label" for="periodWeek">Week</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="period" id="periodMonth" value="month" {% if period_type=='month' %}checked{% endif %}>
+            <label class="form-check-label" for="periodMonth">Month</label>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3 period-input period-date" {% if period_type!='date' %}style="display:none"{% endif %}>
+        <label class="form-label">Date</label>
+        <input type="date" name="date" class="form-control" value="{{ date_str or '' }}" />
+      </div>
+      <div class="col-md-3 period-input period-week" {% if period_type!='week' %}style="display:none"{% endif %}>
+        <label class="form-label">Week Start</label>
+        <input type="date" name="week_start" class="form-control" value="{{ week_start_str or '' }}" />
+      </div>
+      <div class="col-md-3 period-input period-month" {% if period_type!='month' %}style="display:none"{% endif %}>
+        <label class="form-label">Month</label>
+        <input type="month" name="month" class="form-control" value="{{ month_str or '' }}" />
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <button type="submit" class="btn btn-primary w-100">Search</button>
+      </div>
+    </div>
+  </form>
+
+  <div class="card">
+    <div class="card-header">Results{% if start_date and end_date %} — {{ start_date }} to {{ end_date }}{% endif %}</div>
+    <div class="card-body">
+      {% if results and results|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+          <thead>
+            <tr>
+              <th>Enrollment</th>
+              <th>Name</th>
+              <th>Semester</th>
+              <th>Division</th>
+              <th class="text-center">Entries</th>
+              <th class="text-center">Present</th>
+              <th class="text-center">Absent</th>
+              <th class="text-center">Present % (P+L)</th>
+              <th class="text-center">Absent %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in results %}
+            <tr>
+              <td>{{ r.student.enrollment_no }}</td>
+              <td>{{ (r.student.surname or '') ~ ' ' ~ (r.student.student_name or '') }}</td>
+              <td>{{ r.semester or '-' }}</td>
+              <td>{{ r.division or '-' }}</td>
+              <td class="text-center">{{ r.total }}</td>
+              <td class="text-center">{{ r.present }}</td>
+              <td class="text-center">{{ r.absent }}</td>
+              <td class="text-center">{% if r.present_pct is not none %}{{ '%.2f' % r.present_pct }}{% else %}-{% endif %}</td>
+              <td class="text-center">{% if r.absent_pct is not none %}{{ '%.2f' % r.absent_pct }}{% else %}-{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-muted">No results to display. Enter a search and period above.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+  // Toggle period inputs
+  (function(){
+    const radios = document.querySelectorAll('input[name="period"]');
+    const blocks = {
+      date: document.querySelector('.period-date'),
+      week: document.querySelector('.period-week'),
+      month: document.querySelector('.period-month'),
+    };
+    function update() {
+      const val = document.querySelector('input[name="period"]:checked')?.value || 'month';
+      Object.entries(blocks).forEach(([k, el]) => {
+        if (el) el.style.display = (k === val) ? '' : 'none';
+      });
+    }
+    radios.forEach(r => r.addEventListener('change', update));
+    update();
+  })();
+</script>
+{% endblock %}

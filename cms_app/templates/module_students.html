@@ -23,6 +23,7 @@
             <a class="list-group-item list-group-item-action" href="{{ url_for('main.students') }}">View Students</a>
             {% if (role or '') in ['admin','principal','clerk'] %}
               <a class="list-group-item list-group-item-action" href="{{ url_for('main.students_new') }}">Add Student</a>
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.student_subject_allocation') }}">Student Subject Allocation (Bulk)</a>
               <a class="list-group-item list-group-item-action" href="{{ url_for('main.students_import') }}">Bulk Import Students (Clerk)</a>
             {% endif %}
           </div>

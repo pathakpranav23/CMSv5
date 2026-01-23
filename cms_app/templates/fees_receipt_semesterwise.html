@@ -228,7 +228,11 @@
             if (mediumVal) params.set('medium', mediumVal);
             fetch(`${window.location.origin}/api/students/search?` + params.toString())
               .then(r => r.ok ? r.json() : Promise.reject())
-              .then(data => showSuggestions((data && data.items) || []))
+              .then(data => {
+                  // Handle api_success wrapper (data.data.items) or direct list (data.items)
+                  const items = (data && data.data && Array.isArray(data.data.items)) ? data.data.items : ((data && data.items) || []);
+                  showSuggestions(items);
+              })
               .catch(() => clearSuggestions());
           }, 220);
         });
@@ -277,7 +281,7 @@
         {% if student %}
         <div class="receipt-student">
           <strong>Student:</strong>
-          {{ ((student.student_name or '') ~ (student.father_name and (' ' ~ student.father_name) or '') ~ (student.surname and (' ' ~ student.surname) or ''))|trim }}
+          {{ ((student.first_name or '') ~ (student.father_name and (' ' ~ student.father_name) or '') ~ (student.last_name and (' ' ~ student.last_name) or ''))|trim }}
           {% set enr = student.enrollment_no or student.enrollment or filters.enrollment_no %}
           {% if enr %}<small>({{ enr }})</small>{% endif %}
         </div>

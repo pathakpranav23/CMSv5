@@ -1,0 +1,57 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex align-items-center justify-content-between mb-2">
+    <h3 class="mb-0 title">Programs</h3>
+    <div class="actions">
+      {% if (current_user.role|lower) == 'admin' %}
+        <a class="btn btn-primary" href="{{ url_for('main.program_new') }}">New Program</a>
+      {% endif %}
+    </div>
+  </div>
+  <p class="text-muted soft-hint">Manage academic programs and review their associated records.</p>
+
+  {% if rows|length == 0 %}
+    <div class="alert alert-info">No programs found.</div>
+  {% else %}
+    <div class="table-responsive">
+      <table class="table table-striped align-middle">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th class="text-center">Divisions</th>
+            <th class="text-center">Subjects</th>
+            <th class="text-center">Students</th>
+            <th class="text-center">Staff</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+            <tr>
+              <td>{{ r.program.program_name }}</td>
+              <td class="text-center">{{ r.divisions }}</td>
+              <td class="text-center">{{ r.subjects }}</td>
+              <td class="text-center">{{ r.students }}</td>
+              <td class="text-center">{{ r.faculty }}</td>
+              <td class="text-end">
+                {% if (current_user.role|lower) == 'admin' %}
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.program_edit', program_id=r.program.program_id) }}">Edit</a>
+                  <form method="post" action="{{ url_for('main.program_delete', program_id=r.program.program_id) }}" class="d-inline" onsubmit="return confirm('Delete this program? This cannot be undone.');">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                  </form>
+                {% else %}
+                  <span class="text-muted">Read-only</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+  <div class="mt-3">
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.module_admin') }}">Back to Admin</a>
+  </div>
+</div>
+{% endblock %}

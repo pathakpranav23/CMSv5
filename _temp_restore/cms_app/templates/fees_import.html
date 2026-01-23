@@ -1,0 +1,133 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title d-flex align-items-center">{{ t('Bulk Import Fees') }} <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions"></div>
+  </div>
+  <p class="text-muted">{{ t('Select a program and semester, download the sample, fill amounts for each fee head in the exact order below, then upload to import. Total is calculated automatically as the sum — do not add a "Total" head.') }}</p>
+
+  {% if errors %}
+    <div class="alert alert-danger">{{ t(errors|join(' ')) }}</div>
+  {% endif %}
+  {% if dry_run %}
+    <div class="alert alert-warning d-flex align-items-center" role="alert">
+      <i class="bi bi-shield-check me-2"></i>
+      <div>{{ t('Validation only — no changes saved.') }}</div>
+    </div>
+  {% endif %}
+  {% if messages %}
+    <div class="alert alert-success">{{ messages|join(' ') }}</div>
+  {% endif %}
+
+  <form method="get" class="row g-3 mb-3">
+    <div class="col-md-6">
+      <label for="program_id" class="form-label">{{ t('Program') }}</label>
+      {% set role_lower = (current_user.role or '')|lower %}
+      {% if role_lower in ['clerk','principal'] %}
+        <div class="form-control-plaintext">{{ selected_program and selected_program.program_name or (programs and programs[0].program_name) }}</div>
+        <input type="hidden" id="program_id" name="program_id" value="{{ (selected_program and selected_program.program_id) or (programs and programs[0].program_id) }}" />
+      {% else %}
+        <select class="form-select" id="program_id" name="program_id" required>
+          <option value="">{{ t('Select Program') }}</option>
+          {% for p in programs %}
+            <option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+      {% endif %}
+    </div>
+    <div class="col-md-3">
+      <label for="semester" class="form-label">{{ t('Semester') }}</label>
+      <select class="form-select" id="semester" name="semester" required>
+        <option value="">Select Semester</option>
+        {% for s in range(1,9) %}
+          <option value="{{ s }}" {% if semester == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% set prog_lower = (selected_program.program_name if selected_program else '')|lower %}
+    {% set show_medium = ('bcom' in prog_lower) or ('b.com' in prog_lower) %}
+    {% if show_medium %}
+      <div class="col-md-3">
+        <label for="medium" class="form-label">{{ t('Medium') }}</label>
+        <select class="form-select" id="medium" name="medium" required>
+          <option value="" {% if not medium %}selected{% endif %}>Common</option>
+          <option value="English" {% if (medium or '')|lower == 'english' %}selected{% endif %}>English</option>
+          <option value="Gujarati" {% if (medium or '')|lower == 'gujarati' %}selected{% endif %}>Gujarati</option>
+        </select>
+      </div>
+    {% endif %}
+    <div class="col-md-3 align-self-end">
+      <button type="submit" class="btn btn-primary w-100">{{ t('Set Scope') }}</button>
+    </div>
+  </form>
+
+  {% if selected_program and semester %}
+    <div class="card mb-4">
+      <div class="card-header card-header-standard"><div class="card-title">{{ t('Download Sample') }}</div></div>
+      <div class="card-body">
+        <p class="mb-2">{{ t('The sample includes only the standard heads in the exact sequence below. No additional heads will be accepted by the importer.') }}</p>
+        {% if show_medium %}
+          <a class="btn btn-outline-secondary" href="{{ url_for('main.fees_import_sample', program_id=selected_program.program_id, semester=semester, medium=medium or '') }}">{{ t('Download Sample Excel') }}</a>
+        {% else %}
+          <a class="btn btn-outline-secondary" href="{{ url_for('main.fees_import_sample', program_id=selected_program.program_id, semester=semester) }}">{{ t('Download Sample Excel') }}</a>
+        {% endif %}
+        {% if canonical_heads %}
+          <div class="mt-3">
+            <strong>{{ t('Expected Heads (in order):') }}</strong>
+            <ol class="mt-2">
+              {% for h in canonical_heads %}
+                <li>{{ h }}</li>
+              {% endfor %}
+            </ol>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header card-header-standard"><div class="card-title">{{ t('Upload Filled Excel') }}</div></div>
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data" class="row g-3">
+          <input type="hidden" name="program_id" value="{{ selected_program.program_id }}" />
+          <input type="hidden" name="semester" value="{{ semester }}" />
+          {% if show_medium %}
+            <input type="hidden" name="medium" value="{{ medium or '' }}" />
+          {% endif %}
+          <div class="col-md-8">
+            <label for="excel_file" class="form-label">{{ t('Excel File (.xlsx)') }}</label>
+            <input type="file" class="form-control" id="excel_file" name="excel_file" accept=".xlsx" required />
+          </div>
+          <div class="col-md-4 align-self-end">
+            <button type="submit" class="btn btn-success w-100">{{ t('Import Fees') }}</button>
+          </div>
+          <div class="col-12">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="feesDryRun" name="dry_run" value="1" {% if dry_run %}checked{% endif %}>
+              <label class="form-check-label" for="feesDryRun">{{ t('Dry-run (validate only)') }}</label>
+            </div>
+          </div>
+        </form>
+        {% if show_medium %}
+          <small class="text-muted d-block mt-2">Expected columns: Sr No | Description | Amount | Medium Tag | Notes (optional)</small>
+        {% else %}
+          <small class="text-muted d-block mt-2">{{ t('Expected columns: Sr No | Description | Amount | Notes (optional)') }}</small>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <p class="text-muted">{{ t('Select a program and semester to begin.') }}</p>
+  {% endif %}
+
+  <hr class="my-4" />
+  <div class="alert alert-info">
+    <strong>{{ t('Tip:') }}</strong> {{ t('If heads are empty for your scope, use Fee Heads to add or the seed-all button (admin/clerk) to pre-create heads for all programs and semesters.') }}
+  </div>
+  {% if current_user.role in ['Admin', 'Clerk'] %}
+    <form method="post" action="{{ url_for('main.fees_heads_seed_all') }}" onsubmit="return confirm('Seed all heads across programs and semesters?');">
+      <button type="submit" class="btn btn-outline-danger">{{ t('Seed All Heads') }}</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

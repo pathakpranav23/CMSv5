@@ -1,0 +1,107 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4" style="max-width:720px;">
+  <div class="section-header">
+    <h2 class="mb-0">Account Settings</h2>
+  </div>
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <p class="text-muted mb-3">Update your password and profile information.</p>
+
+      {% if errors and errors|length %}
+      <div class="alert alert-danger">
+        <ul class="mb-0">
+          {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+
+      {% if twofa_pending %}
+        <div class="alert alert-info">Enter the verification code sent to your email to confirm your password change.</div>
+        <form method="post">
+          <input type="hidden" name="action" value="verify_twofa" />
+          <div class="mb-3">
+            <label for="twofa_code" class="form-label">Verification Code</label>
+            <input type="text" id="twofa_code" name="twofa_code" class="form-control" placeholder="6-digit code" required />
+            <div class="form-text">Code expires in 10 minutes.</div>
+          </div>
+          <div class="d-flex justify-content-between align-items-center">
+            <a href="{{ url_for('main.account_settings') }}" class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">Verify & Update Password</button>
+          </div>
+        </form>
+      {% else %}
+        <form method="post">
+          <input type="hidden" name="action" value="start_change_password" />
+          <div class="mb-3">
+            <label for="current_password" class="form-label">Current Password</label>
+            <input type="password" id="current_password" name="current_password" class="form-control" required />
+          </div>
+          <div class="mb-3">
+            <label for="new_password" class="form-label">New Password</label>
+            <input type="password" id="new_password" name="new_password" class="form-control" required />
+            <div class="form-text">Minimum 6 characters.</div>
+          </div>
+          <div class="mb-3">
+            <label for="confirm_password" class="form-label">Confirm New Password</label>
+            <input type="password" id="confirm_password" name="confirm_password" class="form-control" required />
+          </div>
+          <div class="d-flex justify-content-between align-items-center">
+            <a href="{{ url_for('main.dashboard') }}" class="btn btn-outline-secondary">Back to Dashboard</a>
+            <button type="submit" class="btn btn-primary">Update Password</button>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <h5 class="card-title mb-2">Language Preference</h5>
+      <form method="post" class="row g-3 align-items-end">
+        <input type="hidden" name="action" value="set_language" />
+        <div class="col-md-6">
+          <label for="preferred_lang" class="form-label">Language</label>
+          <select id="preferred_lang" name="preferred_lang" class="form-select">
+            <option value="en" {% if (session.get('lang') or 'en') == 'en' %}selected{% endif %}>English</option>
+            <option value="gu" {% if (session.get('lang') or 'en') == 'gu' %}selected{% endif %}>Gujarati</option>
+          </select>
+        </div>
+        <div class="col-md-6 d-flex justify-content-end">
+          <button type="submit" class="btn btn-outline-primary">Save Language</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h5 class="card-title mb-2">Profile Information</h5>
+      {% if profile %}
+      <form method="post">
+        <input type="hidden" name="action" value="update_profile" />
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Full Name</label>
+            <input type="text" name="full_name" class="form-control" value="{{ profile.full_name or '' }}" required />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Email</label>
+            <input type="email" name="email" class="form-control" value="{{ profile.email or '' }}" />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Mobile</label>
+            <input type="text" name="mobile" class="form-control" value="{{ profile.mobile or '' }}" />
+          </div>
+        </div>
+        <div class="mt-3 d-flex justify-content-end">
+          <button type="submit" class="btn btn-outline-primary">Save Profile</button>
+        </div>
+      </form>
+      {% else %}
+        <p class="text-muted mb-0">No editable profile is linked to your account.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

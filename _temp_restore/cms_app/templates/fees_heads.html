@@ -1,0 +1,130 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title d-flex align-items-center">Fee Heads <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions"></div>
+  </div>
+  <form method="get" class="row g-3 mb-3">
+    <div class="col-md-6">
+      <label for="program_id" class="form-label">Program</label>
+      {% set role_lower = (current_user.role or '')|lower %}
+      {% if role_lower in ['clerk','principal'] %}
+        <div class="form-control-plaintext">{{ selected_program and selected_program.program_name or (programs and programs[0].program_name) }}</div>
+        <input type="hidden" id="program_id" name="program_id" value="{{ (selected_program and selected_program.program_id) or (programs and programs[0].program_id) }}" />
+      {% else %}
+        <select class="form-select" id="program_id" name="program_id" required>
+          <option value="">Select Program</option>
+          {% for p in programs %}
+            <option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+      {% endif %}
+    </div>
+    <div class="col-md-3">
+      <label for="semester" class="form-label">Semester</label>
+      <select class="form-select" id="semester" name="semester" required>
+        <option value="">Select Semester</option>
+        {% for s in range(1,9) %}
+          <option value="{{ s }}" {% if semester == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3 align-self-end">
+      <button type="submit" class="btn btn-primary w-100">Load Heads</button>
+    </div>
+  </form>
+
+  {% if errors %}
+    <div class="alert alert-danger">{{ errors|join(', ') }}</div>
+  {% endif %}
+  {% if messages %}
+    <div class="alert alert-success">{{ messages|join(' ') }}</div>
+  {% endif %}
+
+  {% if selected_program and semester %}
+    <div class="card mb-4">
+      <div class="card-header card-header-standard"><div class="card-title">Add New Head</div></div>
+      <div class="card-body">
+        <form method="post" class="row g-3">
+          <input type="hidden" name="program_id" value="{{ selected_program.program_id }}" />
+          <input type="hidden" name="semester" value="{{ semester }}" />
+          <input type="hidden" name="action" value="add" />
+          <div class="col-md-8">
+            <label for="component_name" class="form-label">Head Name</label>
+            <input type="text" class="form-control" id="component_name" name="component_name" placeholder="e.g. Tuition Fee" required />
+          </div>
+          <div class="col-md-4 align-self-end">
+            <button type="submit" class="btn btn-success w-100">Add Head</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header card-header-standard"><div class="card-title">Existing Heads</div></div>
+      <div class="card-body">
+        {% if heads and heads|length > 0 %}
+          <div class="table-responsive">
+            <table class="table table-striped">
+              <thead>
+                <tr>
+                  <th style="width:40%">Head</th>
+                  <th style="width:20%">Amount (sample)</th>
+                  <th style="width:40%">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for h in heads %}
+                <tr>
+                  <td>
+                    {% if h.present %}
+                      {{ h.name }} {% if h.extra %}<span class="badge text-bg-warning">Non-standard</span>{% endif %}
+                    {% else %}
+                      <span class="text-muted">{{ h.name }} (missing)</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ '%.2f'|format(h.amount) }}</td>
+                  <td>
+                    {% if h.present %}
+                    <form method="post" class="d-inline-flex gap-2">
+                      <input type="hidden" name="program_id" value="{{ selected_program.program_id }}" />
+                      <input type="hidden" name="semester" value="{{ semester }}" />
+                      <input type="hidden" name="component_name" value="{{ h.name }}" />
+                      <input type="hidden" name="action" value="rename" />
+                      <input type="text" class="form-control" name="new_name" placeholder="New name" required style="max-width: 240px;" />
+                      <button type="submit" class="btn btn-outline-primary">Rename</button>
+                    </form>
+                    <form method="post" class="d-inline-flex ms-2">
+                      <input type="hidden" name="program_id" value="{{ selected_program.program_id }}" />
+                      <input type="hidden" name="semester" value="{{ semester }}" />
+                      <input type="hidden" name="component_name" value="{{ h.name }}" />
+                      <input type="hidden" name="action" value="delete" />
+                      <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Delete this head?');">Delete</button>
+                    </form>
+                    {% else %}
+                    <form method="post" class="d-inline-flex">
+                      <input type="hidden" name="program_id" value="{{ selected_program.program_id }}" />
+                      <input type="hidden" name="semester" value="{{ semester }}" />
+                      <input type="hidden" name="component_name" value="{{ h.name }}" />
+                      <input type="hidden" name="action" value="add" />
+                      <button type="submit" class="btn btn-success">Add Head</button>
+                    </form>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="text-muted">No heads found for the selected program and semester.</p>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <p class="text-muted">Select a program and semester to manage fee heads.</p>
+  {% endif %}
+</div>
+{% endblock %}

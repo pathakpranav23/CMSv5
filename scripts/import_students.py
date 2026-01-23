@@ -40,8 +40,8 @@ HEADER_MAP: Dict[str, List[str]] = {
         "enrollment id",
     ],
     # Names (simplified to match frontend columns)
-    "surname": ["surname", "last name", "family name"],
-    "student_name": ["student name", "full name", "given name"],
+    "last_name": ["surname", "last name", "family name"],
+    "first_name": ["student name", "full name", "given name"],
     "father_name": ["father name", "father's name", "father’s name"],
     # Division & Semester
     "division_code": ["division", "div", "class", "section", "division name", "divison"],
@@ -234,8 +234,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                         pass
 
             # Student fields (use only provided columns; no composition)
-            surname = cell_to_str(data.get("surname"))
-            student_name = cell_to_str(data.get("student_name"))
+            surname = cell_to_str(data.get("last_name"))
+            student_name = cell_to_str(data.get("first_name"))
             mobile = cell_to_str(data.get("mobile"))
             father_name = cell_to_str(data.get("father_name"))
             gender = cell_to_str(data.get("gender")).capitalize()
@@ -292,8 +292,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                     enrollment_no=enrollment_no,
                     program_id_fk=program.program_id,
                     division_id_fk=division.division_id,
-                    surname=surname,
-                    student_name=student_name,
+                    last_name=surname,
+                    first_name=student_name,
                     father_name=father_name,
                     mobile=mobile,
                     date_of_birth=dob,
@@ -308,8 +308,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
             else:
                 student.program_id_fk = program.program_id
                 student.division_id_fk = division.division_id
-                student.surname = surname or student.surname
-                student.student_name = student_name or student.student_name
+                student.last_name = surname or student.last_name
+                student.first_name = student_name or student.first_name
                 student.mobile = mobile or student.mobile
                 student.father_name = father_name or student.father_name
                 student.date_of_birth = dob or student.date_of_birth
@@ -371,8 +371,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                     db.session.commit()
                 divisions_created += 1
 
-            surname = cell_to_str(data.get("surname"))
-            student_name = cell_to_str(data.get("student_name"))
+            surname = cell_to_str(data.get("last_name"))
+            student_name = cell_to_str(data.get("first_name"))
             mobile = cell_to_str(data.get("mobile"))
             father_name = cell_to_str(data.get("father_name"))
             gender = cell_to_str(data.get("gender")).capitalize()

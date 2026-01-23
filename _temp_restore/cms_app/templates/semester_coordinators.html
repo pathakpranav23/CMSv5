@@ -1,0 +1,136 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0 title d-flex align-items-center">Semester Coordinators <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <div class="actions">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.module_admin') }}">Admin Module</a>
+    </div>
+  </div>
+
+  <form method="get" class="row g-3 mb-3">
+    <div class="col-md-4">
+      <label class="form-label">Program</label>
+      <select name="program_id" class="form-select" required>
+        <option value="">Select Program</option>
+        {% for p in program_list %}
+          <option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Semester</label>
+      <select name="semester" class="form-select" required>
+        <option value="">Select</option>
+        {% for s in range(1, 9) %}
+          <option value="{{ s }}" {% if semester == s %}selected{% endif %}>Sem {{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Medium</label>
+      <select name="medium_tag" class="form-select">
+        <option value="" {% if not selected_medium %}selected{% endif %}>Not Applicable</option>
+        {% for m in available_mediums %}
+          <option value="{{ m }}" {% if selected_medium == m %}selected{% endif %}>{{ m }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">For single-medium programs, use "Not Applicable".</div>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Academic Year</label>
+      <select name="academic_year" class="form-select" required>
+        {% for ay in academic_year_options %}
+          <option value="{{ ay }}" {% if academic_year == ay %}selected{% endif %}>{{ ay }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 d-flex align-items-end gap-2">
+      <button type="submit" class="btn btn-primary">Apply</button>
+      <a href="{{ url_for('main.semester_coordinators') }}" class="btn btn-outline-secondary">Reset</a>
+    </div>
+  </form>
+
+  {% if not selected_program or not semester or not academic_year %}
+    <div class="alert alert-info">Select program, semester, and academic year to manage coordinators.</div>
+  {% else %}
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="card mb-3">
+          <div class="card-header card-header-standard">
+            <div class="card-title">Current Coordinators</div>
+          </div>
+          <div class="card-body p-0">
+            {% if coordinators %}
+              <div class="table-responsive">
+                <table class="table table-modern table-striped table-hover mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th scope="col">Staff</th>
+                      <th scope="col">Email</th>
+                      <th scope="col">Mobile</th>
+                      <th scope="col" class="text-end">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for c in coordinators %}
+                      <tr>
+                        <td>{{ c.name }}</td>
+                        <td>{{ c.email or '—' }}</td>
+                        <td>{{ c.mobile or '—' }}</td>
+                        <td class="text-end">
+                          <form method="post" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                            <input type="hidden" name="program_id" value="{{ selected_program.program_id }}" />
+                            <input type="hidden" name="semester" value="{{ semester }}" />
+                            <input type="hidden" name="medium_tag" value="{{ selected_medium or '' }}" />
+                            <input type="hidden" name="academic_year" value="{{ academic_year }}" />
+                            <input type="hidden" name="coordinator_id" value="{{ c.coordinator_id }}" />
+                            <button type="submit" name="action" value="remove" class="btn btn-sm btn-outline-danger">Remove</button>
+                          </form>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <div class="p-3 text-muted">No coordinators added yet for this scope.</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card mb-3">
+          <div class="card-header card-header-standard">
+            <div class="card-title">Assign Coordinator</div>
+          </div>
+          <div class="card-body">
+            <form method="post" class="row g-3">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <input type="hidden" name="program_id" value="{{ selected_program.program_id }}" />
+              <input type="hidden" name="semester" value="{{ semester }}" />
+              <input type="hidden" name="medium_tag" value="{{ selected_medium or '' }}" />
+              <input type="hidden" name="academic_year" value="{{ academic_year }}" />
+              <div class="col-12">
+                <label class="form-label">Staff</label>
+                <select name="faculty_user_id" class="form-select" required>
+                  <option value="">Select Staff</option>
+                  {% for f in faculty_choices %}
+                    <option value="{{ f.user_id_fk }}">{{ f.full_name }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">Staff list is filtered by program.</div>
+              </div>
+              <div class="col-12 d-flex justify-content-end">
+                <button type="submit" name="action" value="add" class="btn btn-primary">Add Coordinator</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

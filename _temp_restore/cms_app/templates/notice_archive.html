@@ -1,0 +1,85 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-2">
+    {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
+    <h2 class="mb-0 title d-flex align-items-center">Announcements Archive <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <form class="row g-2 align-items-end" method="get" action="{{ url_for('main.notice_archive') }}">
+      <div class="col-12 col-sm-auto">
+        <label class="form-label mb-0">From</label>
+        <input class="form-control form-control-sm w-100" type="date" name="from" value="{{ selected_from or '' }}">
+      </div>
+      <div class="col-12 col-sm-auto">
+        <label class="form-label mb-0">To</label>
+        <input class="form-control form-control-sm w-100" type="date" name="to" value="{{ selected_to or '' }}">
+      </div>
+      <div class="col-12 col-sm-auto">
+        <button class="btn btn-sm btn-primary w-100 w-sm-auto" type="submit">Apply</button>
+      </div>
+    </form>
+  </div>
+  <small class="text-muted soft-hint">Includes inactive and expired notices</small>
+
+  {% if announcements %}
+    <div class="vstack gap-3 mb-3">
+      {% for a in announcements %}
+        <div class="alert alert-{{ a.severity or 'info' }}" role="alert">
+          <div class="d-flex justify-content-between align-items-start">
+            <div class="me-3">
+              <h5 class="alert-heading mb-1">{{ a.title }}</h5>
+              <p class="mb-2">{{ a.message }}</p>
+              {% if a._attachments %}
+                <div class="mt-2">
+                  <span class="small fw-semibold">Attachments:</span>
+                  <ul class="list-unstyled mb-0">
+                    {% for att in a._attachments %}
+                      <li><a href="{{ att.url }}" target="_blank" rel="noopener">{{ att.name }}</a></li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+              <div class="small text-muted">
+                {% if a.created_at %}
+                  <span class="me-2">Posted: {{ a.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% endif %}
+                {% if a._creator_name %}
+                  <span class="me-2">By: {{ a._creator_name }}</span>
+                {% endif %}
+                {% if a.program_id_fk and a.program %}
+                  <span class="me-2">Program: {{ a.program.program_name }}</span>
+                {% else %}
+                  <span class="me-2">Program: All</span>
+                {% endif %}
+                <span class="me-2">Status: {{ a._status_label or 'Unknown' }}</span>
+                {% if a.start_at %}
+                  <span class="me-2">Start: {{ a.start_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% endif %}
+                {% if a.end_at %}
+                  <span>End: {{ a.end_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% endif %}
+              </div>
+            </div>
+            <span class="badge bg-{{ a.severity or 'info' }} text-uppercase">{{ (a.severity or 'info') }}</span>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="alert alert-info" role="alert">No announcements found for the selected filters.</div>
+  {% endif %}
+
+  {% if pagination %}
+    <nav aria-label="Archive pagination">
+      <ul class="pagination pagination-sm">
+        <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+          <a class="page-link" href="{{ url_for('main.notice_archive', from=selected_from, to=selected_to, page=(pagination.page-1), per_page=pagination.per_page) }}">Prev</a>
+        </li>
+        <li class="page-item disabled"><span class="page-link">Page {{ pagination.page }} of {{ pagination.pages }}</span></li>
+        <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+          <a class="page-link" href="{{ url_for('main.notice_archive', from=selected_from, to=selected_to, page=(pagination.page+1), per_page=pagination.per_page) }}">Next</a>
+        </li>
+      </ul>
+    </nav>
+  {% endif %}
+</div>
+{% endblock %}
