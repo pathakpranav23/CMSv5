@@ -5965,10 +5965,29 @@ def api_students_search():
         is_name_like = any(ch.isalpha() for ch in q)
     except Exception:
         is_name_like = False
+
+    # Check if 'limit=all' is requested (only allowed if context is provided to prevent dumping entire DB)
+    limit_arg = (request.args.get("limit") or "10").strip().lower()
+    
+    # Base query execution
+    stmt = query
     if is_name_like:
-        rows = db.session.execute(query.order_by(Student.last_name.asc(), Student.first_name.asc(), Student.enrollment_no.asc()).limit(10)).scalars().all()
+        stmt = stmt.order_by(Student.last_name.asc(), Student.first_name.asc(), Student.enrollment_no.asc())
     else:
-        rows = db.session.execute(query.order_by(Student.enrollment_no.asc()).limit(10)).scalars().all()
+        stmt = stmt.order_by(Student.enrollment_no.asc())
+
+    if limit_arg == "all" and (program_id_raw or semester_raw):
+        # Allow fetching all if we have at least some context
+        rows = db.session.execute(stmt).scalars().all()
+        limit_val = len(rows)
+    else:
+        # Default limited fetch
+        try:
+            limit_val = int(limit_arg)
+        except:
+            limit_val = 10
+        rows = db.session.execute(stmt.limit(limit_val)).scalars().all()
+
     program_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
     data = [
         {
@@ -5980,7 +5999,7 @@ def api_students_search():
         }
         for s in rows
     ]
-    return api_success({"items": data}, {"limit": 10})
+    return api_success({"items": data}, {"limit": limit_val})
 
 
 @main_bp.route("/students/new", methods=["GET", "POST"])

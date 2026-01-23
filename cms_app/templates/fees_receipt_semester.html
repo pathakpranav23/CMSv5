@@ -174,73 +174,96 @@
         const mediumVal = (cfgEl && cfgEl.dataset && cfgEl.dataset.medium) || '';
         const hasContext = Boolean(programId) && Boolean(semesterVal);
 
+        // Client-side cache for instant search
+        let allStudents = [];
+        let isLoaded = false;
+        let isLoading = false;
+
         // Gate search until program & semester are set
         if (!hasContext) {
           if (searchInput) {
             searchInput.disabled = true;
             searchInput.placeholder = 'Select program & semester to search';
           }
+        } else {
+            // Preload students immediately
+            loadStudents();
+        }
+
+        function loadStudents() {
+            if (isLoading || isLoaded) return;
+            isLoading = true;
+            if (searchInput) searchInput.placeholder = "Loading student list...";
+            
+            const params = new URLSearchParams();
+            if (programId) params.set('program_id', String(programId));
+            if (semesterVal) params.set('semester', String(semesterVal));
+            if (mediumVal) params.set('medium', mediumVal);
+            params.set('limit', 'all'); // Fetch EVERYONE for this semester
+
+            fetch(`${window.location.origin}/api/students/search?` + params.toString())
+            .then(r => r.ok ? r.json() : Promise.reject(r))
+            .then(data => {
+                const items = (data && data.data && Array.isArray(data.data.items)) ? data.data.items : ((data && data.items) || []);
+                allStudents = items;
+                isLoaded = true;
+                if (searchInput) {
+                    searchInput.placeholder = `Search in ${items.length} students...`;
+                    searchInput.disabled = false;
+                }
+            })
+            .catch(err => {
+                console.error("Failed to load students:", err);
+                if (searchInput) searchInput.placeholder = "Error loading list (Server Error)";
+            })
+            .finally(() => { isLoading = false; });
         }
 
         function clearSuggestions(){ suggBox.innerHTML = ''; suggBox.style.display = 'none'; }
+        
         function showSuggestions(items){
           if (!items || items.length === 0) { clearSuggestions(); return; }
           suggBox.innerHTML = '';
-          items.forEach(function(it){
+          // Limit display to 10 items to avoid UI lag
+          const displayItems = items.slice(0, 10);
+          
+          displayItems.forEach(function(it){
             const a = document.createElement('a');
             a.href = '#'; a.className = 'list-group-item list-group-item-action';
             a.innerHTML = `<div class="d-flex justify-content-between"><span><span class="fw-semibold">${it.name || '—'}</span><span class="text-muted small"> &middot; ${it.program_name || ''}</span><span class="badge bg-light text-dark ms-2">Sem ${it.semester || ''}</span></span><span class="badge bg-secondary">${it.enrollment_no}</span></div>`;
             a.addEventListener('click', function(ev){ ev.preventDefault(); enrInput.value = it.enrollment_no || ''; searchInput.value = it.name || ''; clearSuggestions(); });
             suggBox.appendChild(a);
           });
-          // Append a small "view all matches" link with same filters
-          const q = (searchInput.value || '').trim();
-          if (q.length >= 2) {
-            const link = document.createElement('a');
-            link.className = 'list-group-item list-group-item-action';
-            const params = new URLSearchParams();
-            if (programId) params.set('program_id', String(programId));
-            if (semesterVal) params.set('semester', String(semesterVal));
-            if (mediumVal) params.set('medium', (mediumVal || '').toLowerCase() || 'all');
-            // Route supports name or enrollment_no; choose based on query pattern
-            const isNameLike = /[a-zA-Z]/.test(q);
-            if (isNameLike) {
-              params.set('name', q);
-            } else {
-              params.set('enrollment_no', q);
-            }
-            link.href = studentsUrlBase + '?' + params.toString();
-            link.innerHTML = `<div class="d-flex justify-content-center"><span class="small text-primary">View all matches</span></div>`;
-            suggBox.appendChild(link);
+          
+          if (items.length > 10) {
+             const info = document.createElement('div');
+             info.className = 'list-group-item text-muted small text-center';
+             info.innerText = `...and ${items.length - 10} more matches`;
+             suggBox.appendChild(info);
           }
           suggBox.style.display = 'block';
         }
 
-        let debounceTimer;
-        searchInput.addEventListener('input', function(){
-          const q = (searchInput.value || '').trim();
-          if (debounceTimer) { clearTimeout(debounceTimer); }
-          if (q.length < 2) { clearSuggestions(); return; }
-          if (!hasContext) { clearSuggestions(); return; }
-          debounceTimer = setTimeout(function(){
-            const params = new URLSearchParams({ q: q });
-            if (programId) params.set('program_id', String(programId));
-            if (semesterVal) params.set('semester', String(semesterVal));
-            if (mediumVal) params.set('medium', mediumVal);
-            fetch(`${window.location.origin}/api/students/search?` + params.toString())
-              .then(r => r.ok ? r.json() : Promise.reject(r))
-              .then(data => {
-                  // Handle api_success wrapper (data.data.items) or direct list (data.items)
-                  const items = (data && data.data && Array.isArray(data.data.items)) ? data.data.items : ((data && data.items) || []);
-                  showSuggestions(items);
-              })
-              .catch((err) => {
-                 console.error("Search error:", err);
-                 suggBox.innerHTML = '<div class="list-group-item text-danger small">Search unavailable (Server Error)</div>';
-                 suggBox.style.display = 'block';
-              });
-          }, 220);
-        });
+        if (searchInput) {
+          searchInput.addEventListener('input', function(){
+            const q = (this.value || '').trim().toLowerCase();
+            if (q.length < 1) { clearSuggestions(); return; }
+
+            // Local filtering
+            const matches = allStudents.filter(s => {
+                const name = (s.name || '').toLowerCase();
+                const enr = (s.enrollment_no || '').toLowerCase();
+                return name.includes(q) || enr.includes(q);
+            });
+            showSuggestions(matches);
+          });
+
+          searchInput.addEventListener('focus', function(){
+             if (this.value.trim().length > 0) {
+                 this.dispatchEvent(new Event('input'));
+             }
+          });
+        }
 
         form.addEventListener('submit', function(ev){
           ev.preventDefault();
