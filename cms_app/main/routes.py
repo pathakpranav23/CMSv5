@@ -5902,8 +5902,7 @@ def students():
 @login_required
 # @cache.cached(timeout=120, query_string=True) # Disable cache to avoid PA issues
 def api_students_search():
-    try:
-        q = (request.args.get("q") or "").strip()
+    q = (request.args.get("q") or "").strip()
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
