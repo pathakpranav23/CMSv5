@@ -228,13 +228,17 @@
             if (semesterVal) params.set('semester', String(semesterVal));
             if (mediumVal) params.set('medium', mediumVal);
             fetch(`${window.location.origin}/api/students/search?` + params.toString())
-              .then(r => r.ok ? r.json() : Promise.reject())
+              .then(r => r.ok ? r.json() : Promise.reject(r))
               .then(data => {
                   // Handle api_success wrapper (data.data.items) or direct list (data.items)
                   const items = (data && data.data && Array.isArray(data.data.items)) ? data.data.items : ((data && data.items) || []);
                   showSuggestions(items);
               })
-              .catch(() => clearSuggestions());
+              .catch((err) => {
+                 console.error("Search error:", err);
+                 suggBox.innerHTML = '<div class="list-group-item text-danger small">Search unavailable (Server Error)</div>';
+                 suggBox.style.display = 'block';
+              });
           }, 220);
         });
 
