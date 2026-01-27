@@ -8811,12 +8811,25 @@ def attendance_mark():
 
     # Compute Roll No for roster (sequential by enrollment within loaded scope)
     if roster:
+        # Sort roster by roll_no (integers first, then None/Strings)
+        def roll_sort_key(r):
+            rn = r.get("roll_no")
+            if rn is None or rn == "" or rn == "-":
+                 return (1, 0) # Put at end
+            try:
+                return (0, int(rn))
+            except:
+                return (0, str(rn))
+        
+        roster.sort(key=roll_sort_key)
+
         # Debug: Flash the first student's roll number to verify what the app sees
         try:
             if current_user and current_user.is_authenticated and current_user.role == 'admin':
                 first_s = roster[0]
                 db_path = str(current_app.config.get('SQLALCHEMY_DATABASE_URI', 'Unknown'))
-                flash(f"DEBUG: Student {first_s['enrollment_no']} | Roll: '{first_s['roll_no']}' | DB: {db_path}", "info")
+                env_db = os.environ.get('DATABASE_URL', 'Not Set')
+                flash(f"DEBUG: Student {first_s['enrollment_no']} | Roll: '{first_s['roll_no']}' | DB: {db_path} | Env: {env_db}", "info")
         except Exception as e:
             # Fallback if debug fails
             # flash(f"Debug Error: {e}", "warning")
