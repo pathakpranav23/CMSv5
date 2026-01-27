@@ -8805,6 +8805,9 @@ def attendance_mark():
             roster.append({
                 "enrollment_no": s.enrollment_no,
                 "name": f"{s.last_name or ''} {s.first_name or ''}".strip(),
+                "first_name": s.first_name,
+                "last_name": s.last_name,
+                "father_name": s.father_name,
                 "division_id": s.division_id_fk,
                 "roll_no": r_no
             })
