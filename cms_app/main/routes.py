@@ -8797,46 +8797,57 @@ def attendance_mark():
     elif selected_division_id:
         # Fallback: all students in division
         stu_rows = db.session.execute(select(Student).filter_by(division_id_fk=selected_division_id).order_by(Student.enrollment_no)).scalars().all()
-        roster = [{"enrollment_no": s.enrollment_no, "name": f"{s.last_name or ''} {s.first_name or ''}".strip(), "division_id": s.division_id_fk} for s in stu_rows]
+        roster = [{"enrollment_no": s.enrollment_no, "name": f"{s.last_name or ''} {s.first_name or ''}".strip(), "division_id": s.division_id_fk, "roll_no": getattr(s, "roll_no", None)} for s in stu_rows]
 
     # Compute Roll No for roster (sequential by enrollment within loaded scope)
     if roster:
         try:
-            # Compute roll numbers
-            # Continuous policy: per-program+semester mapping 1..N (ignores division)
-            # Fallback: per-division sequential numbering
-            continuous = bool(current_app.config.get("ROLLS_CONTINUOUS_PER_PROGRAM_SEM", False))
-            cont_map_cache = {}
+            # If roll_no is already present in database (from Student.roll_no), use it.
+            # Otherwise, fallback to dynamic computation or sequential index.
+            pass_through = True
             for r in roster:
-                enr = r.get("enrollment_no")
-                try:
-                    stu = db.session.get(Student, enr)
-                except Exception:
-                    stu = None
-                pid = getattr(stu, "program_id_fk", None) if stu else None
-                sem = getattr(stu, "current_semester", None) if stu else None
-                if continuous and pid and sem:
-                    key = (pid, sem)
-                    if key not in cont_map_cache:
-                        try:
-                            rows = db.session.execute(
-                                select(Student)
-                                .filter_by(program_id_fk=pid)
-                                .filter_by(current_semester=sem)
-                                .order_by(Student.enrollment_no.asc())
-                            ).scalars().all()
-                            m = {}
-                            for idx2, s in enumerate(rows, start=1):
-                                m[s.enrollment_no] = idx2
-                            cont_map_cache[key] = m
-                        except Exception:
-                            cont_map_cache[key] = {}
-                    r["roll_no"] = cont_map_cache.get(key, {}).get(enr)
-            # Fallback: for any student without roll_no assigned, use per-division sequential
-            roster.sort(key=lambda r: r.get("enrollment_no"))
-            for idx, r in enumerate(roster, start=1):
-                if r.get("roll_no") is None:
-                    r["roll_no"] = idx
+                 if r.get("roll_no") is None:
+                     pass_through = False
+                     break
+            
+            if not pass_through:
+                # Fallback logic only if database roll_nos are missing
+                continuous = bool(current_app.config.get("ROLLS_CONTINUOUS_PER_PROGRAM_SEM", False))
+                cont_map_cache = {}
+                for r in roster:
+                    if r.get("roll_no") is not None:
+                        continue
+                    
+                    enr = r.get("enrollment_no")
+                    try:
+                        stu = db.session.get(Student, enr)
+                    except Exception:
+                        stu = None
+                    pid = getattr(stu, "program_id_fk", None) if stu else None
+                    sem = getattr(stu, "current_semester", None) if stu else None
+                    if continuous and pid and sem:
+                        key = (pid, sem)
+                        if key not in cont_map_cache:
+                            try:
+                                rows = db.session.execute(
+                                    select(Student)
+                                    .filter_by(program_id_fk=pid)
+                                    .filter_by(current_semester=sem)
+                                    .order_by(Student.enrollment_no.asc())
+                                ).scalars().all()
+                                m = {}
+                                for idx2, s in enumerate(rows, start=1):
+                                    m[s.enrollment_no] = idx2
+                                cont_map_cache[key] = m
+                            except Exception:
+                                cont_map_cache[key] = {}
+                        r["roll_no"] = cont_map_cache.get(key, {}).get(enr)
+                
+                # Final fallback: for any student still without roll_no, use per-division sequential
+                roster.sort(key=lambda r: r.get("enrollment_no"))
+                for idx, r in enumerate(roster, start=1):
+                    if r.get("roll_no") is None:
+                        r["roll_no"] = idx
         except Exception:
             # In case of any unexpected data, skip roll numbering gracefully
             pass
