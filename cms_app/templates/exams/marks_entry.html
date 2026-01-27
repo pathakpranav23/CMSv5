@@ -58,8 +58,29 @@
                             Max Ext: <strong>{{ scheme.max_external_marks }}</strong>
                         </div>
                     </div>
-                    <!-- Quick Filter Input -->
-                    <input type="text" id="marksSearchInput" class="form-control form-control-sm" placeholder="Filter by Name or Enrollment..." onkeyup="filterMarksRows()">
+                    <!-- Filters Row -->
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            <select id="divisionFilter" class="form-select form-select-sm" onchange="filterMarksRows()">
+                                <option value="">All Divisions</option>
+                                {% if division_map %}
+                                    {% for div_id, div_code in division_map.items() %}
+                                        <option value="{{ div_code }}">Division {{ div_code }}</option>
+                                    {% endfor %}
+                                {% endif %}
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <select id="mediumFilter" class="form-select form-select-sm" onchange="filterMarksRows()">
+                                <option value="">All Mediums</option>
+                                <option value="English">English</option>
+                                <option value="Gujarati">Gujarati</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <input type="text" id="marksSearchInput" class="form-control form-control-sm" placeholder="Filter by Name or Enrollment..." onkeyup="filterMarksRows()">
+                        </div>
+                    </div>
                 </div>
                 <div class="card-body p-0">
                     <form method="post" action="{{ url_for('exams.save_marks', scheme_id=scheme.scheme_id) }}" id="marksForm">
@@ -88,7 +109,7 @@
                                     <tbody>
                                         {% for student in students %}
                                             {% set mark = marks_map.get(student.enrollment_no) %}
-                                            <tr>
+                                            <tr data-division="{{ division_map.get(student.division_id_fk, '') }}" data-medium="{{ student.medium_tag or '' }}">
                                                 <td class="text-muted small">{{ loop.index }}</td>
                                                 <td class="fw-bold text-secondary">{{ student.enrollment_no }}</td>
                                                 <td>
@@ -155,6 +176,10 @@
     function filterMarksRows() {
         const input = document.getElementById('marksSearchInput');
         const filter = input.value.toUpperCase();
+        
+        const divFilter = document.getElementById('divisionFilter').value;
+        const medFilter = document.getElementById('mediumFilter').value;
+
         const table = document.querySelector('.table');
         if (!table) return;
         const rows = table.getElementsByTagName('tr');
@@ -162,6 +187,22 @@
         // Start from 1 to skip header
         for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
+            
+            // 1. Filter by Division
+            const rowDiv = row.getAttribute('data-division') || '';
+            if (divFilter && rowDiv !== divFilter) {
+                row.style.display = "none";
+                continue;
+            }
+            
+            // 2. Filter by Medium
+            const rowMed = row.getAttribute('data-medium') || '';
+            if (medFilter && rowMed !== medFilter) {
+                row.style.display = "none";
+                continue;
+            }
+            
+            // 3. Filter by Search Text (Enrollment or Name)
             // Columns: 1=Enrollment, 2=Name (0 is #)
             const enrollmentCell = row.getElementsByTagName('td')[1];
             const nameCell = row.getElementsByTagName('td')[2];

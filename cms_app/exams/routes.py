@@ -175,6 +175,15 @@ def marks_entry(scheme_id):
             )
             existing_marks = db.session.execute(q_marks).scalars().all()
             marks_map = {m.student_id_fk: m for m in existing_marks}
+
+    # Fetch divisions for mapping
+    divisions = db.session.execute(
+        select(Division).filter_by(
+            program_id_fk=scheme.program_id_fk,
+            semester=scheme.semester
+        )
+    ).scalars().all()
+    division_map = {d.division_id: d.division_code for d in divisions}
         
     return render_template(
         "exams/marks_entry.html",
@@ -184,7 +193,8 @@ def marks_entry(scheme_id):
         selected_subject=selected_subject,
         students=students,
         marks_map=marks_map,
-        current_limits=current_limits
+        current_limits=current_limits,
+        division_map=division_map
     )
 
 @exams_bp.route("/academics/exams/<int:scheme_id>/save-marks", methods=["POST"])
