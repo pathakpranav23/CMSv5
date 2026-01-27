@@ -17,6 +17,10 @@ This logbook tracks daily changes, updates, and fixes applied to the CMSv5 ERP s
 
 ### Admin Access
 - **Credential Reset**: Reset Admin password to default (`admin` / `admin123`) via `scripts/seed_users.py` and synced to production.
+- **Attendance Marking Fixes**: 
+  - Resolved an issue where admins could not mark attendance due to missing context (subject, division, date) in the POST request. Added hidden fields to `attendance_mark.html` to preserve this data.
+  - Added **Program Selector** for Admins in `attendance_mark.html`. Previously, admins could not filter subjects by program, causing confusion and potential roster loading issues. Now, changing the program reloads the subject list contextually.
+
 
 ---
 

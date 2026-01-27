@@ -152,6 +152,33 @@
 </style>
 
 <script>
+    function filterMarksRows() {
+        const input = document.getElementById('marksSearchInput');
+        const filter = input.value.toUpperCase();
+        const table = document.querySelector('.table');
+        if (!table) return;
+        const rows = table.getElementsByTagName('tr');
+
+        // Start from 1 to skip header
+        for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            // Columns: 1=Enrollment, 2=Name (0 is #)
+            const enrollmentCell = row.getElementsByTagName('td')[1];
+            const nameCell = row.getElementsByTagName('td')[2];
+            
+            if (enrollmentCell && nameCell) {
+                const enrollment = enrollmentCell.textContent || enrollmentCell.innerText;
+                const name = nameCell.textContent || nameCell.innerText;
+                
+                if (enrollment.toUpperCase().indexOf(filter) > -1 || name.toUpperCase().indexOf(filter) > -1) {
+                    row.style.display = "";
+                } else {
+                    row.style.display = "none";
+                }
+            }
+        }
+    }
+
     // Simple validation and auto-tabbing logic could go here
     document.addEventListener('DOMContentLoaded', function() {
         const inputs = document.querySelectorAll('.mark-input');

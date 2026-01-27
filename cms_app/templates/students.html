@@ -121,16 +121,8 @@
       </tr>
     </thead>
     <tbody>
-      {% set ns = namespace(cur_sem=None, roll=0) %}
       {% for s in students %}
       {% set sem_div = division_map.get(s.division_id_fk) %}
-      {% set row_sem = sem_div[0] if sem_div else s.current_semester %}
-      {% if ns.cur_sem != row_sem %}
-        {% set ns.cur_sem = row_sem %}
-        {% set ns.roll = 1 %}
-      {% else %}
-        {% set ns.roll = ns.roll + 1 %}
-      {% endif %}
       <tr>
         <td>{{ loop.index }}</td>
         <td>
@@ -143,7 +135,7 @@
           {% endif %}
         </td>
         <td><a href="{{ url_for('main.students_show', enrollment_no=s.enrollment_no) }}">{{ s.enrollment_no }}</a></td>
-        <td>{{ ns.roll }}</td>
+        <td>{{ s.roll_no or '-' }}</td>
         <td>{{ s.last_name }}</td>
         <td>{{ s.first_name }}</td>
         <td>{{ s.father_name }}</td>
@@ -187,4 +179,25 @@
 {% else %}
 <p class="text-muted">No student data yet. Import the provided Excel files to populate the database.</p>
 {% endif %}
+
+<script>
+function filterStudents() {
+  var input, filter, table, tr, td, i, txtValue;
+  input = document.getElementById("clientSearchInput");
+  filter = input.value.toUpperCase();
+  table = document.querySelector(".table");
+  tr = table.getElementsByTagName("tr");
+  
+  // Start from 1 to skip header
+  for (i = 1; i < tr.length; i++) {
+    // Search in all columns
+    var rowContent = tr[i].textContent || tr[i].innerText;
+    if (rowContent.toUpperCase().indexOf(filter) > -1) {
+      tr[i].style.display = "";
+    } else {
+      tr[i].style.display = "none";
+    }
+  }
+}
+</script>
 {% endblock %}

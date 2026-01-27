@@ -5778,7 +5778,7 @@ def students():
     limit_raw = (request.args.get("limit") or "20").strip()
     page_raw = (request.args.get("page") or "1").strip()
     try:
-        selected_limit = max(5, min(100, int(limit_raw)))
+        selected_limit = max(5, min(500, int(limit_raw)))
     except ValueError:
         selected_limit = 20
     try:
@@ -8912,6 +8912,7 @@ def attendance_mark():
     return render_template(
         "attendance_mark.html",
         options=options,
+        programs=programs,
         subject=subject,
         division=division,
         schedule=schedule,
@@ -8919,6 +8920,7 @@ def attendance_mark():
         errors=errors,
         roster_alert=roster_alert,
         selected={
+            "program_id": selected_program_id,
             "subject_id": selected_subject_id,
             "division_id": selected_division_id,
             "academic_year": selected_year,

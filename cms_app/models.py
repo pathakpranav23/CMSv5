@@ -93,6 +93,7 @@ class Student(db.Model):
     email = db.Column(db.String(128))
     mobile = db.Column(db.String(20))
     # New fields
+    roll_no = db.Column(db.String(20))
     gender = db.Column(db.String(16))
     photo_url = db.Column(db.String(255))
     permanent_address = db.Column(db.String(255))

@@ -26,6 +26,17 @@
   <form method="get" action="" class="card mb-3">
     <div class="card-header">Select Context</div>
     <div class="card-body row g-3">
+      {% if programs %}
+      <div class="col-md-3">
+        <label class="form-label">Program</label>
+        <select name="program_id" class="form-select" onchange="this.form.submit()">
+          <option value="">Select Program...</option>
+          {% for p in programs %}
+            <option value="{{ p.program_id }}" {% if selected.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
       <div class="col-md-2">
         <label class="form-label">Semester</label>
         <select name="semester" class="form-select" id="markSemester">
@@ -149,6 +160,13 @@
     </div>
     <div class="col-lg-8">
       <form method="post" action="" class="card">
+        <!-- Preserve context for POST -->
+        <input type="hidden" name="program_id" value="{{ selected.program_id or '' }}">
+        <input type="hidden" name="subject_id" value="{{ selected.subject_id or '' }}">
+        <input type="hidden" name="division_id" value="{{ selected.division_id or '' }}">
+        <input type="hidden" name="academic_year" value="{{ selected.academic_year or '' }}">
+        <input type="hidden" name="date" value="{{ selected.date }}">
+        
         <div class="card-header d-flex align-items-center justify-content-between">
           <span>Roster{% if subject %}: {{ subject.subject_name }}{% endif %}{% if division %} — {{ division.division_code }}{% endif %} — {{ selected.date }}</span>
           <div class="d-flex gap-2">

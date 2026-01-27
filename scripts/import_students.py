@@ -29,15 +29,17 @@ HEADER_MAP: Dict[str, List[str]] = {
         "enrollment",
         "enrollment #",
         "enrollment no.",
-        "roll no",
-        "rollno",
-        "roll number",
         "sr",
         "sr.",
         "seat no",
         "prn",
         "student id",
         "enrollment id",
+    ],
+    "roll_no": [
+        "roll no",
+        "rollno",
+        "roll number",
     ],
     # Names (simplified to match frontend columns)
     "last_name": ["surname", "last name", "family name"],
@@ -92,8 +94,15 @@ def load_program_mediums() -> Dict[str, Dict[str, List[str]]]:
 
 
 def find_semester_from_filename(path: str) -> int:
-    m = re.search(r"sem\s*(\d+)", path, flags=re.IGNORECASE)
-    return int(m.group(1)) if m else 0
+    """
+    Tries to guess semester from filename like 'BCA Sem 1.xlsx' or 'Semester 4'.
+    Returns 0 if not found.
+    """
+    # Look for 'sem' or 'semester' followed optionally by space, then digits
+    m = re.search(r"(?:sem|semester)\s*(\d+)", path, flags=re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    return 0
 
 
 def detect_program_from_filename(path: str) -> str:
@@ -177,8 +186,16 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
     created = 0
     updated = 0
     skipped = 0
+    deleted = 0
     divisions_created = 0
     errors: List[str] = []
+
+    # Get all existing students for this program and semester (for potential deletion)
+    existing_students = db.session.execute(
+        select(Student).filter_by(program_id_fk=program.program_id, current_semester=semester)
+    ).scalars().all()
+    existing_enrollments = {s.enrollment_no for s in existing_students}
+    processed_enrollments = set()
 
     cfg = load_program_mediums()
     try:
@@ -200,6 +217,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                 skipped += 1
                 errors.append(f"Row {row_idx}: missing enrollment_no; skipped")
                 continue
+
+            processed_enrollments.add(enrollment_no)
 
             # Division (respect per-program planning)
             division_code = cell_to_str(data.get("division_code")) or "A"
@@ -285,6 +304,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                         pass
 
             current_semester = semester or to_int(data.get("current_semester"))
+            roll_no = cell_to_str(data.get("roll_no"))
 
             student = db.session.execute(select(Student).filter_by(enrollment_no=enrollment_no)).scalars().first()
             if not student:
@@ -302,6 +322,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                     photo_url=photo_url,
                     permanent_address=permanent_address,
                     current_semester=current_semester,
+                    roll_no=roll_no,
                 )
                 db.session.add(student)
                 created += 1
@@ -317,6 +338,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                 student.photo_url = photo_url or student.photo_url
                 student.permanent_address = permanent_address or student.permanent_address
                 student.current_semester = current_semester or student.current_semester
+                if roll_no:
+                    student.roll_no = roll_no
                 updated += 1
             # Assign medium with BCom defaulting to General when absent
             try:
@@ -352,6 +375,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                 skipped += 1
                 errors.append(f"Row {r+1}: missing enrollment_no; skipped")
                 continue
+            
+            processed_enrollments.add(enrollment_no)
 
             division_code = cell_to_str(data.get("division_code")) or "A"
             division = db.session.execute(select(Division).filter_by(program_id_fk=program.program_id, semester=semester, division_code=division_code)).scalars().first()
@@ -462,16 +487,26 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                 student.medium_tag = medium_tag or (student.medium_tag or None)
                 errors.append(f"Row {r+1}: failed to compute medium_tag due to data format")
 
+    # Delete students that are in DB for this Program+Semester but NOT in the Excel file
+    students_to_delete = existing_enrollments - processed_enrollments
+    for enr in students_to_delete:
+        if enr:
+            s_to_del = db.session.execute(select(Student).filter_by(enrollment_no=enr)).scalars().first()
+            if s_to_del:
+                db.session.delete(s_to_del)
+                deleted += 1
+
     if not dry_run:
         db.session.commit()
     else:
         db.session.rollback()
-    print(f"Imported from {path}: created={created}, updated={updated}, skipped={skipped}, divisions_created={divisions_created}, errors={len(errors)}")
+    print(f"Imported from {path}: created={created}, updated={updated}, skipped={skipped}, deleted={deleted}, divisions_created={divisions_created}, errors={len(errors)}")
     # Return a detailed report for UI display
     return {
         "created": created,
         "updated": updated,
         "skipped": skipped,
+        "deleted": deleted,
         "errors_count": len(errors),
         "errors": errors,
         "divisions_created": divisions_created,

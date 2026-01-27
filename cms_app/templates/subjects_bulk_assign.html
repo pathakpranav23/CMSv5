@@ -144,5 +144,35 @@
       </div>
     </form>
   {% endif %}
+<script>
+function filterSubjects() {
+  var input, filter, table, tr, td, i, txtValue;
+  input = document.getElementById("subjectSearchInput");
+  filter = input.value.toUpperCase();
+  table = document.querySelector(".table");
+  tr = table.getElementsByTagName("tr");
+  
+  // Start from 1 to skip header (index 0 is the header row)
+  // Actually, header is in <thead>, rows are in <tbody>. 
+  // table.getElementsByTagName("tr") returns all rows including header.
+  // But if we use querySelector("tbody").getElementsByTagName("tr") it is safer.
+  
+  var tbody = table.querySelector("tbody");
+  var rows = tbody.getElementsByTagName("tr");
+
+  for (i = 0; i < rows.length; i++) {
+    // Subject name is in the first cell (index 0)
+    td = rows[i].getElementsByTagName("td")[0];
+    if (td) {
+      txtValue = td.textContent || td.innerText;
+      if (txtValue.toUpperCase().indexOf(filter) > -1) {
+        rows[i].style.display = "";
+      } else {
+        rows[i].style.display = "none";
+      }
+    }
+  }
+}
+</script>
 </div>
 {% endblock %}
