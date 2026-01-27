@@ -11,6 +11,30 @@
   {% if role_display_lower in ['admin','principal','clerk'] %}
     <div class="small text-muted" data-bs-toggle="tooltip" data-bs-placement="right" title="Admins see all programs. Principals/Clerks are scoped to their program. Manage divisions per semester with capacity and codes.">Admin: Elevated access on this module.</div>
   {% endif %}
+
+  {% if programs %}
+  <div class="card mb-3 bg-light">
+    <div class="card-body py-2">
+      <form method="get" class="row g-2 align-items-center">
+        <div class="col-auto">
+          <label for="program_id" class="col-form-label fw-bold">{{ t('Select Program Scope') }}:</label>
+        </div>
+        <div class="col-auto">
+          <select name="program_id" id="program_id" class="form-select form-select-sm" onchange="this.form.submit()">
+            <option value="">-- {{ t('Select Program') }} --</option>
+            {% for p in programs %}
+            <option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-auto">
+             <span class="text-muted small">{{ t('Select a program to enable rebalancing and planning.') }}</span>
+        </div>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
   <p class="text-muted soft-hint">{{ t('Manage divisions/sections per program and semester.') }}</p>
 
   <!-- Usage Summary -->
@@ -58,7 +82,10 @@
             <a class="list-group-item list-group-item-action" href="{{ url_for('main.divisions_list') }}">{{ t('View Divisions') }}</a>
             <a class="list-group-item list-group-item-action" href="{{ url_for('main.division_new') }}">{{ t('Add Division') }}</a>
             <form method="post" action="{{ url_for('main.divisions_rebalance') }}" class="mt-2">
-              <button type="submit" class="btn btn-sm btn-outline-warning">{{ t('Rebalance Divisions & Roll Nos') }}</button>
+              {% if selected_program %}
+              <input type="hidden" name="program_id" value="{{ selected_program.program_id }}">
+              {% endif %}
+              <button type="submit" class="btn btn-sm btn-outline-warning" {% if not selected_program %}disabled title="{{ t('Select a program first') }}"{% endif %}>{{ t('Rebalance Divisions & Roll Nos') }}</button>
             </form>
           </div>
         </div>

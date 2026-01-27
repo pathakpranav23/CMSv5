@@ -11521,6 +11521,7 @@ def fees_structure_compare():
 @login_required
 @role_required("admin", "principal", "clerk")
 def module_divisions():
+    from ..models import ProgramDivisionPlan, Program
     role = (getattr(current_user, "role", "") or "").strip().lower()
     try:
         user_program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
@@ -11535,6 +11536,11 @@ def module_divisions():
         selected_program_id = None
     if role in ("principal", "clerk"):
         selected_program_id = user_program_id
+    
+    programs = []
+    if role == "admin":
+        programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+
     q = select(Division)
     if selected_program_id:
         q = q.filter_by(program_id_fk=selected_program_id)
@@ -11551,7 +11557,6 @@ def module_divisions():
         total_enrolled += enrolled
     overall_pct = round((total_enrolled * 100.0 / total_capacity), 1) if total_capacity else None
     # Load existing planning for this program
-    from ..models import ProgramDivisionPlan, Program
     plans = []
     selected_program = None
     if selected_program_id:
@@ -11569,6 +11574,7 @@ def module_divisions():
         usage_summary={"total_capacity": total_capacity, "total_enrolled": total_enrolled, "overall_pct": overall_pct},
         division_plans=plans,
         selected_program=selected_program,
+        programs=programs,
     )
 
 
@@ -11790,7 +11796,7 @@ def divisions_rebalance():
         db.session.commit()
 
     flash("Divisions rebalanced using program-specific planning.", "success")
-    return redirect(url_for("main.divisions_list"))
+    return redirect(url_for("main.module_divisions", program_id=program_id))
 
     # Programs to process
     if program_id:
