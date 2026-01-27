@@ -194,20 +194,19 @@
               <table class="table table-sm table-hover mb-0">
                 <thead class="table-light">
                   <tr>
-                    <th scope="col" class="text-center">Sr#</th>
-                    <th scope="col" class="text-center">Roll No</th>
-                    <th scope="col" class="text-nowrap">Enrollment</th>
-                    <th scope="col">Name</th>
-                    <th scope="col" class="text-center">Status</th>
+                    <th scope="col" class="text-center" style="width: 10%;">Roll No</th>
+                    <th scope="col">Student</th>
+                    <th scope="col" class="text-center" style="width: 30%;">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {% for r in roster %}
-                    <tr>
-                      <td class="text-center">{{ loop.index }}</td>
-                      <td class="text-center">{{ r.roll_no or '-' }}</td>
-                      <td class="text-nowrap">{{ r.enrollment_no }}</td>
-                      <td>{{ r.name }}</td>
+                    <tr class="align-middle">
+                      <td class="text-center fw-bold">{{ r.roll_no or '-' }}</td>
+                      <td>
+                        <div class="fw-bold">{{ r.name }}</div>
+                        <div class="small text-muted font-monospace">{{ r.enrollment_no }}</div>
+                      </td>
                       <td class="text-center">
                         <div class="btn-group btn-group-sm" role="group">
                           <input type="radio" class="btn-check" name="status_{{ r.enrollment_no }}" id="p_{{ r.enrollment_no }}" value="P" checked>
