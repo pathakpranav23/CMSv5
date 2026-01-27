@@ -8812,10 +8812,15 @@ def attendance_mark():
     # Compute Roll No for roster (sequential by enrollment within loaded scope)
     if roster:
         # Debug: Flash the first student's roll number to verify what the app sees
-        if current_user.role == 'admin':
-            first_s = roster[0]
-            db_path = current_app.config.get('SQLALCHEMY_DATABASE_URI', 'Unknown')
-            flash(f"DEBUG: Student {first_s['enrollment_no']} | Roll: '{first_s['roll_no']}' | DB: {db_path}", "info")
+        try:
+            if current_user and current_user.is_authenticated and current_user.role == 'admin':
+                first_s = roster[0]
+                db_path = str(current_app.config.get('SQLALCHEMY_DATABASE_URI', 'Unknown'))
+                flash(f"DEBUG: Student {first_s['enrollment_no']} | Roll: '{first_s['roll_no']}' | DB: {db_path}", "info")
+        except Exception as e:
+            # Fallback if debug fails
+            # flash(f"Debug Error: {e}", "warning")
+            pass
 
     errors = []
     if request.method == "POST":
