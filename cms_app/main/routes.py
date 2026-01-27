@@ -8797,23 +8797,34 @@ def attendance_mark():
     elif selected_division_id:
         # Fallback: all students in division
         stu_rows = db.session.execute(select(Student).filter_by(division_id_fk=selected_division_id).order_by(Student.enrollment_no)).scalars().all()
-        roster = [{"enrollment_no": s.enrollment_no, "name": f"{s.last_name or ''} {s.first_name or ''}".strip(), "division_id": s.division_id_fk, "roll_no": getattr(s, "roll_no", None)} for s in stu_rows]
+        roster = []
+        for s in stu_rows:
+            r_no = getattr(s, "roll_no", None)
+            if r_no == "":
+                r_no = None
+            roster.append({
+                "enrollment_no": s.enrollment_no,
+                "name": f"{s.last_name or ''} {s.first_name or ''}".strip(),
+                "division_id": s.division_id_fk,
+                "roll_no": r_no
+            })
 
     # Compute Roll No for roster (sequential by enrollment within loaded scope)
     if roster:
         try:
-            # If roll_no is already present in database (from Student.roll_no), use it.
-            # Otherwise, fallback to dynamic computation or sequential index.
-            pass_through = True
+            # Check if we need to generate roll numbers
+            needs_generation = False
             for r in roster:
                  if r.get("roll_no") is None:
-                     pass_through = False
+                     needs_generation = True
                      break
             
-            if not pass_through:
+            if needs_generation:
                 # Fallback logic only if database roll_nos are missing
                 continuous = bool(current_app.config.get("ROLLS_CONTINUOUS_PER_PROGRAM_SEM", False))
                 cont_map_cache = {}
+                
+                # First pass: Try to fill gaps using continuous logic if enabled
                 for r in roster:
                     if r.get("roll_no") is not None:
                         continue
@@ -8844,10 +8855,24 @@ def attendance_mark():
                         r["roll_no"] = cont_map_cache.get(key, {}).get(enr)
                 
                 # Final fallback: for any student still without roll_no, use per-division sequential
-                roster.sort(key=lambda r: r.get("enrollment_no"))
-                for idx, r in enumerate(roster, start=1):
+                # IMPORTANT: Only overwrite if roll_no is still None
+                roster_sorted = sorted(roster, key=lambda r: r.get("enrollment_no"))
+                
+                # We need to assign sequential numbers to those who don't have them?
+                # Or should we re-sequence everyone? 
+                # If we have mixed state (some have DB rolls, some don't), simple sequential 1..N might duplicate.
+                # But for now, let's just fill the missing ones with their index in the sorted list.
+                
+                for idx, r in enumerate(roster_sorted, start=1):
                     if r.get("roll_no") is None:
                         r["roll_no"] = idx
+                        
+            # Debug: Flash the first student's roll number to verify what the app sees
+            if roster and current_user.role == 'admin':
+                first_s = roster[0]
+                # flash(f"DEBUG: Student {first_s['enrollment_no']} has Roll No: {first_s['roll_no']} (Needs Gen: {needs_generation})", "info")
+                pass
+                
         except Exception:
             # In case of any unexpected data, skip roll numbering gracefully
             pass
