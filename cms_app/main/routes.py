@@ -8789,10 +8789,17 @@ def attendance_mark():
                 # If a division is selected, include only students currently in that division
                 if selected_division_id and stu.division_id_fk != selected_division_id:
                     continue
+                r_no = getattr(stu, "roll_no", None)
+                if r_no == "":
+                    r_no = None
                 roster.append({
                     "enrollment_no": stu.enrollment_no,
                     "name": f"{stu.last_name or ''} {stu.first_name or ''}".strip(),
+                    "first_name": stu.first_name,
+                    "last_name": stu.last_name,
+                    "father_name": stu.father_name,
                     "division_id": stu.division_id_fk,
+                    "roll_no": r_no
                 })
     elif selected_division_id:
         # Fallback: all students in division
