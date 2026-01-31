@@ -2287,7 +2287,7 @@ def logout():
 
 @main_bp.route("/dashboard")
 @login_required
-@cache.cached(timeout=60, key_prefix=lambda: f"dashboard_{getattr(current_user, 'user_id', 'anon')}_{request.full_path}", unless=lambda: session.get("_flashes"))
+# Cache removed to ensure redirects (like Faculty -> dedicated dashboard) always fire immediately
 def dashboard():
     from ..models import Student, Notification, FeePayment
     role = (getattr(current_user, "role", None) or (request.args.get("role") or "principal")).strip().lower()
