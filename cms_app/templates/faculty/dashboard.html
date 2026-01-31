@@ -61,16 +61,11 @@
                                     </td>
                                     <td>{{ item.subject_name }}</td>
                                     <td>
-                                        <div class="d-flex align-items-center">
-                                            <span class="me-2 text-danger fw-bold">{{ item.percentage }}%</span>
-                                            <div class="progress flex-grow-1" style="height: 5px; min-width: 50px;">
-                                                <div class="progress-bar bg-danger" role="progressbar" style="width: {{ item.percentage }}%"></div>
-                                            </div>
-                                        </div>
+                                        <div class="fw-bold text-dark">{{ item.percentage }}%</div>
                                         <div class="small text-muted">{{ item.attended }}/{{ item.total }} lectures</div>
                                     </td>
                                     <td>
-                                        <a href="mailto:{{ item.student.email }}?subject=Low Attendance Warning in {{ item.subject_name }}&body=Dear {{ item.student.first_name }}, your attendance in {{ item.subject_name }} is currently {{ item.percentage }}% ({{ item.attended }}/{{ item.total }} lectures). Please attend classes regularly." class="btn btn-sm btn-outline-danger">
+                                        <a href="mailto:{{ item.student.email }}?subject=Low Attendance Warning in {{ item.subject_name }}&body=Dear {{ item.student.first_name }}, your attendance in {{ item.subject_name }} is currently {{ item.percentage }}% ({{ item.attended }}/{{ item.total }} lectures). Please attend classes regularly." class="btn btn-sm btn-outline-warning text-dark">
                                             <i class="bi bi-envelope"></i> Notify
                                         </a>
                                     </td>
@@ -159,13 +154,13 @@
                                         <span class="badge bg-info text-dark">{{ div.division_code }}</span>
                                     </td>
                                     <td>
-                                        <a href="#" class="btn btn-sm btn-outline-primary" title="Mark Attendance">
-                                            <i class="bi bi-check-square"></i>
-                                        </a>
-                                        <a href="#" class="btn btn-sm btn-outline-secondary" title="View Students">
-                                            <i class="bi bi-people"></i>
-                                        </a>
-                                    </td>
+                                    <a href="{{ url_for('main.attendance_mark', subject_id=sub.subject_id, division_id=div.division_id) }}" class="btn btn-sm btn-outline-primary" title="Mark Attendance">
+                                        <i class="bi bi-check-square"></i>
+                                    </a>
+                                    <a href="{{ url_for('main.students', program_id=prog.program_id, semester=div.semester, division_id=div.division_id) }}" class="btn btn-sm btn-outline-secondary" title="View Students">
+                                        <i class="bi bi-people"></i>
+                                    </a>
+                                </td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -194,10 +189,10 @@
                                 </div>
 
                                 <div class="d-grid gap-2 d-flex">
-                                    <a href="#" class="btn btn-sm btn-outline-primary flex-grow-1">
+                                    <a href="{{ url_for('main.attendance_mark', subject_id=sub.subject_id, division_id=div.division_id) }}" class="btn btn-sm btn-outline-primary flex-grow-1">
                                         <i class="bi bi-check-square me-1"></i> Attendance
                                     </a>
-                                    <a href="#" class="btn btn-sm btn-outline-secondary flex-grow-1">
+                                    <a href="{{ url_for('main.students', program_id=prog.program_id, semester=div.semester, division_id=div.division_id) }}" class="btn btn-sm btn-outline-secondary flex-grow-1">
                                         <i class="bi bi-people me-1"></i> Students
                                     </a>
                                 </div>
