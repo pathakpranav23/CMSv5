@@ -1,5 +1,5 @@
 from functools import wraps
-from flask import flash, redirect, url_for, current_app
+from flask import flash, redirect, url_for, current_app, abort
 from flask_login import current_user
 
 def role_required(*roles):
@@ -27,3 +27,24 @@ def role_required(*roles):
             return func(*args, **kwargs)
         return wrapper
     return decorator
+
+def super_admin_required(func):
+    """
+    Decorator to ensure the current user is a Super Admin.
+    Must be placed *after* @login_required.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return current_app.login_manager.unauthorized()
+        
+        # Check is_super_admin flag
+        if not getattr(current_user, 'is_super_admin', False):
+            try:
+                flash("Restricted access: Super Admin only.", "danger")
+            except Exception:
+                pass
+            return redirect(url_for("main.dashboard"))
+        
+        return func(*args, **kwargs)
+    return wrapper

@@ -1,133 +1,80 @@
-# Project Blueprint: Scalable College Management System (CMS)
+# World-Class Multi-Tenant SaaS ERP Blueprint (CMSv5)
 
-For The Group of Parekh Colleges, Under the Management of Shri Balvant Parekh Education Trust
+## 1. Vision
+To build a world-class, multi-tenant Academic ERP/SaaS capable of serving Universities, Groups of Colleges, and Schools. The system emphasizes rapid onboarding, strict data integrity (NEP 2020 compliance), and a user-friendly "Wizard" approach to complex academic configurations.
 
-## Table of Contents
-- [Executive Summary and System Goals](#1-executive-summary-and-system-goals)
-- [Key System Objectives](#key-system-objectives)
-- [Technical Architecture and Stack](#2-technical-architecture-and-stack)
-  - [Cloud Database Strategy (Discussion)](#21-cloud-database-strategy-discussion)
-- [NEP 2020 Academic Framework](#3-nep-2020-academic-framework)
-  - [Subject Categorization and Credit Allocation](#31-subject-categorization-and-credit-allocation)
-  - [Theory and Practical Credits](#32-theory-and-practical-credits)
-  - [Multiple Entry and Exit Points](#33-multiple-entry-and-exit-points)
-- [User Roles, Hierarchy, and Permissions](#4-user-roles-hierarchy-and-permissions)
-- [Detailed Functional Modules](#5-detailed-functional-modules)
-- [Comprehensive Database Schema (PostgreSQL)](#6-comprehensive-database-schema-postgresql)
+## 2. Core Differentiator: The Onboarding Wizard
+To solve the complexity of setting up an academic institution from scratch, CMSv5 features a guided **Onboarding Wizard**. This wizard ensures that dependencies are met in the correct order (e.g., Staff must exist before assigning subjects; Divisions must exist before enrolling students).
 
-## 1. Executive Summary and System Goals
+### Wizard Flow (Phase 1 Roadmap)
 
-This document outlines the final, comprehensive plan for developing a robust and scalable College Management System (CMS), hereinafter referred to as PCMS (Parekh Colleges Management System). The system is designed to manage all academic and administrative operations efficiently, ensuring full compliance with the National Education Policy (NEP) 2020 framework.
+**Step 1: Institute Profile & Trust Structure**
+*   **Goal:** Define the legal entity and branding.
+*   **Inputs:** Trust Name, College Name(s), Logo, Address, Contact Info.
+*   **Output:** Tenant configuration and Report Headers.
 
-### Key System Objectives
+**Step 2: Staff Management & Bulk Import**
+*   **Goal:** Populate the system with faculty and admin staff.
+*   **Why here?** Subjects and Class Teachers cannot be assigned without Staff.
+*   **Features:**
+    *   Single Entry Form.
+    *   **Bulk CSV Import** (Name, Email, Role, Designation).
+    *   Role Assignment (Principal, HOD, Faculty, Clerk, Accountant).
 
-| Objective | Description |
-| --- | --- |
-| NEP 2020 Compliance | Implement support for the Credit-Based Choice System (CBCS), Multiple Entry/Exit, and Academic Bank of Credits (ABC). |
-| Scalability | Designed to easily integrate new Degree Programs (BBA, BCom, etc.) without re-engineering the core database structure. |
-| Operational Efficiency | Handle large student intake by managing multiple Divisions (A, B, C, etc.) within each Semester and Program. |
-| Granularity | Accurate tracking of Subject Types (Major, Minor, MDC, etc.) and separate allocation for Theory and Practical Credits. |
+**Step 3: Program & Medium of Instruction**
+*   **Goal:** Define what the institute teaches.
+*   **Features:**
+    *   Add Program (e.g., "Bachelor of Commerce").
+    *   **Select Medium(s):** English, Gujarati, Hindi, etc.
+    *   **Architecture Note:** If multiple mediums are selected, the system creates **distinct Program entries** (e.g., "B.Com - English", "B.Com - Gujarati") to allow separate Fee Structures and Subject Lists.
+    *   Define Duration (Years/Semesters).
 
-## 2. Technical Architecture and Stack
+**Step 4: Academic Structure & Divisions**
+*   **Goal:** Define the physical/logical grouping of students.
+*   **Features:**
+    *   Configure Semesters for each Program.
+    *   **Manage Divisions:** Create Divisions (A, B, C) per Semester/Medium.
+    *   Define Intake Capacity per Division.
 
-The architecture focuses on non-complexity, high performance, and long-term maintainability, leveraging cloud services for critical components.
+**Step 5: Subject Catalog & Allocation**
+*   **Goal:** Define the curriculum (NEP 2020 Compliant).
+*   **Features:**
+    *   Create Subjects (Major, Minor, MDC, AEC, SEC, IKS).
+    *   Define Credit Structure (Theory/Practical).
+    *   **Subject Assignment:** Map Subjects to Staff (Faculty) for specific Divisions.
 
-| Component | Technology / Platform | Rationale |
-| --- | --- | --- |
-| Frontend (UI) | HTML5, CSS3, JavaScript (Bootstrap 5) | Responsive, mobile-first design for universal access by students and faculty. |
-| Backend (Server) | Python (Flask Micro-framework) | Provides simplicity, speed, and modularity, making it ideal for the defined core academic logic. |
-| Database | PostgreSQL (Managed Cloud Service) | CRITICAL for Scalability and Availability. Enterprise-grade reliability, data integrity, automatic backups, and disaster recovery managed by a cloud provider. |
-| Deployment | Gunicorn / Nginx on Linux | Standard, secure, and high-performance production environment. |
+**Step 6: Student Enrollment**
+*   **Goal:** Bring students into the system.
+*   **Features:**
+    *   **Bulk CSV Import:** Map students directly to Program, Semester, Medium, and Division.
+    *   Generate Enrollment Numbers (if not provided).
 
-### 2.1 Cloud Database Strategy (Discussion)
+---
 
-The database will be hosted on a Managed Cloud PostgreSQL Service. This strategy ensures:
+## 3. Comprehensive Module List (The "Sweet 16")
 
-High Availability: Automatic failover and replication across zones.
+1.  **Trust & Multi-Tenant Structure:** Centralized management for groups of colleges.
+2.  **College Information:** Manage metadata, branding, and contact details.
+3.  **Course (Program) Management:** Handling multiple mediums (Eng/Guj) and program lifecycles.
+4.  **Staff Management:** Roles for Principal, Coordinator, Faculty, Clerk, Accountant, IT Officer, NSS/NCC Coordinators.
+5.  **Student Management:** Medium-wise enrollment, profiles, and history.
+6.  **Subject Management:** Align to staff, bulk assignment, multi-program assignment (e.g., English Faculty teaching BCA & BBA).
+7.  **Division Management:** Capacity planning and sectioning per Program/Semester.
+8.  **Attendance Management:** Daily tracking, aggregate reports, and mobile-friendly roster.
+    *   **New:** Bulk Timetable Import (CSV) to auto-generate class schedules.
+9.  **Exam Management:** Exam schemes, marks entry, hall tickets, result processing (GPA/CGPA).
+    *   **New:** Bulk External Marks Import (Excel) for University results.
+10. **Reports Management:** NEP reports, demographic analysis, academic performance.
+11. **Inventory Management:** Asset tracking for labs, library, and campus infrastructure.
+    *   **New:** Bulk Library/Asset Import (CSV) for rapid cataloging.
+12. **Fees Management:** Structure definition, collection, receipts, and dues tracking.
+13. **Announcement (Notice Board):** Targeted communication (Role/Program/Semester based).
+14. **Material Management:** Digital content distribution and access control.
+15. **HR Management:** Leave tracking, payroll basics, and service books for staff.
+16. **World Class Analysis:** Dashboard for "Bird's Eye View" of institute health (Admissions, Finance, Academics).
 
-Reduced Overhead: Automated patching, backups, and maintenance.
-
-Security: Enhanced network security (VPC), encryption at rest and in transit (SSL/TLS).
-
-Scalability: Ability to instantly adjust compute and storage capacity as the college's data footprint grows.
-
-## 3. NEP 2020 Academic Framework
-
-The CMS core academic structure is built around the following highly granular components:
-
-### 3.1 Subject Categorization and Credit Allocation
-
-Every subject must be defined with both its Type and its Credit Split.
-
-| Subject Type | Full Form | Credit Structure Tracking |
-| --- | --- | --- |
-| Major | Major Course | Core discipline subjects (e.g., Programming). Highest credit weight. |
-| Minor | Minor Course | Secondary discipline subjects. |
-| MDC | Multi-Disciplinary Course | Subjects taken from outside the primary program. |
-| AEC | Ability Enhancement Course | Mandatory for skill or value enhancement (e.g., Environmental Studies). |
-| SEC | Skill Enhancement Course | Vocational/Skill-based training with a high Practical focus. |
-| IKS | Indian Knowledge System | Courses related to traditional Indian knowledge systems. |
-
-### 3.2 Theory and Practical Credits
-
-All academic records must distinguish between these two credit types for a single subject:
-
-Total Credits = Theory Credits + Practical Credits.
-
-Marks/Grades are recorded separately for each component.
-
-### 3.3 Multiple Entry and Exit Points
-
-The system tracks the total credits earned via the Student_Credit_Log table to determine eligibility for various exit points:
-
-| Exit Point | Required Credits (Example) | CMS Logic |
-| --- | --- | --- |
-| Certificate | Completion of Semester 2 | Flag student as eligible when min. credits are met. |
-| Diploma | Completion of Semester 4 | Flag student as eligible when min. credits are met. |
-| Degree (Full) | Completion of Semester 6 | Final credit tally and degree award. |
-
-## 4. User Roles, Hierarchy, and Permissions
-
-Access control is rigidly defined based on the organizational structure, filtered by Program, Semester, and Division.
-
-| Role | Scope / Hierarchy | Key Permissions (R/W = Read/Write) |
-| --- | --- | --- |
-| System Administrator | Global (All data) | Full R/W control over all tables. Configure Programs, Divisions, and User Accounts. |
-| Program Principal | Program-Specific | R/W on Faculty assignment. Read-Only access to all data (Attendance, Grades, Fees) for their assigned Program (e.g., all BCA). |
-| Faculty | Subject/Division Specific | R/W on Attendance, Assignment creation, and Grade entry ONLY for their assigned Subject, Semester, and Division. |
-| Clerk / Office Staff | Global (Administrative) | R/W on Admissions, Student Profile updates, Fees records. R/W on System-wide Announcements. |
-| Student | Individual | Read-Only access to their own profile, attendance, grades, and course content. |
-
-## 5. Detailed Functional Modules
-
-| Module | Core Functionality (Division and Semester Context) | User Roles |
-| --- | --- | --- |
-| Admissions & Enrollment | Assigns incoming students to an available Division (A, B, C, etc.) within their starting Semester. Uses Enrollment Number as the permanent unique ID. | Clerk, Admin |
-| Program Setup | Defines Semester structure, links Subjects to a Semester, assigns Subject Type and Theory/Practical Credits. | Admin |
-| Faculty Assignment | Assigns Faculty to a specific Subject, Semester, and Division (via Course_Assignments). | Admin, Principal |
-| Attendance Management | Faculty marks P/A. The system ensures the faculty member only sees the list of students belonging to their assigned Division. Generates aggregate reports by Division. | Faculty, Principal |
-| Grading & Results | Faculty enters separate marks for Theory and Practical components. The system calculates Semester GPA and updates the Credit Log. | Faculty, Principal |
-| Digital Content | Faculty shares course material, filtered by Subject, Semester, and Division. Students only see relevant materials. | Faculty, Student |
-| Announcement System | Displays critical, system-wide messages prominently on the dashboard for all user roles. | Clerk, Admin |
-| Reporting (Principal) | Provides analytics and compliance checks: GPA comparison across Divisions; list of students eligible for NEP Exit Points. | Principal, Admin |
-| Fees Management | Tracks fee structure, payment history, and outstanding balances per student. | Clerk |
-
-## 6. Comprehensive Database Schema (PostgreSQL)
-
-The schema is highly normalized to support all required relationships, including the crucial linking of Division, Semester, and Subject Type.
-
-| Table Name | Primary Key (PK) | Foreign Keys (FK) | Key Data Fields |
-| --- | --- | --- | --- |
-| Users | user_id | program_id_fk (Links Principal to their Program) | username (Email/Enrollment No.), password_hash, role |
-| Programs | program_id | - | program_name (BCA, BBA), program_duration_years |
-| Subject_Types | type_id | - | type_code (MAJOR, MDC, AEC), description |
-| Divisions | division_id | program_id_fk | semester, division_code (A, B, C), capacity |
-| Students | enrollment_no (PK) | program_id_fk, user_id_fk, division_id_fk | surname, student_name, date_of_birth, mobile, current_semester |
-| Subjects | subject_id | program_id_fk, subject_type_id_fk | subject_name, semester |
-| Credit_Structure | structure_id | subject_id_fk | theory_credits, practical_credits, total_credits |
-| Course_Assignments | assignment_id | faculty_id_fk, subject_id_fk, division_id_fk | academic_year, is_active |
-| Attendance | attendance_id | student_id_fk, subject_id_fk, division_id_fk | date_marked, status (P/A/L), semester |
-| Grades | grade_id | student_id_fk, subject_id_fk, division_id_fk | theory_marks, practical_marks, gpa_for_subject |
-| Student_Credit_Log | log_id | student_id_fk, subject_id_fk | credits_earned, date_awarded, is_exit_eligible |
-| Fees_Records | fee_id | student_id_fk | amount_due, amount_paid, date_paid, semester |
-
+## 4. Technical Architecture
+*   **Frontend:** HTML5, Bootstrap 5 (Mobile First), Jinja2 Templates.
+*   **Backend:** Python (Flask), SQLAlchemy ORM.
+*   **Database:** PostgreSQL (Production) / SQLite (Dev).
+*   **Deployment:** Dockerized / Cloud-Native (PythonAnywhere/AWS).

@@ -1,0 +1,79 @@
+{% extends "wizard/base_wizard.html" %}
+
+{% block progress_width %}50%{% endblock %}
+{% block progress_val %}50{% endblock %}
+{% block progress_text %}Step 3: Programs{% endblock %}
+
+{% block wizard_content %}
+<h4 class="card-title">Step 3: Define Academic Programs</h4>
+<p class="text-muted">Create the programs (degrees) offered by your institute.</p>
+
+<div class="row">
+    <!-- Add Program Form -->
+    <div class="col-md-4 border-end">
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+                <label class="form-label">Program Name</label>
+                <input type="text" name="program_name" class="form-control" placeholder="e.g. Bachelor of Computer Applications" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Program Code</label>
+                <input type="text" name="program_code" class="form-control" placeholder="e.g. BCA" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Medium of Instruction</label>
+                <select name="medium" class="form-select">
+                    <option value="English">English</option>
+                    <option value="Gujarati">Gujarati</option>
+                    <option value="Hindi">Hindi</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Duration (Years)</label>
+                <input type="number" name="duration_years" class="form-control" value="3" min="1" max="5">
+            </div>
+            <button type="submit" class="btn btn-primary w-100">Add Program</button>
+        </form>
+    </div>
+
+    <!-- List Existing Programs -->
+    <div class="col-md-8">
+        <h5>Existing Programs</h5>
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Medium</th>
+                    <th>Duration</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in programs %}
+                <tr>
+                    <td>{{ p.program_code }}</td>
+                    <td>{{ p.program_name }}</td>
+                    <td>{{ p.medium }}</td>
+                    <td>{{ p.program_duration_years }} Years</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" class="text-center text-muted">No programs added yet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<hr>
+<div class="d-flex justify-content-between">
+    <a href="{{ url_for('wizard.step2_staff') }}" class="btn btn-secondary">Previous</a>
+    <form method="POST" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="continue_next" value="true">
+        <button type="submit" class="btn btn-success">Save & Continue <i class="fas fa-arrow-right"></i></button>
+    </form>
+</div>
+{% endblock %}

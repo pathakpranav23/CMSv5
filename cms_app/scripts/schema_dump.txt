@@ -1,0 +1,620 @@
+--- Table: alembic_version ---
+CREATE TABLE alembic_version (
+	version_num VARCHAR(32) NOT NULL, 
+	CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
+)
+
+--- Table: announcement_audience ---
+CREATE TABLE announcement_audience (
+	audience_id INTEGER NOT NULL, 
+	announcement_id_fk INTEGER NOT NULL, 
+	role VARCHAR(32) NOT NULL, 
+	PRIMARY KEY (audience_id), 
+	FOREIGN KEY(announcement_id_fk) REFERENCES announcements (announcement_id)
+)
+
+--- Table: announcement_dismissals ---
+CREATE TABLE announcement_dismissals (
+	dismissal_id INTEGER NOT NULL, 
+	announcement_id_fk INTEGER NOT NULL, 
+	user_id_fk INTEGER NOT NULL, 
+	dismissed_at DATETIME, 
+	PRIMARY KEY (dismissal_id), 
+	FOREIGN KEY(announcement_id_fk) REFERENCES announcements (announcement_id), 
+	FOREIGN KEY(user_id_fk) REFERENCES users (user_id)
+)
+
+--- Table: announcement_recipients ---
+CREATE TABLE announcement_recipients (
+	recipient_id INTEGER NOT NULL, 
+	announcement_id_fk INTEGER NOT NULL, 
+	student_id_fk VARCHAR(32) NOT NULL, 
+	created_at DATETIME, 
+	PRIMARY KEY (recipient_id), 
+	FOREIGN KEY(announcement_id_fk) REFERENCES announcements (announcement_id), 
+	FOREIGN KEY(student_id_fk) REFERENCES students (enrollment_no)
+)
+
+--- Table: announcement_revisions ---
+CREATE TABLE announcement_revisions (
+	revision_id INTEGER NOT NULL, 
+	announcement_id_fk INTEGER NOT NULL, 
+	version INTEGER NOT NULL, 
+	title VARCHAR(128) NOT NULL, 
+	message TEXT NOT NULL, 
+	severity VARCHAR(16), 
+	is_active BOOLEAN, 
+	program_id_fk INTEGER, 
+	start_at DATETIME, 
+	end_at DATETIME, 
+	created_at DATETIME, 
+	actor_user_id_fk INTEGER, 
+	PRIMARY KEY (revision_id), 
+	FOREIGN KEY(announcement_id_fk) REFERENCES announcements (announcement_id), 
+	FOREIGN KEY(actor_user_id_fk) REFERENCES users (user_id)
+)
+
+--- Table: announcements ---
+CREATE TABLE announcements (
+	announcement_id INTEGER NOT NULL, 
+	title VARCHAR(128) NOT NULL, 
+	message TEXT NOT NULL, 
+	severity VARCHAR(16), 
+	is_active BOOLEAN, 
+	program_id_fk INTEGER, 
+	start_at DATETIME, 
+	end_at DATETIME, 
+	created_at DATETIME, 
+	created_by INTEGER, updated_at DATETIME, actor_user_id_fk INTEGER REFERENCES users(user_id), 
+	PRIMARY KEY (announcement_id), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id), 
+	FOREIGN KEY(created_by) REFERENCES users (user_id)
+)
+
+--- Table: attendance ---
+CREATE TABLE "attendance" (
+	attendance_id INTEGER NOT NULL, 
+	student_id_fk VARCHAR(32), 
+	subject_id_fk INTEGER, 
+	division_id_fk INTEGER, 
+	date_marked DATE, 
+	status VARCHAR(2), 
+	semester INTEGER, 
+	period_no INTEGER, 
+	PRIMARY KEY (attendance_id), 
+	FOREIGN KEY(subject_id_fk) REFERENCES subjects (subject_id), 
+	FOREIGN KEY(student_id_fk) REFERENCES students (enrollment_no), 
+	FOREIGN KEY(division_id_fk) REFERENCES divisions (division_id)
+)
+
+--- Table: course_assignments ---
+CREATE TABLE course_assignments (
+	assignment_id INTEGER NOT NULL, 
+	faculty_id_fk INTEGER, 
+	subject_id_fk INTEGER, 
+	division_id_fk INTEGER, 
+	academic_year VARCHAR(16), 
+	is_active BOOLEAN, role VARCHAR(16), 
+	PRIMARY KEY (assignment_id), 
+	FOREIGN KEY(faculty_id_fk) REFERENCES users (user_id), 
+	FOREIGN KEY(subject_id_fk) REFERENCES subjects (subject_id), 
+	FOREIGN KEY(division_id_fk) REFERENCES divisions (division_id)
+)
+
+--- Table: credit_structure ---
+CREATE TABLE credit_structure (
+	structure_id INTEGER NOT NULL, 
+	subject_id_fk INTEGER NOT NULL, 
+	theory_credits INTEGER, 
+	practical_credits INTEGER, 
+	total_credits INTEGER, 
+	PRIMARY KEY (structure_id), 
+	FOREIGN KEY(subject_id_fk) REFERENCES subjects (subject_id)
+)
+
+--- Table: divisions ---
+CREATE TABLE divisions (
+	division_id INTEGER NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	semester INTEGER NOT NULL, 
+	division_code VARCHAR(8) NOT NULL, 
+	capacity INTEGER, medium_tag TEXT, 
+	PRIMARY KEY (division_id), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+
+--- Table: exam_marks ---
+CREATE TABLE exam_marks (
+	exam_mark_id INTEGER NOT NULL, 
+	student_id_fk VARCHAR(32) NOT NULL, 
+	subject_id_fk INTEGER NOT NULL, 
+	division_id_fk INTEGER, 
+	scheme_id_fk INTEGER, 
+	semester INTEGER, 
+	academic_year VARCHAR(16), 
+	attempt_no INTEGER, 
+	internal_marks FLOAT, 
+	external_marks FLOAT, 
+	total_marks FLOAT, 
+	grade_point FLOAT, 
+	grade_letter VARCHAR(4), 
+	is_absent BOOLEAN, 
+	created_at DATETIME, 
+	updated_at DATETIME, 
+	PRIMARY KEY (exam_mark_id), 
+	CONSTRAINT uq_exam_mark_attempt UNIQUE (student_id_fk, subject_id_fk, semester, academic_year, attempt_no), 
+	FOREIGN KEY(student_id_fk) REFERENCES students (enrollment_no), 
+	FOREIGN KEY(subject_id_fk) REFERENCES subjects (subject_id), 
+	FOREIGN KEY(division_id_fk) REFERENCES divisions (division_id), 
+	FOREIGN KEY(scheme_id_fk) REFERENCES exam_schemes (scheme_id)
+)
+
+--- Table: exam_schemes ---
+CREATE TABLE exam_schemes (
+	scheme_id INTEGER NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	semester INTEGER NOT NULL, 
+	academic_year VARCHAR(16) NOT NULL, 
+	medium_tag VARCHAR(32), 
+	name VARCHAR(128), 
+	max_internal_marks FLOAT, 
+	max_external_marks FLOAT, 
+	min_internal_marks FLOAT, 
+	min_external_marks FLOAT, 
+	min_total_marks FLOAT, 
+	max_total_marks FLOAT, 
+	grading_scheme_json TEXT, 
+	is_active BOOLEAN, 
+	created_at DATETIME, 
+	updated_at DATETIME, credit_rules_json TEXT, 
+	PRIMARY KEY (scheme_id), 
+	CONSTRAINT uq_exam_scheme_scope UNIQUE (program_id_fk, semester, medium_tag, academic_year), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+
+--- Table: faculty ---
+CREATE TABLE faculty (
+	faculty_id INTEGER NOT NULL, 
+	user_id_fk INTEGER, 
+	program_id_fk INTEGER, 
+	full_name VARCHAR(128) NOT NULL, 
+	email VARCHAR(120), 
+	mobile VARCHAR(20), 
+	designation VARCHAR(64), 
+	department VARCHAR(64), extra_data TEXT, medium_expertise VARCHAR(32), emp_id TEXT, date_of_joining DATE, highest_qualification VARCHAR(64), experience_years FLOAT, specialization VARCHAR(255), 
+	PRIMARY KEY (faculty_id), 
+	FOREIGN KEY(user_id_fk) REFERENCES users (user_id), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+
+--- Table: fee_payments ---
+CREATE TABLE "fee_payments" (
+	payment_id INTEGER NOT NULL, 
+	enrollment_no VARCHAR(32) NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	semester INTEGER NOT NULL, 
+	medium_tag VARCHAR(32), 
+	amount FLOAT NOT NULL, 
+	txn_ref VARCHAR(64), 
+	utr VARCHAR(64), 
+	status VARCHAR(16), 
+	created_at DATETIME, 
+	verified_at DATETIME, 
+	remarks TEXT, 
+	proof_image_path VARCHAR(255), 
+	verified_by_fk INTEGER, 
+	payer_name VARCHAR(128), 
+	bank_credit_at DATETIME, 
+	receipt_no VARCHAR(32), payment_mode VARCHAR(32), reference_no VARCHAR(64), created_by_user_id INTEGER REFERENCES users(user_id), verified_by_user_id INTEGER REFERENCES users(user_id), payment_date DATE, 
+	PRIMARY KEY (payment_id), 
+	CONSTRAINT fk_fee_payments_verified_by_users FOREIGN KEY(verified_by_fk) REFERENCES users (user_id), 
+	FOREIGN KEY(enrollment_no) REFERENCES students (enrollment_no), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+
+--- Table: fee_structures ---
+CREATE TABLE fee_structures (
+	structure_id INTEGER NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	semester INTEGER, 
+	component_name VARCHAR(128) NOT NULL, 
+	amount FLOAT, 
+	due_date DATE, 
+	is_active BOOLEAN, 
+	notes TEXT, 
+	created_at DATETIME, 
+	updated_at DATETIME, is_frozen BOOLEAN, medium_tag VARCHAR(32), 
+	PRIMARY KEY (structure_id), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+
+--- Table: fees_records ---
+CREATE TABLE fees_records (
+	fee_id INTEGER NOT NULL, 
+	student_id_fk VARCHAR(32), 
+	amount_due FLOAT, 
+	amount_paid FLOAT, 
+	date_paid DATE, 
+	semester INTEGER, created_at DATETIME, 
+	PRIMARY KEY (fee_id), 
+	FOREIGN KEY(student_id_fk) REFERENCES students (enrollment_no)
+)
+
+--- Table: grades ---
+CREATE TABLE grades (
+	grade_id INTEGER NOT NULL, 
+	student_id_fk VARCHAR(32), 
+	subject_id_fk INTEGER, 
+	division_id_fk INTEGER, 
+	theory_marks FLOAT, 
+	practical_marks FLOAT, 
+	gpa_for_subject FLOAT, 
+	PRIMARY KEY (grade_id), 
+	FOREIGN KEY(student_id_fk) REFERENCES students (enrollment_no), 
+	FOREIGN KEY(subject_id_fk) REFERENCES subjects (subject_id), 
+	FOREIGN KEY(division_id_fk) REFERENCES divisions (division_id)
+)
+
+--- Table: import_logs ---
+CREATE TABLE import_logs (
+	log_id INTEGER NOT NULL, 
+	user_id_fk INTEGER, 
+	kind VARCHAR(16) NOT NULL, 
+	program_id_fk INTEGER, 
+	semester INTEGER, 
+	medium_tag VARCHAR(32), 
+	path VARCHAR(255), 
+	dry_run BOOLEAN, 
+	created_count INTEGER, 
+	updated_count INTEGER, 
+	skipped_count INTEGER, 
+	errors_count INTEGER, 
+	created_at DATETIME, 
+	extra_json TEXT, 
+	PRIMARY KEY (log_id), 
+	FOREIGN KEY(user_id_fk) REFERENCES users (user_id), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+
+--- Table: institutes ---
+CREATE TABLE institutes (
+	institute_id INTEGER NOT NULL, 
+	trust_id_fk INTEGER, 
+	institute_name VARCHAR(128) NOT NULL, 
+	institute_code VARCHAR(32), 
+	address TEXT, 
+	contact_email VARCHAR(128), 
+	contact_phone VARCHAR(32), 
+	website VARCHAR(128), 
+	logo_path VARCHAR(255), 
+	affiliation_body VARCHAR(64), 
+	aicte_code VARCHAR(32), 
+	created_at DATETIME, slogan TEXT, vision TEXT, mission TEXT, is_active BOOLEAN DEFAULT 1, 
+	PRIMARY KEY (institute_id), 
+	FOREIGN KEY(trust_id_fk) REFERENCES trusts (trust_id), 
+	UNIQUE (institute_code)
+)
+
+--- Table: material_revisions ---
+CREATE TABLE material_revisions (
+	revision_id INTEGER NOT NULL, 
+	material_id_fk INTEGER NOT NULL, 
+	version INTEGER NOT NULL, 
+	title VARCHAR(200) NOT NULL, 
+	description TEXT, 
+	kind VARCHAR(16) NOT NULL, 
+	file_path VARCHAR(255), 
+	external_url VARCHAR(255), 
+	created_at DATETIME, 
+	actor_user_id_fk INTEGER, 
+	PRIMARY KEY (revision_id), 
+	FOREIGN KEY(material_id_fk) REFERENCES subject_materials (material_id), 
+	FOREIGN KEY(actor_user_id_fk) REFERENCES users (user_id)
+)
+
+--- Table: notifications ---
+CREATE TABLE notifications (
+	notification_id INTEGER NOT NULL, 
+	student_id_fk VARCHAR(32) NOT NULL, 
+	kind VARCHAR(32) NOT NULL, 
+	title VARCHAR(128) NOT NULL, 
+	message TEXT, 
+	data_json TEXT, 
+	payment_id_fk INTEGER, 
+	is_read BOOLEAN, 
+	created_at DATETIME, 
+	read_at DATETIME, 
+	PRIMARY KEY (notification_id), 
+	FOREIGN KEY(student_id_fk) REFERENCES students (enrollment_no), 
+	FOREIGN KEY(payment_id_fk) REFERENCES fee_payments (payment_id)
+)
+
+--- Table: password_change_log ---
+CREATE TABLE password_change_log (
+	log_id INTEGER NOT NULL, 
+	user_id_fk INTEGER NOT NULL, 
+	changed_by_user_id_fk INTEGER NOT NULL, 
+	changed_at DATETIME, 
+	method VARCHAR(32), 
+	note VARCHAR(255), 
+	PRIMARY KEY (log_id), 
+	FOREIGN KEY(user_id_fk) REFERENCES users (user_id), 
+	FOREIGN KEY(changed_by_user_id_fk) REFERENCES users (user_id)
+)
+
+--- Table: program_bank_details ---
+CREATE TABLE program_bank_details (
+	bank_id INTEGER NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	bank_name VARCHAR(128) NOT NULL, 
+	account_name VARCHAR(128) NOT NULL, 
+	account_number VARCHAR(64) NOT NULL, 
+	ifsc VARCHAR(32) NOT NULL, 
+	branch VARCHAR(128) NOT NULL, 
+	upi_vpa VARCHAR(128), 
+	payee_display VARCHAR(128), 
+	qr_image_path VARCHAR(255), 
+	gstin VARCHAR(64), 
+	pan VARCHAR(16), 
+	active BOOLEAN, 
+	created_at DATETIME, 
+	updated_at DATETIME, 
+	PRIMARY KEY (bank_id), 
+	UNIQUE (program_id_fk), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+
+--- Table: program_division_plans ---
+CREATE TABLE program_division_plans (
+	plan_id INTEGER NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	semester INTEGER NOT NULL, 
+	num_divisions INTEGER NOT NULL, 
+	capacity_per_division INTEGER NOT NULL, 
+	roll_max_per_division INTEGER, 
+	roll_reset_each_semester BOOLEAN, 
+	PRIMARY KEY (plan_id), 
+	CONSTRAINT uq_program_semester_plan UNIQUE (program_id_fk, semester), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+
+--- Table: programs ---
+CREATE TABLE programs (
+	program_id INTEGER NOT NULL, 
+	program_name VARCHAR(64) NOT NULL, 
+	program_duration_years INTEGER, medium TEXT DEFAULT 'English', program_code TEXT, institute_id_fk INTEGER REFERENCES institutes(institute_id), 
+	PRIMARY KEY (program_id)
+)
+
+--- Table: semester_coordinators ---
+CREATE TABLE semester_coordinators (
+	coordinator_id INTEGER NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	semester INTEGER NOT NULL, 
+	medium_tag VARCHAR(32), 
+	academic_year VARCHAR(16) NOT NULL, 
+	faculty_user_id_fk INTEGER NOT NULL, 
+	is_active BOOLEAN, 
+	created_at DATETIME, 
+	PRIMARY KEY (coordinator_id), 
+	CONSTRAINT uq_semester_coordinator_scope_faculty UNIQUE (program_id_fk, semester, medium_tag, academic_year, faculty_user_id_fk), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id), 
+	FOREIGN KEY(faculty_user_id_fk) REFERENCES users (user_id)
+)
+
+--- Table: student_credit_log ---
+CREATE TABLE student_credit_log (
+	log_id INTEGER NOT NULL, 
+	student_id_fk VARCHAR(32), 
+	subject_id_fk INTEGER, 
+	credits_earned INTEGER, 
+	date_awarded DATE, 
+	is_exit_eligible BOOLEAN, 
+	PRIMARY KEY (log_id), 
+	FOREIGN KEY(student_id_fk) REFERENCES students (enrollment_no), 
+	FOREIGN KEY(subject_id_fk) REFERENCES subjects (subject_id)
+)
+
+--- Table: student_semester_results ---
+CREATE TABLE student_semester_results (
+	result_id INTEGER NOT NULL, 
+	student_id_fk VARCHAR(32) NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	scheme_id_fk INTEGER, 
+	semester INTEGER NOT NULL, 
+	academic_year VARCHAR(16) NOT NULL, 
+	attempt_no INTEGER, 
+	total_credits_registered INTEGER, 
+	total_credits_earned INTEGER, 
+	sgpa FLOAT, 
+	cgpa FLOAT, 
+	result_status VARCHAR(16), 
+	remarks TEXT, 
+	created_at DATETIME, 
+	updated_at DATETIME, 
+	PRIMARY KEY (result_id), 
+	CONSTRAINT uq_student_semester_attempt UNIQUE (student_id_fk, semester, academic_year, attempt_no), 
+	FOREIGN KEY(student_id_fk) REFERENCES students (enrollment_no), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id), 
+	FOREIGN KEY(scheme_id_fk) REFERENCES exam_schemes (scheme_id)
+)
+
+--- Table: student_subject_enrollments ---
+CREATE TABLE student_subject_enrollments (
+	enrollment_id INTEGER NOT NULL, 
+	student_id_fk VARCHAR(32) NOT NULL, 
+	subject_id_fk INTEGER NOT NULL, 
+	semester INTEGER, 
+	division_id_fk INTEGER, 
+	academic_year VARCHAR(16), 
+	is_active BOOLEAN, 
+	source VARCHAR(32), 
+	created_at DATETIME, 
+	updated_at DATETIME, 
+	PRIMARY KEY (enrollment_id), 
+	FOREIGN KEY(student_id_fk) REFERENCES students (enrollment_no), 
+	FOREIGN KEY(subject_id_fk) REFERENCES subjects (subject_id), 
+	FOREIGN KEY(division_id_fk) REFERENCES divisions (division_id)
+)
+
+--- Table: students ---
+CREATE TABLE "students" (
+	enrollment_no VARCHAR(32) NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	user_id_fk INTEGER, 
+	division_id_fk INTEGER, 
+	surname VARCHAR(64), 
+	student_name VARCHAR(64), 
+	date_of_birth DATE, 
+	mobile VARCHAR(20), 
+	current_semester INTEGER, 
+	father_name VARCHAR(64), 
+	gender VARCHAR(16), 
+	photo_url VARCHAR(255), 
+	permanent_address VARCHAR(255), 
+	medium_tag VARCHAR(32), email VARCHAR(128), roll_no TEXT, 
+	PRIMARY KEY (enrollment_no), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id), 
+	FOREIGN KEY(division_id_fk) REFERENCES divisions (division_id), 
+	FOREIGN KEY(user_id_fk) REFERENCES users (user_id)
+)
+
+--- Table: subject_material_logs ---
+CREATE TABLE subject_material_logs (
+	log_id INTEGER NOT NULL, 
+	material_id_fk INTEGER NOT NULL, 
+	action VARCHAR(32) NOT NULL, 
+	actor_user_id_fk INTEGER, 
+	actor_role VARCHAR(32), 
+	meta_json TEXT, 
+	at DATETIME, 
+	PRIMARY KEY (log_id), 
+	FOREIGN KEY(material_id_fk) REFERENCES subject_materials (material_id), 
+	FOREIGN KEY(actor_user_id_fk) REFERENCES users (user_id)
+)
+
+--- Table: subject_materials ---
+CREATE TABLE subject_materials (
+	material_id INTEGER NOT NULL, 
+	subject_id_fk INTEGER NOT NULL, 
+	faculty_id_fk INTEGER, 
+	title VARCHAR(200) NOT NULL, 
+	description TEXT, 
+	kind VARCHAR(16) NOT NULL, 
+	file_path VARCHAR(255), 
+	external_url VARCHAR(255), 
+	tags VARCHAR(255), 
+	academic_year VARCHAR(16), 
+	is_published BOOLEAN, 
+	is_flagged BOOLEAN, 
+	created_at DATETIME, 
+	updated_at DATETIME, 
+	PRIMARY KEY (material_id), 
+	FOREIGN KEY(subject_id_fk) REFERENCES subjects (subject_id), 
+	FOREIGN KEY(faculty_id_fk) REFERENCES users (user_id)
+)
+
+--- Table: subject_types ---
+CREATE TABLE subject_types (
+	type_id INTEGER NOT NULL, 
+	type_code VARCHAR(16) NOT NULL, 
+	description VARCHAR(128), type_name VARCHAR(64), 
+	PRIMARY KEY (type_id), 
+	UNIQUE (type_code)
+)
+
+--- Table: subjects ---
+CREATE TABLE "subjects" (
+	subject_id INTEGER NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	subject_type_id_fk INTEGER NOT NULL, 
+	subject_name VARCHAR(128) NOT NULL, 
+	semester INTEGER NOT NULL, 
+	subject_code VARCHAR(64), 
+	paper_code VARCHAR(64), 
+	is_elective BOOLEAN DEFAULT 0, 
+	capacity INTEGER, 
+	elective_group_id VARCHAR(64), 
+	medium_tag VARCHAR(32), 
+	PRIMARY KEY (subject_id), 
+	FOREIGN KEY(subject_type_id_fk) REFERENCES subject_types (type_id), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+
+--- Table: system_config ---
+CREATE TABLE system_config (
+            config_key VARCHAR(64) PRIMARY KEY,
+            config_value TEXT,
+            description VARCHAR(255)
+        )
+
+--- Table: system_messages ---
+CREATE TABLE system_messages (
+            message_id INTEGER PRIMARY KEY,
+            title VARCHAR(255) NOT NULL,
+            content TEXT NOT NULL,
+            message_type VARCHAR(32) DEFAULT 'info',
+            start_date DATETIME,
+            end_date DATETIME,
+            is_active BOOLEAN DEFAULT 1,
+            target_role VARCHAR(32) DEFAULT 'all',
+            target_trust_id INTEGER
+        )
+
+--- Table: timetable_settings ---
+CREATE TABLE timetable_settings (
+	setting_id INTEGER NOT NULL, 
+	program_id_fk INTEGER NOT NULL, 
+	academic_year VARCHAR(16) NOT NULL, 
+	start_time TIME, 
+	slot_duration_mins INTEGER, 
+	break_after_period INTEGER, 
+	break_duration_mins INTEGER, 
+	slots_per_day INTEGER, 
+	PRIMARY KEY (setting_id), 
+	CONSTRAINT uq_timetable_settings UNIQUE (program_id_fk, academic_year), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+
+--- Table: timetable_slots ---
+CREATE TABLE timetable_slots (
+	slot_id INTEGER NOT NULL, 
+	division_id_fk INTEGER NOT NULL, 
+	subject_id_fk INTEGER NOT NULL, 
+	day_of_week VARCHAR(10) NOT NULL, 
+	period_no INTEGER NOT NULL, 
+	slot_type VARCHAR(16), 
+	room_no VARCHAR(32), 
+	PRIMARY KEY (slot_id), 
+	CONSTRAINT uq_timetable_slot_div_day_period UNIQUE (division_id_fk, day_of_week, period_no), 
+	FOREIGN KEY(division_id_fk) REFERENCES divisions (division_id), 
+	FOREIGN KEY(subject_id_fk) REFERENCES subjects (subject_id)
+)
+
+--- Table: trusts ---
+CREATE TABLE trusts (
+	trust_id INTEGER NOT NULL, 
+	trust_name VARCHAR(128) NOT NULL, 
+	trust_code VARCHAR(32), 
+	address TEXT, 
+	contact_email VARCHAR(128), 
+	contact_phone VARCHAR(32), 
+	website VARCHAR(128), 
+	logo_path VARCHAR(255), 
+	created_at DATETIME, slogan TEXT, vision TEXT, mission TEXT, is_active BOOLEAN DEFAULT 1, subscription_plan VARCHAR(32) DEFAULT 'basic', 
+	PRIMARY KEY (trust_id), 
+	UNIQUE (trust_code)
+)
+
+--- Table: users ---
+CREATE TABLE "users" (
+	user_id INTEGER NOT NULL, 
+	username VARCHAR(120) NOT NULL, 
+	password_hash VARCHAR(255), 
+	role VARCHAR(32) NOT NULL, 
+	program_id_fk INTEGER, preferred_lang VARCHAR(8), email VARCHAR(128), is_active BOOLEAN DEFAULT 1, is_super_admin BOOLEAN DEFAULT 0, 
+	PRIMARY KEY (user_id), 
+	UNIQUE (username), 
+	FOREIGN KEY(program_id_fk) REFERENCES programs (program_id)
+)
+

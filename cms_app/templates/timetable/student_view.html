@@ -1,0 +1,94 @@
+{% extends "layout.html" %}
+
+{% block title %}My Timetable{% endblock %}
+
+{% block content %}
+<style>
+    .bg-practical {
+        background-color: #e3f2fd !important;
+    }
+    .faculty-hint {
+        font-size: 0.75rem;
+        color: #6c757d;
+        display: block;
+        margin-top: 4px;
+    }
+    .subject-code {
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+    @media print {
+        .btn, .sidebar, header { display: none !important; }
+        .card { border: none !important; box-shadow: none !important; }
+    }
+</style>
+
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="h3 mb-0 text-gray-800">My Timetable</h1>
+            <p class="text-muted small mb-0">
+                Division {{ division.division_code }} | Semester {{ division.semester }} | {{ division.program.program_name }}
+            </p>
+        </div>
+        <div>
+            <button class="btn btn-outline-primary d-print-none" onclick="window.print()">
+                <i class="bi bi-printer"></i> Print
+            </button>
+        </div>
+    </div>
+
+    <!-- Timetable Grid -->
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-bordered text-center align-middle mb-0">
+                    <thead class="bg-light">
+                        <tr>
+                            <th style="width: 80px;">Period</th>
+                            {% for day in days %}
+                            <th>{{ day }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for period in periods %}
+                        
+                        <!-- Break Row Check -->
+                        {% if settings and settings.break_after_period and period == settings.break_after_period + 1 %}
+                        <tr class="table-secondary">
+                            <td class="fw-bold">Break</td>
+                            <td colspan="{{ days|length }}" class="text-muted small">
+                                {{ settings.break_duration_mins }} Minutes Break
+                            </td>
+                        </tr>
+                        {% endif %}
+                        
+                        <tr>
+                            <td class="fw-bold bg-light">{{ period }}</td>
+                            {% for day in days %}
+                            {% set key = day ~ "_" ~ period %}
+                            {% set cell = slots_data.get(key) %}
+                            
+                            <td class="{% if cell and cell.slot.slot_type == 'Practical' %}bg-practical{% endif %}">
+                                {% if cell %}
+                                    <div class="subject-code text-primary">{{ cell.subject_name }}</div>
+                                    <div class="small text-muted">{{ cell.subject_code }}</div>
+                                    {% if cell.faculty_name %}
+                                        <div class="faculty-hint"><i class="bi bi-person"></i> {{ cell.faculty_name }}</div>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted small">-</span>
+                                {% endif %}
+                            </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

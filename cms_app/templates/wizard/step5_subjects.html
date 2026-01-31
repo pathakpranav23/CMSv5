@@ -1,0 +1,26 @@
+{% extends "wizard/base_wizard.html" %}
+
+{% block progress_width %}83%{% endblock %}
+{% block progress_val %}83{% endblock %}
+{% block progress_text %}Step 5: Subjects{% endblock %}
+
+{% block wizard_content %}
+<h4 class="card-title">Step 5: Subject Catalog</h4>
+<p class="text-muted">Add subjects for your programs. You can do this in bulk later.</p>
+
+<div class="text-center py-5">
+    <i class="fas fa-book fa-3x text-muted mb-3"></i>
+    <h5>Subject Management</h5>
+    <p>Please use the <strong>Academics > Subjects</strong> module to import subjects via CSV after completing the wizard.</p>
+</div>
+
+<hr>
+<div class="d-flex justify-content-between">
+    <a href="{{ url_for('wizard.step4_structure') }}" class="btn btn-secondary">Previous</a>
+    <form method="POST" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="continue_next" value="true">
+        <button type="submit" class="btn btn-success">Continue to Students <i class="fas fa-arrow-right"></i></button>
+    </form>
+</div>
+{% endblock %}

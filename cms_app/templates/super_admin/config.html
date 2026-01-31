@@ -1,0 +1,38 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1 class="h3 mb-4 text-gray-800">System Configuration</h1>
+
+    <div class="row">
+        <div class="col-lg-6">
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-danger">Emergency Controls</h6>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token else '' }}">
+                        
+                        <div class="form-group">
+                            <label class="font-weight-bold">Maintenance Mode</label>
+                            <p class="small text-muted">
+                                When enabled, only Super Admins can access the system. 
+                                All other users (Principals, Faculty, Students) will see a "Maintenance in Progress" page.
+                            </p>
+                            <div class="custom-control custom-switch">
+                                <input type="checkbox" class="custom-control-input" id="maintenanceSwitch" name="maintenance_mode" 
+                                       {% if config.get('maintenance_mode') == 'true' %}checked{% endif %}>
+                                <label class="custom-control-label" for="maintenanceSwitch">Enable Maintenance Mode</label>
+                            </div>
+                        </div>
+
+                        <hr>
+                        <button type="submit" class="btn btn-primary">Save Configuration</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

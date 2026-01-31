@@ -81,6 +81,14 @@
                     <a href="{{ url_for('exams.result_view', scheme_id=s.scheme_id) }}" class="btn btn-outline-info" title="View Result">
                       <i class="bi bi-table"></i> Result
                     </a>
+                    {% if current_user.role in ['admin', 'principal'] %}
+                      <form id="calc-form-{{ s.scheme_id }}" action="{{ url_for('exams.calculate_results', scheme_id=s.scheme_id) }}" method="post" style="display:none;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      </form>
+                      <button class="btn btn-outline-success" onclick="if(confirm('Calculate and publish results? This will update SGPA/Grades for all students.')) document.getElementById('calc-form-{{ s.scheme_id }}').submit();" title="Calculate Results">
+                        <i class="bi bi-calculator"></i>
+                      </button>
+                    {% endif %}
                     {% if current_user.role in ['admin', 'principal', 'clerk'] %}
                       <a href="{{ url_for('exams.exam_rules', program_id=s.program_id_fk, semester=s.semester, academic_year=s.academic_year, medium_tag=s.medium_tag or '') }}" class="btn btn-outline-secondary" title="Edit Rules">
                         <i class="bi bi-gear"></i>

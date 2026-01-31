@@ -117,10 +117,10 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% set start_time = settings.start_time if settings else t('08:00') %}
-                            {% set duration = settings.slot_duration_mins if settings else 55 %}
-                            {% set break_after = settings.break_after_period if settings else 3 %}
-                            {% set break_dur = settings.break_duration_mins if settings else 25 %}
+                            {% set start_time = settings.start_time if (settings and settings.start_time) else t('08:00') %}
+                            {% set duration = settings.slot_duration_mins if (settings and settings.slot_duration_mins) else 55 %}
+                            {% set break_after = settings.break_after_period if (settings and settings.break_after_period) else 3 %}
+                            {% set break_dur = settings.break_duration_mins if (settings and settings.break_duration_mins) else 25 %}
                             
                             <!-- JS will handle exact time calc, simplified here -->
                             
@@ -142,7 +142,9 @@
                                     </td>
                                     {% for day in days %}
                                     {% set key = day ~ "_" ~ p %}
-                                    {% set slot = slots_data.get(key) %}
+                                    {% set slot_entry = slots_data.get(key) %}
+                                    {% set slot = slot_entry.slot if slot_entry else None %}
+                                    {% set faculty_name = slot_entry.faculty_name if slot_entry else '' %}
                                     <td class="p-1 position-relative">
                                         <select class="form-select form-select-sm border-0 slot-select {{ 'bg-practical' if slot and slot.slot_type == 'Practical' else '' }}" 
                                                 data-day="{{ day }}" 
@@ -155,7 +157,7 @@
                                             {% endfor %}
                                         </select>
                                         <div class="faculty-hint small text-muted" style="font-size: 0.7rem;">
-                                            <!-- Loaded via JS -->
+                                            {{ faculty_name }}
                                         </div>
                                     </td>
                                     {% endfor %}
@@ -189,20 +191,20 @@
                 
                 <div class="mb-3">
                     <label class="form-label">Start Time</label>
-                    <input type="time" name="start_time" class="form-control" value="{{ settings.start_time.strftime('%H:%M') if settings else '08:00' }}" required>
+                    <input type="time" name="start_time" class="form-control" value="{{ settings.start_time.strftime('%H:%M') if (settings and settings.start_time) else '08:00' }}" required>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Lecture Duration (mins)</label>
-                    <input type="number" name="slot_duration_mins" class="form-control" value="{{ settings.slot_duration_mins if settings else 55 }}" required>
+                    <input type="number" name="slot_duration_mins" class="form-control" value="{{ settings.slot_duration_mins if (settings and settings.slot_duration_mins) else 55 }}" required>
                 </div>
                 <div class="row">
                     <div class="col-6 mb-3">
                         <label class="form-label">Break After Period</label>
-                        <input type="number" name="break_after_period" class="form-control" value="{{ settings.break_after_period if settings else 3 }}" required>
+                        <input type="number" name="break_after_period" class="form-control" value="{{ settings.break_after_period if (settings and settings.break_after_period) else 3 }}" required>
                     </div>
                     <div class="col-6 mb-3">
                         <label class="form-label">Break Duration</label>
-                        <input type="number" name="break_duration_mins" class="form-control" value="{{ settings.break_duration_mins if settings else 25 }}" required>
+                        <input type="number" name="break_duration_mins" class="form-control" value="{{ settings.break_duration_mins if (settings and settings.break_duration_mins) else 25 }}" required>
                     </div>
                 </div>
             </div>

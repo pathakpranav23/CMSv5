@@ -1,72 +1,35 @@
 from flask import render_template, request, flash, redirect, url_for
 import json
 from flask_login import login_required, current_user
-from sqlalchemy import select, func, and_, or_, case
+from sqlalchemy import select, func, and_, or_, case, cast
 from . import exams_bp
 from .. import db, csrf_required
 from ..models import ExamScheme, StudentSemesterResult, ExamMark, Student, Program, Subject, StudentSubjectEnrollment, SubjectType, CreditStructure
 from ..main.routes import academic_year_options, current_academic_year, _program_dropdown_context
 from ..decorators import role_required
+from .services import resolve_exam_limits, calculate_exam_results
 
-def _resolve_exam_limits(scheme, subject):
+@exams_bp.route("/academics/exams/<int:scheme_id>/calculate", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+@csrf_required
+def calculate_results(scheme_id):
     """
-    Resolves max/min marks for a subject based on scheme rules.
-    Priority: Credit-based rules > Global scheme limits.
+    Triggers result calculation for an exam scheme.
+    Computes Grades, SGPA, and updates StudentSemesterResult.
     """
-    limits = {
-        "max_internal": scheme.max_internal_marks,
-        "max_external": scheme.max_external_marks,
-        "max_total": scheme.max_total_marks
-    }
+    success, message, count = calculate_exam_results(scheme_id)
     
-    if not scheme.credit_rules_json:
-        return limits
-        
-    try:
-        rules = json.loads(scheme.credit_rules_json)
-        if not rules:
-            return limits
-            
-        # Get subject credit and type
-        credits = 0
-        if subject.credit_structure:
-             credits = subject.credit_structure.total_credits
+    if success:
+        flash(message, "success")
+    else:
+        # If failure was due to "not found" or "no marks", message might be warning level
+        if "not found" in message.lower() or "no marks" in message.lower():
+            flash(message, "warning")
         else:
-             cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=subject.subject_id)).scalars().first()
-             if cs: credits = cs.total_credits
-             
-        # Get type
-        type_code_real = "All"
-        st = db.session.execute(select(SubjectType).filter_by(type_id=subject.subject_type_id_fk)).scalars().first()
-        if st: type_code_real = st.type_name
-        
-        # Match rule: 1. Exact match (credit + type), 2. Fallback (credit + 'All')
-        matched_rule = None
-        fallback_rule = None
-        
-        for r in rules:
-             r_credit = float(r.get("credit", 0))
-             r_type = r.get("type", "All")
-             
-             if r_credit == credits:
-                 if r_type == type_code_real:
-                     matched_rule = r
-                     break
-                 if r_type == "All":
-                     fallback_rule = r
-        
-        final_rule = matched_rule or fallback_rule
-        
-        if final_rule:
-             limits["max_internal"] = float(final_rule.get("max_int", 0))
-             limits["max_external"] = float(final_rule.get("max_ext", 0))
-             limits["max_total"] = float(final_rule.get("max_tot", 0))
-             if "min_tot" in final_rule:
-                 limits["min_total"] = float(final_rule.get("min_tot", 0))
-    except Exception as e:
-        print(f"Error resolving exam rules: {e}")
-        
-    return limits
+            flash(f"Error calculating results: {message}", "danger")
+            
+    return redirect(url_for("exams.result_view", scheme_id=scheme_id))
 
 # --- EXAM MODULE ROUTES ---
 
@@ -164,7 +127,7 @@ def marks_entry(scheme_id):
                 .filter(
                     StudentSubjectEnrollment.subject_id_fk == selected_subject_id,
                     StudentSubjectEnrollment.is_active == True
-                ).order_by(Student.enrollment_no)
+                ).order_by(cast(Student.roll_no, db.Integer), Student.enrollment_no)
                 
             students = db.session.execute(q_stud).scalars().all()
             
@@ -327,6 +290,11 @@ def result_view(scheme_id):
         if m.student_id_fk not in matrix:
             matrix[m.student_id_fk] = {}
         matrix[m.student_id_fk][m.subject_id_fk] = m
+
+    # Fetch Semester Results (SGPA/CGPA)
+    results_q = select(StudentSemesterResult).filter_by(scheme_id_fk=scheme_id)
+    results = db.session.execute(results_q).scalars().all()
+    student_results_map = {r.student_id_fk: r for r in results}
         
     return render_template(
         "exams/result_view.html",
@@ -334,7 +302,8 @@ def result_view(scheme_id):
         program=program,
         subjects=subjects,
         students=students,
-        matrix=matrix
+        matrix=matrix,
+        student_results_map=student_results_map
     )
 
 

@@ -1,0 +1,45 @@
+{% extends "wizard/base_wizard.html" %}
+
+{% block progress_width %}66%{% endblock %}
+{% block progress_val %}66{% endblock %}
+{% block progress_text %}Step 4: Academic Structure{% endblock %}
+
+{% block wizard_content %}
+<h4 class="card-title">Step 4: Academic Structure (Divisions)</h4>
+<p class="text-muted">Define the number of divisions (classes) for each semester.</p>
+
+<div class="alert alert-info">
+    <i class="fas fa-info-circle"></i> For now, please verify your programs. Detailed division configuration can be done in the Academics module later.
+</div>
+
+<table class="table table-bordered">
+    <thead>
+        <tr>
+            <th>Program</th>
+            <th>Duration</th>
+            <th>Semesters</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in programs %}
+        <tr>
+            <td>{{ p.program_name }} ({{ p.program_code }})</td>
+            <td>{{ p.program_duration_years }} Years</td>
+            <td>{{ p.program_duration_years * 2 }} Semesters</td>
+            <td><span class="badge bg-success">Active</span></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<hr>
+<div class="d-flex justify-content-between">
+    <a href="{{ url_for('wizard.step3_programs') }}" class="btn btn-secondary">Previous</a>
+    <form method="POST" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="continue_next" value="true">
+        <button type="submit" class="btn btn-success">Continue to Subjects <i class="fas fa-arrow-right"></i></button>
+    </form>
+</div>
+{% endblock %}

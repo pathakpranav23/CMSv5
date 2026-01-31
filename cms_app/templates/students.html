@@ -47,6 +47,17 @@
       </div>
       <div class="col-12 col-md-auto">
         <div class="input-group input-group-sm">
+          <span class="input-group-text">{{ t('Division') }}</span>
+          <select id="division_id" name="division_id" class="form-select" onchange="this.form.submit()">
+            <option value="all" {{ 'selected' if selected_division_id == 'all' else '' }}>All</option>
+            {% for div in division_list %}
+              <option value="{{ div.division_id }}" {{ 'selected' if selected_division_id == (div.division_id|string) else '' }}>{{ div.division_code }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="col-12 col-md-auto">
+        <div class="input-group input-group-sm">
           <span class="input-group-text">{{ t('Medium') }}</span>
           {% set med = (selected_medium or 'all') %}
           <select id="medium" name="medium" class="form-select" onchange="this.form.submit()">
@@ -54,6 +65,16 @@
             <option value="english" {{ 'selected' if med == 'english' else '' }}>English</option>
             <option value="gujarati" {{ 'selected' if med == 'gujarati' else '' }}>Gujarati</option>
             <option value="general" {{ 'selected' if med == 'general' else '' }}>General</option>
+          </select>
+        </div>
+      </div>
+      <div class="col-12 col-md-auto">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text">{{ t('Sort By') }}</span>
+          <select id="sort_by" name="sort_by" class="form-select" onchange="this.form.submit()">
+            <option value="roll_no" {{ 'selected' if sort_by == 'roll_no' else '' }}>Roll No</option>
+            <option value="name" {{ 'selected' if sort_by == 'name' else '' }}>Name</option>
+            <option value="enrollment" {{ 'selected' if sort_by == 'enrollment' else '' }}>Enrollment</option>
           </select>
         </div>
       </div>

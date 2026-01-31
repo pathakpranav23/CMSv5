@@ -35,6 +35,7 @@
                             </th>
                         {% endfor %}
                         <th rowspan="2" class="align-middle table-primary" style="width: 80px;">Grand Total</th>
+                        <th rowspan="2" class="align-middle table-success" style="width: 80px;">SGPA</th>
                     </tr>
                     <tr>
                         {% for sub in subjects %}
@@ -68,6 +69,9 @@
                                         </td>
                                         <td class="fw-bold {% if mark.total_marks < scheme.min_total_marks %}text-danger{% else %}text-success{% endif %} bg-light">
                                             {{ mark.total_marks }}
+                                            {% if mark.grade_letter %}
+                                                <span class="small text-muted ms-1">({{ mark.grade_letter }})</span>
+                                            {% endif %}
                                         </td>
                                         {% if mark.total_marks %}
                                             {% set row_total = row_total + mark.total_marks %}
@@ -79,6 +83,14 @@
                             {% endfor %}
                             
                             <td class="fw-bold table-primary">{{ row_total }}</td>
+                            {% set res = student_results_map.get(student.enrollment_no) %}
+                            <td class="fw-bold table-success">
+                                {% if res and res.sgpa is not none %}
+                                    {{ "%.2f"|format(res.sgpa) }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
                         </tr>
                     {% endfor %}
                 </tbody>

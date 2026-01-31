@@ -5,7 +5,7 @@ from sqlalchemy import and_
 
 from . import timetable_bp
 from .. import db
-from ..models import Program, Division, Subject, TimetableSlot, TimetableSettings, CourseAssignment, Faculty, SubjectType
+from ..models import Program, Division, Subject, TimetableSlot, TimetableSettings, CourseAssignment, Faculty, SubjectType, Student
 from ..decorators import role_required
 
 def _get_timetable_settings(program_id, academic_year):
@@ -105,10 +105,23 @@ def manage():
                     semester=semester
                 ).all()
                 
-                # Fetch existing slots
-                slots = TimetableSlot.query.filter_by(division_id_fk=division_id).all()
-                for s in slots:
-                    slots_data[f"{s.day_of_week}_{s.period_no}"] = s
+                # Fetch existing slots with Faculty Info
+                slots_query = (
+                    db.session.query(TimetableSlot, Faculty.full_name)
+                    .outerjoin(CourseAssignment, and_(
+                        CourseAssignment.subject_id_fk == TimetableSlot.subject_id_fk,
+                        CourseAssignment.division_id_fk == TimetableSlot.division_id_fk,
+                        CourseAssignment.is_active == True
+                    ))
+                    .outerjoin(Faculty, Faculty.user_id_fk == CourseAssignment.faculty_id_fk)
+                    .filter(TimetableSlot.division_id_fk == division_id)
+                )
+                slots = slots_query.all()
+                for s, fac_name in slots:
+                    slots_data[f"{s.day_of_week}_{s.period_no}"] = {
+                        "slot": s,
+                        "faculty_name": fac_name or ""
+                    }
                     
         # Helper for dropdowns
         if program_id and semester:
@@ -116,7 +129,13 @@ def manage():
         
     # Prepare Context
     days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-    periods = range(1, (settings.slots_per_day if settings else 6) + 1)
+    
+    # Safely determine slots count (handle None in DB)
+    slots_count = 6
+    if settings and settings.slots_per_day:
+        slots_count = settings.slots_per_day
+        
+    periods = range(1, slots_count + 1)
     
     return render_template(
         "timetable/manage.html",
@@ -246,3 +265,67 @@ def update_settings():
     db.session.commit()
     flash("Settings updated.", "success")
     return redirect(request.referrer)
+
+@timetable_bp.route("/my_timetable")
+@login_required
+@role_required("student")
+def my_timetable():
+    # Find student profile
+    student = Student.query.filter_by(user_id_fk=current_user.user_id).first()
+    if not student:
+        flash("Student profile not found.", "warning")
+        return redirect(url_for("main.dashboard"))
+        
+    if not student.division_id_fk:
+        flash("You are not assigned to any division yet.", "info")
+        return redirect(url_for("main.dashboard"))
+        
+    division = db.session.get(Division, student.division_id_fk)
+    if not division:
+        flash("Assigned division not found.", "danger")
+        return redirect(url_for("main.dashboard"))
+        
+    # Fetch Settings
+    academic_year = "2025-2026" 
+    settings = _get_timetable_settings(student.program_id_fk, academic_year)
+    
+    # Fetch Slots
+    slots_query = (
+        db.session.query(TimetableSlot, Faculty.full_name, Subject.subject_name, Subject.subject_code)
+        .join(Subject, Subject.subject_id == TimetableSlot.subject_id_fk)
+        .outerjoin(CourseAssignment, and_(
+            CourseAssignment.subject_id_fk == TimetableSlot.subject_id_fk,
+            CourseAssignment.division_id_fk == TimetableSlot.division_id_fk,
+            CourseAssignment.is_active == True
+        ))
+        .outerjoin(Faculty, Faculty.user_id_fk == CourseAssignment.faculty_id_fk)
+        .filter(TimetableSlot.division_id_fk == division.division_id)
+    )
+    
+    slots = slots_query.all()
+    slots_data = {}
+    for s, fac_name, sub_name, sub_code in slots:
+        slots_data[f"{s.day_of_week}_{s.period_no}"] = {
+            "slot": s,
+            "faculty_name": fac_name or "TBA",
+            "subject_name": sub_name,
+            "subject_code": sub_code
+        }
+        
+    # Prepare Context
+    days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    slots_count = 6
+    if settings and settings.slots_per_day:
+        slots_count = settings.slots_per_day
+        
+    periods = range(1, slots_count + 1)
+    
+    return render_template(
+        "timetable/student_view.html",
+        student=student,
+        division=division,
+        days=days,
+        periods=periods,
+        slots_data=slots_data,
+        settings=settings
+    )

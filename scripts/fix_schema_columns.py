@@ -81,11 +81,19 @@ def main():
         if not column_exists(conn, "students", "medium_tag"):
             conn.execute(text("ALTER TABLE students ADD COLUMN medium_tag VARCHAR(32)"))
             added.append("students.medium_tag")
+        if not column_exists(conn, "students", "is_active"):
+            conn.execute(text("ALTER TABLE students ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+            conn.execute(text("UPDATE students SET is_active=1 WHERE is_active IS NULL"))
+            added.append("students.is_active")
         
         # Subjects
         if not column_exists(conn, "subjects", "medium_tag"):
             conn.execute(text("ALTER TABLE subjects ADD COLUMN medium_tag VARCHAR(32)"))
             added.append("subjects.medium_tag")
+        if not column_exists(conn, "subjects", "is_active"):
+            conn.execute(text("ALTER TABLE subjects ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+            conn.execute(text("UPDATE subjects SET is_active=1 WHERE is_active IS NULL"))
+            added.append("subjects.is_active")
 
         # Attendance
         if not column_exists(conn, "attendance", "period_no"):

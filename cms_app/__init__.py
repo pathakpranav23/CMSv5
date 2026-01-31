@@ -1,8 +1,8 @@
 import os
 import secrets
 import time
-from flask import Flask, session, request, url_for, flash, redirect, current_app
-from flask_login import LoginManager
+from flask import Flask, session, request, url_for, flash, redirect, current_app, render_template
+from flask_login import LoginManager, current_user
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import inspect
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -110,6 +110,33 @@ def create_app():
         except Exception:
             return ""
 
+    @app.before_request
+    def check_maintenance_mode():
+        # Allow static files (CSS, JS, images)
+        if request.endpoint and 'static' in request.endpoint:
+            return
+            
+        # Allow login/logout endpoints so Super Admin can access
+        if request.endpoint in ['main.login', 'main.logout']:
+            return
+
+        # Check if maintenance mode is enabled in DB
+        try:
+            from .models import SystemConfig
+            maint = db.session.get(SystemConfig, 'maintenance_mode')
+            if maint and maint.config_value == 'true':
+                # If user is logged in
+                if current_user.is_authenticated:
+                    # If super admin, allow access
+                    if getattr(current_user, 'is_super_admin', False):
+                        return
+                
+                # Otherwise, return 503 Maintenance
+                return render_template('maintenance.html'), 503
+        except Exception:
+            # If DB error or table missing, fail open (allow access)
+            pass
+
     @app.context_processor
     def inject_ui_flags():
         # Base UI flags
@@ -117,6 +144,21 @@ def create_app():
             "info_hints_enabled": app.config.get("INFO_HINTS_ENABLED", False),
             "fees_disabled": app.config.get("FEES_DISABLED", False),
         }
+        
+        # Inject Active System Messages
+        try:
+            from datetime import datetime
+            from .models import SystemMessage
+            now = datetime.utcnow()
+            msgs = db.session.query(SystemMessage).filter(
+                SystemMessage.is_active == True,
+                SystemMessage.start_date <= now,
+                ((SystemMessage.end_date == None) | (SystemMessage.end_date >= now))
+            ).all()
+            ctx['system_messages'] = msgs
+        except Exception:
+            ctx['system_messages'] = []
+
         # Add program theming context (derived from logged-in user's assigned program)
         try:
             from flask_login import current_user
@@ -150,7 +192,9 @@ def create_app():
             token = secrets.token_urlsafe(32)
             session["csrf_token"] = token
             session["csrf_token_issued_at"] = now
-        return {"csrf_token": token}
+        def _csrf_token():
+            return token
+        return {"csrf_token": _csrf_token, "csrf_token_value": token}
 
     @app.before_request
     def ensure_rate_key():
@@ -304,6 +348,15 @@ def create_app():
 
     from .timetable import timetable_bp
     app.register_blueprint(timetable_bp, url_prefix="/timetable")
+
+    from .faculty import faculty_bp
+    app.register_blueprint(faculty_bp, url_prefix="/faculty")
+
+    from .wizard import wizard as wizard_bp
+    app.register_blueprint(wizard_bp, url_prefix="/wizard")
+
+    from .super_admin import super_admin as super_admin_bp
+    app.register_blueprint(super_admin_bp, url_prefix="/super-admin")
 
     @app.errorhandler(RequestEntityTooLarge)
     def handle_large_upload(e):

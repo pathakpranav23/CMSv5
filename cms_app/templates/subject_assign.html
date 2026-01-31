@@ -1,5 +1,20 @@
 {% extends 'layout.html' %}
 {% block content %}
+<script>
+function showConfirm(btnId) {
+  // Hide the initial "Deactivate" button
+  document.getElementById('btn-deact-' + btnId).style.display = 'none';
+  // Show the confirmation group
+  document.getElementById('confirm-grp-' + btnId).style.display = 'inline-block';
+}
+
+function cancelConfirm(btnId) {
+  // Hide the confirmation group
+  document.getElementById('confirm-grp-' + btnId).style.display = 'none';
+  // Show the initial "Deactivate" button again
+  document.getElementById('btn-deact-' + btnId).style.display = 'inline-block';
+}
+</script>
 <div class="container py-4">
   <div class="section-header">
     <h2 class="mb-0">Assign Subject</h2>
@@ -66,6 +81,7 @@
               <th scope="col">Staff</th>
               <th scope="col">Role</th>
               <th scope="col">Academic Year</th>
+              <th scope="col" style="width: 100px;">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -75,6 +91,25 @@
               <td>{{ a.faculty_name or '—' }}</td>
               <td>{{ a.role|capitalize }}</td>
               <td>{{ a.academic_year or '—' }}</td>
+              <td>
+                <!-- Step 1: Initial Button -->
+                <button type="button" 
+                        id="btn-deact-{{ a.assignment_id }}"
+                        class="btn btn-sm btn-outline-danger" 
+                        onclick="showConfirm('{{ a.assignment_id }}')">
+                  <i class="bi bi-person-x"></i> Deactivate
+                </button>
+
+                <!-- Step 2: Confirmation Group (Hidden by default) -->
+                <div id="confirm-grp-{{ a.assignment_id }}" style="display: none;">
+                  <span class="text-danger small me-2">Sure?</span>
+                  <form action="{{ url_for('main.subject_assign_deactivate', assignment_id=a.assignment_id) }}" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-danger">Yes</button>
+                  </form>
+                  <button type="button" class="btn btn-sm btn-secondary" onclick="cancelConfirm('{{ a.assignment_id }}')">No</button>
+                </div>
+              </td>
             </tr>
             {% endfor %}
           </tbody>

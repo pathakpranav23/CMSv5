@@ -1,0 +1,24 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="mb-3"><i class="fas fa-magic text-primary"></i> Onboarding Wizard</h2>
+            <div class="progress" style="height: 25px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" 
+                     style="width: {% block progress_width %}0%{% endblock %};" 
+                     aria-valuenow="{% block progress_val %}0{% endblock %}" aria-valuemin="0" aria-valuemax="100">
+                    {% block progress_text %}Start{% endblock %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            {% block wizard_content %}{% endblock %}
+        </div>
+    </div>
+</div>
+{% endblock %}

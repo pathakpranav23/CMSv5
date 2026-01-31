@@ -1,0 +1,75 @@
+{% extends "wizard/base_wizard.html" %}
+
+{% block progress_width %}16%{% endblock %}
+{% block progress_val %}16{% endblock %}
+{% block progress_text %}Step 1: Institute Profile{% endblock %}
+
+{% block wizard_content %}
+<h4 class="card-title mb-4">Step 1: Institute & Trust Configuration</h4>
+<p class="text-muted">Define the top-level organization structure. This will appear on reports and headers.</p>
+
+<form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    
+    <!-- Trust Section -->
+    <h5 class="text-primary mt-4"><i class="fas fa-university"></i> Trust / Organization Details</h5>
+    <hr>
+    <div class="row g-3">
+        <div class="col-md-6">
+            <label for="trust_name" class="form-label">Trust Name *</label>
+            <input type="text" class="form-control" id="trust_name" name="trust_name" 
+                   value="{{ trust.trust_name if trust else '' }}" required>
+        </div>
+        <div class="col-md-3">
+            <label for="trust_code" class="form-label">Trust Code</label>
+            <input type="text" class="form-control" id="trust_code" name="trust_code" 
+                   value="{{ trust.trust_code if trust else '' }}">
+        </div>
+        <div class="col-md-12">
+            <label for="trust_slogan" class="form-label">Trust Slogan / Motto</label>
+            <input type="text" class="form-control" id="trust_slogan" name="trust_slogan" 
+                   value="{{ trust.slogan if trust else '' }}" placeholder="e.g. Believe to Progress">
+        </div>
+        <div class="col-md-6">
+            <label for="trust_vision" class="form-label">Vision</label>
+            <textarea class="form-control" id="trust_vision" name="trust_vision" rows="2">{{ trust.vision if trust else '' }}</textarea>
+        </div>
+        <div class="col-md-6">
+            <label for="trust_mission" class="form-label">Mission</label>
+            <textarea class="form-control" id="trust_mission" name="trust_mission" rows="2">{{ trust.mission if trust else '' }}</textarea>
+        </div>
+    </div>
+
+    <!-- Institute Section -->
+    <h5 class="text-primary mt-5"><i class="fas fa-school"></i> Institute Details</h5>
+    <hr>
+    <div class="row g-3">
+        <div class="col-md-6">
+            <label for="institute_name" class="form-label">Institute Name *</label>
+            <input type="text" class="form-control" id="institute_name" name="institute_name" 
+                   value="{{ institute.institute_name if institute else '' }}" required>
+        </div>
+        <div class="col-md-3">
+            <label for="institute_code" class="form-label">Institute Code</label>
+            <input type="text" class="form-control" id="institute_code" name="institute_code" 
+                   value="{{ institute.institute_code if institute else '' }}">
+        </div>
+        <div class="col-md-3">
+            <label for="aicte_code" class="form-label">AICTE Code</label>
+            <input type="text" class="form-control" id="aicte_code" name="aicte_code" 
+                   value="{{ institute.aicte_code if institute else '' }}">
+        </div>
+        <div class="col-md-6">
+            <label for="affiliation_body" class="form-label">Affiliation (University)</label>
+            <input type="text" class="form-control" id="affiliation_body" name="affiliation_body" 
+                   value="{{ institute.affiliation_body if institute else '' }}" placeholder="e.g. GTU, VNSGU">
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-end mt-5">
+        <button type="submit" class="btn btn-primary btn-lg">
+            Save & Next <i class="fas fa-arrow-right ms-2"></i>
+        </button>
+    </div>
+</form>
+{% endblock %}

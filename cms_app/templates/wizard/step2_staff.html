@@ -1,0 +1,77 @@
+{% extends "wizard/base_wizard.html" %}
+
+{% block progress_width %}32%{% endblock %}
+{% block progress_val %}32{% endblock %}
+{% block progress_text %}Step 2: Staff Import{% endblock %}
+
+{% block wizard_content %}
+<h4 class="card-title mb-4">Step 2: Staff & Faculty Import</h4>
+<p class="text-muted">Bulk import your teaching and non-teaching staff to get started quickly.</p>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card bg-light border-0 mb-3">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-file-csv text-success"></i> Bulk Import via CSV</h5>
+                <p class="card-text">Upload a CSV file with columns: <code>Name, Email, Role, Designation</code>.</p>
+                
+                <a href="{{ url_for('wizard.step2_template') }}" class="btn btn-outline-primary btn-sm mb-3">
+                    <i class="fas fa-download"></i> Download CSV Template
+                </a>
+
+                <form method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label for="file" class="form-label">Select CSV File</label>
+                        <input class="form-control" type="file" id="file" name="file" accept=".csv" required>
+                    </div>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-upload"></i> Import Staff
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <h5>Recently Added Staff</h5>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Designation</th>
+                        <th>Email</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for staff in recent_staff %}
+                    <tr>
+                        <td>{{ staff.full_name }}</td>
+                        <td><span class="badge bg-secondary">{{ staff.designation }}</span></td>
+                        <td class="small">{{ staff.email }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3" class="text-center text-muted">No staff added yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="d-flex justify-content-between mt-5">
+    <a href="{{ url_for('wizard.step1_institute') }}" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left"></i> Previous
+    </a>
+    <form method="POST" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="continue_next" value="true">
+        <button type="submit" class="btn btn-primary btn-lg">
+            Continue to Step 3 <i class="fas fa-arrow-right ms-2"></i>
+        </button>
+    </form>
+</div>
+{% endblock %}
