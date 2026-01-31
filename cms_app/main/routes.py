@@ -8254,32 +8254,62 @@ def user_delete(user_id: int):
     except Exception:
         pass
 
-    # Dependency guards
-    deps = {
-        "students": db.session.scalar(select(func.count()).select_from(Student).filter_by(user_id_fk=u.user_id)),
-        "faculty": db.session.scalar(select(func.count()).select_from(Faculty).filter_by(user_id_fk=u.user_id)),
-        "assignments": db.session.scalar(select(func.count()).select_from(CourseAssignment).filter_by(faculty_id_fk=u.user_id)),
-        "materials": db.session.scalar(select(func.count()).select_from(SubjectMaterial).filter_by(faculty_id_fk=u.user_id)),
-        "material_logs": db.session.scalar(select(func.count()).select_from(SubjectMaterialLog).filter_by(actor_user_id_fk=u.user_id)),
-        "announcements": db.session.scalar(select(func.count()).select_from(Announcement).filter_by(created_by=u.user_id)),
-        "announcement_dismissals": db.session.scalar(select(func.count()).select_from(AnnouncementDismissal).filter_by(user_id_fk=u.user_id)),
-        "password_changes": db.session.scalar(select(func.count()).select_from(PasswordChangeLog).filter_by(user_id_fk=u.user_id)) + db.session.scalar(select(func.count()).select_from(PasswordChangeLog).filter_by(changed_by_user_id_fk=u.user_id)),
+    # Dependency guards - CHANGED: We now cascade delete for Faculty/Staff
+    # We still block deletion if it's a Student with heavy records (Attendance, Fees, Results) 
+    # to prevent accidental data loss of academic records.
+    
+    # Find linked student record if any
+    student_rec = db.session.query(Student).filter_by(user_id_fk=u.user_id).first()
+    enrollment_no = student_rec.enrollment_no if student_rec else '0'
+
+    deps_student = {
+        "attendance": db.session.scalar(select(func.count()).select_from(Attendance).filter_by(student_id_fk=enrollment_no)),
+        "fees": db.session.scalar(select(func.count()).select_from(FeesRecord).filter_by(student_id_fk=enrollment_no)),
+        "results": db.session.scalar(select(func.count()).select_from(StudentSemesterResult).filter_by(student_id_fk=enrollment_no)),
     }
-    if sum(deps.values()) > 0:
+    
+    # If user is a student and has academic records, block deletion
+    if u.role.lower() == 'student' and sum(deps_student.values()) > 0:
         msg = (
-            f"Cannot delete user '{u.username}'; dependent records exist — "
-            f"Students: {deps['students']}, Faculty: {deps['faculty']}, Assignments: {deps['assignments']}, "
-            f"Materials: {deps['materials']}, Material Logs: {deps['material_logs']}, "
-            f"Announcements: {deps['announcements']}, Dismissals: {deps['announcement_dismissals']}, "
-            f"Password Logs: {deps['password_changes']}"
+            f"Cannot delete student '{u.username}'; academic records exist — "
+            f"Attendance: {deps_student['attendance']}, Fees: {deps_student['fees']}, Results: {deps_student['results']}. "
+            "Please archive the student instead."
         )
         flash(msg, "danger")
         return redirect(url_for("main.users_list"))
 
     try:
+        # CASCADE DELETE LOGIC
+        
+        # 1. Faculty/Staff Dependencies
+        if u.role.lower() in ['faculty', 'principal', 'clerk', 'admin']:
+            # Delete Course Assignments
+            db.session.query(CourseAssignment).filter_by(faculty_id_fk=u.user_id).delete()
+            # Delete Subject Materials
+            db.session.query(SubjectMaterial).filter_by(faculty_id_fk=u.user_id).delete()
+            # Delete Subject Material Logs
+            db.session.query(SubjectMaterialLog).filter_by(actor_user_id_fk=u.user_id).delete()
+            # Delete Faculty Profile
+            db.session.query(Faculty).filter_by(user_id_fk=u.user_id).delete()
+            
+        # 2. Student Profile (if no heavy dependencies)
+        if u.role.lower() == 'student':
+            db.session.query(Student).filter_by(user_id_fk=u.user_id).delete()
+
+        # 3. Common Dependencies
+        # Announcements (Set created_by to NULL or delete? Let's delete for now to be clean)
+        # Note: Deleting announcements might affect audiences. For safety, let's just unlink ownership.
+        db.session.query(Announcement).filter_by(created_by=u.user_id).update({Announcement.created_by: None})
+        db.session.query(AnnouncementDismissal).filter_by(user_id_fk=u.user_id).delete()
+        
+        # Password Logs
+        db.session.query(PasswordChangeLog).filter_by(user_id_fk=u.user_id).delete()
+        db.session.query(PasswordChangeLog).filter_by(changed_by_user_id_fk=u.user_id).delete()
+
         db.session.delete(u)
         db.session.commit()
-        flash("User deleted successfully.", "success")
+        flash(f"User '{u.username}' and associated profiles deleted successfully.", "success")
+
     except Exception as e:
         db.session.rollback()
         flash(f"Failed to delete user: {e}", "danger")
