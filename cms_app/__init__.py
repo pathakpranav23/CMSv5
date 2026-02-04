@@ -152,9 +152,9 @@ def create_app():
         
         # Inject Active System Messages
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             from .models import SystemMessage
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             msgs = db.session.query(SystemMessage).filter(
                 SystemMessage.is_active == True,
                 SystemMessage.start_date <= now,

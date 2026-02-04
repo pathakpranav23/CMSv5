@@ -1,5 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from . import db
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
 from flask_login import UserMixin
 
 # ==========================================
@@ -19,7 +23,7 @@ class Trust(db.Model):
     slogan = db.Column(db.Text)
     vision = db.Column(db.Text)
     mission = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     
     # New: Status for "Kill Switch" per tenant
     is_active = db.Column(db.Boolean, default=True)
@@ -47,7 +51,7 @@ class Institute(db.Model):
     affiliation_body = db.Column(db.String(64))
     aicte_code = db.Column(db.String(32))
     
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     
     # New: Status per institute
     is_active = db.Column(db.Boolean, default=True)
@@ -248,7 +252,7 @@ class SemesterCoordinator(db.Model):
     academic_year = db.Column(db.String(16), nullable=False)
     medium_tag = db.Column(db.String(32))
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
 
 
 # ==========================================
@@ -277,8 +281,8 @@ class StudentSubjectEnrollment(db.Model):
     academic_year = db.Column(db.String(16))
     is_active = db.Column(db.Boolean, default=True)
     source = db.Column(db.String(32)) # 'manual', 'bulk', 'auto'
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, onupdate=utc_now)
 
 
 # ==========================================
@@ -302,8 +306,8 @@ class ExamScheme(db.Model):
     grading_scheme_json = db.Column(db.Text)
     credit_rules_json = db.Column(db.Text)
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, onupdate=utc_now)
 
 
 class Grade(db.Model):
@@ -349,8 +353,8 @@ class ExamMark(db.Model):
     grade_point = db.Column(db.Float)
     grade_letter = db.Column(db.String(4))
     is_absent = db.Column(db.Boolean)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, onupdate=utc_now)
 
     __table_args__ = (
         db.UniqueConstraint("student_id_fk", "subject_id_fk", "semester", "academic_year", "attempt_no", name="uq_exam_mark_attempt"),
@@ -383,8 +387,8 @@ class FeeStructure(db.Model):
     is_frozen = db.Column(db.Boolean, default=False)
     medium_tag = db.Column(db.String(32))
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, onupdate=utc_now)
 
 
 class ProgramBankDetails(db.Model):
@@ -402,8 +406,8 @@ class ProgramBankDetails(db.Model):
     gstin = db.Column(db.String(64))
     pan = db.Column(db.String(16))
     active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, onupdate=utc_now)
 
 
 class FeePayment(db.Model):
@@ -427,7 +431,7 @@ class FeePayment(db.Model):
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.user_id"))
     verified_by_user_id = db.Column(db.Integer, db.ForeignKey("users.user_id"))
     
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     verified_at = db.Column(db.DateTime)
     bank_credit_at = db.Column(db.DateTime)
     
@@ -443,7 +447,7 @@ class FeesRecord(db.Model):
     amount_paid = db.Column(db.Float)
     date_paid = db.Column(db.Date)
     semester = db.Column(db.Integer)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
 
 
 # ==========================================
@@ -495,7 +499,7 @@ class Notification(db.Model):
     data_json = db.Column(db.Text)
     payment_id_fk = db.Column(db.Integer, db.ForeignKey("fee_payments.payment_id"))
     is_read = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     read_at = db.Column(db.DateTime)
 
 
@@ -509,10 +513,12 @@ class Announcement(db.Model):
     program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))
     start_at = db.Column(db.DateTime)
     end_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime)
     created_by = db.Column(db.Integer, db.ForeignKey("users.user_id"))
     actor_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+
+    audiences = db.relationship("AnnouncementAudience", backref="announcement", lazy=True)
 
 
 class AnnouncementAudience(db.Model):
@@ -527,7 +533,7 @@ class AnnouncementRecipient(db.Model):
     recipient_id = db.Column(db.Integer, primary_key=True)
     announcement_id_fk = db.Column(db.Integer, db.ForeignKey("announcements.announcement_id"), nullable=False)
     student_id_fk = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
 
 
 class AnnouncementDismissal(db.Model):
@@ -535,7 +541,7 @@ class AnnouncementDismissal(db.Model):
     dismissal_id = db.Column(db.Integer, primary_key=True)
     announcement_id_fk = db.Column(db.Integer, db.ForeignKey("announcements.announcement_id"), nullable=False)
     user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)
-    dismissed_at = db.Column(db.DateTime, default=datetime.utcnow)
+    dismissed_at = db.Column(db.DateTime, default=utc_now)
 
 
 class PasswordChangeLog(db.Model):
@@ -543,7 +549,7 @@ class PasswordChangeLog(db.Model):
     log_id = db.Column(db.Integer, primary_key=True)
     user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)
     changed_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)
-    changed_at = db.Column(db.DateTime, default=datetime.utcnow)
+    changed_at = db.Column(db.DateTime, default=utc_now)
     method = db.Column(db.String(32))
     note = db.Column(db.String(255))
 
@@ -562,7 +568,7 @@ class SubjectMaterial(db.Model):
     academic_year = db.Column(db.String(16))
     is_published = db.Column(db.Boolean)
     is_flagged = db.Column(db.Boolean)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime)
 
 
@@ -574,7 +580,25 @@ class SubjectMaterialLog(db.Model):
     actor_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
     actor_role = db.Column(db.String(32))
     meta_json = db.Column(db.Text)
-    at = db.Column(db.DateTime, default=datetime.utcnow)
+    at = db.Column(db.DateTime, default=utc_now)
+
+
+class ImportLog(db.Model):
+    __tablename__ = "import_logs"
+    log_id = db.Column(db.Integer, primary_key=True)
+    user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    kind = db.Column(db.String(16), nullable=False)  # students | subjects | fees
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))
+    semester = db.Column(db.Integer)
+    medium_tag = db.Column(db.String(32))
+    path = db.Column(db.String(255))
+    dry_run = db.Column(db.Boolean, default=False)
+    created_count = db.Column(db.Integer, default=0)
+    updated_count = db.Column(db.Integer, default=0)
+    skipped_count = db.Column(db.Integer, default=0)
+    errors_count = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    extra_json = db.Column(db.Text)
 
 
 # ==========================================
@@ -593,7 +617,7 @@ class SystemMessage(db.Model):
     # Type: 'info', 'success', 'warning', 'danger' (for alerts), 'popup' (for modals)
     message_type = db.Column(db.String(32), default='info') 
     
-    start_date = db.Column(db.DateTime, default=datetime.utcnow)
+    start_date = db.Column(db.DateTime, default=utc_now)
     end_date = db.Column(db.DateTime)
     
     is_active = db.Column(db.Boolean, default=True)

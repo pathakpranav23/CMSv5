@@ -13,7 +13,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from functools import wraps
 from ..email_utils import send_email
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import math
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
@@ -224,7 +224,7 @@ def fees_bank_details_edit():
             existing.pan = pan
             existing.active = active
             existing.qr_image_path = qr_image_path
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(timezone.utc)
         else:
             existing = ProgramBankDetails(
                 program_id_fk=program.program_id,
@@ -735,7 +735,7 @@ def fees_entry():
                     if not bool(getattr(row, "is_frozen", False)):
                         row.amount = amount_val
                 row.is_active = True
-                row.updated_at = datetime.utcnow()
+                row.updated_at = datetime.now(timezone.utc)
                 if action == "freeze":
                     try:
                         # Freeze this component (preserve existing amount)
@@ -922,7 +922,7 @@ def fees_receipt():
         semester=semester,
         items=items,
         total_amount=total_amount,
-        issued_at=datetime.utcnow(),
+        issued_at=datetime.now(timezone.utc),
     )
 
 # Dedicated semester receipt generator with program + semester combos
@@ -1062,7 +1062,7 @@ def fees_receipt_semester():
     preview_receipt_no = None
     try:
         if (mode == "preview") and selected_program and semester:
-            ts = datetime.utcnow().strftime("%Y%m%d%H%M")
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
             preview_receipt_no = f"TEMP-{selected_program.program_id}-{semester}-{ts}"
     except Exception:
         preview_receipt_no = None
@@ -1380,7 +1380,7 @@ def fees_payment(enrollment_no):
     except Exception:
         pass
     # Unique transaction reference
-    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     txn_ref = f"PAY-{s.enrollment_no}-{semester}-{ts}"
     note_parts = [
         f"Sem-{semester}",
@@ -1583,7 +1583,7 @@ def fees_payment_verify(payment_id):
 
     try:
         fp.status = "verified"
-        fp.verified_at = datetime.utcnow()
+        fp.verified_at = datetime.now(timezone.utc)
         fp.verified_by_fk = getattr(current_user, "user_id", None)
         fp.payer_name = payer_name
         fp.bank_credit_at = bank_credit_at
@@ -3662,7 +3662,7 @@ def notification_dismiss(notification_id):
         return jsonify({"ok": False, "error": "forbidden"}), 403
     try:
         n.is_read = True
-        n.read_at = datetime.utcnow()
+        n.read_at = datetime.now(timezone.utc)
         db.session.commit()
         return jsonify({"ok": True})
     except Exception:
@@ -4516,7 +4516,7 @@ def forgot_password():
                     severity="warning",
                     is_active=True,
                     created_by=creator_id,
-                    start_at=datetime.utcnow()
+                    start_at=datetime.now(timezone.utc)
                 )
                 db.session.add(ann)
                 db.session.flush()
@@ -4627,7 +4627,7 @@ def account_settings():
                     # Non-student: initiate 2FA via email code
                     code = "".join(secrets.choice("0123456789") for _ in range(6))
                     session["twofa_code"] = code
-                    session["twofa_expires"] = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
+                    session["twofa_expires"] = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
                     session["twofa_pw_hash"] = generate_password_hash(new_pw)
                     session["twofa_user_id"] = getattr(current_user, "user_id", None)
 
@@ -4672,7 +4672,7 @@ def account_settings():
                     exp = datetime.fromisoformat(expires_iso) if expires_iso else None
                 except Exception:
                     exp = None
-                if exp and datetime.utcnow() > exp:
+                if exp and datetime.now(timezone.utc) > exp:
                     errors.append("Verification code has expired. Please try again.")
                 if input_code != code:
                     errors.append("Invalid verification code.")
@@ -8417,7 +8417,7 @@ def user_edit(user_id):
                 exp = datetime.fromisoformat(expires_iso) if expires_iso else None
                 if not code or not pw_hash or not target_uid:
                     errors.append("No pending verification found.")
-                elif exp and datetime.utcnow() > exp:
+                elif exp and datetime.now(timezone.utc) > (exp.replace(tzinfo=timezone.utc) if exp.tzinfo is None else exp):
                     errors.append("Verification code has expired. Please start again.")
                 elif input_code != code:
                     errors.append("Invalid verification code.")
@@ -9878,7 +9878,7 @@ def attendance_search():
         else:
             # Default to month; if not provided, use current month
             if not month_str:
-                today = _dt.datetime.utcnow().date()
+                today = _dt.datetime.now(_dt.timezone.utc).date()
                 month_str = today.strftime("%Y-%m")
             y, m = month_str.split("-")
             y = int(y)
@@ -11270,7 +11270,7 @@ def fees_heads():
                         component_name=comp_name,
                         amount=0.0,
                         is_active=True,
-                        updated_at=datetime.utcnow(),
+                        updated_at=datetime.now(timezone.utc),
                     )
                     try:
                         db.session.add(row)
@@ -11295,7 +11295,7 @@ def fees_heads():
                     for r in rows:
                         if _norm(r.component_name) == _norm(comp_name):
                             r.component_name = new_name
-                            r.updated_at = datetime.utcnow()
+                            r.updated_at = datetime.now(timezone.utc)
                             changed += 1
                     db.session.commit()
                     if changed:
@@ -11321,7 +11321,7 @@ def fees_heads():
                     for r in rows:
                         if _norm(r.component_name) == _norm(comp_name):
                             r.is_active = False
-                            r.updated_at = datetime.utcnow()
+                            r.updated_at = datetime.now(timezone.utc)
                             changed += 1
                     db.session.commit()
                     if changed:
@@ -11407,7 +11407,7 @@ def fees_heads_seed_all():
                             component_name=comp,
                             amount=0.0,
                             is_active=True,
-                            updated_at=datetime.utcnow(),
+                            updated_at=datetime.now(timezone.utc),
                         )
                         db.session.add(row)
                         total_created += 1
@@ -11544,7 +11544,7 @@ def fees_import():
                             created += 1
                         else:
                             fs.amount = amount
-                            fs.updated_at = datetime.utcnow()
+                            fs.updated_at = datetime.now(timezone.utc)
                             updated += 1
                     if not dry_run_flag:
                         db.session.commit()
@@ -13048,7 +13048,7 @@ def api_reports_subject_lectures():
         if k not in sessions:
             sessions[k] = {"subject_id": k[0], "division_id": k[1], "date": k[2], "period": k[3]}
     items = list(sessions.values())
-    items.sort(key=lambda x: ((x.get("date") or datetime.utcnow().date()), int(x.get("period") or 0)))
+    items.sort(key=lambda x: ((x.get("date") or datetime.now(timezone.utc).date()), int(x.get("period") or 0)))
     subj = db.session.get(Subject, sid) if sid else None
     div_map = {d.division_id: d.division_code for d in db.session.execute(select(Division)).scalars().all()}
     for it in items:
@@ -13134,7 +13134,7 @@ def subject_lectures_export_csv():
         if k not in sessions:
             sessions[k] = {"subject_id": k[0], "division_id": k[1], "date": k[2], "period": k[3]}
     items = list(sessions.values())
-    items.sort(key=lambda x: ((x.get("date") or datetime.utcnow().date()), int(x.get("period") or 0)))
+    items.sort(key=lambda x: ((x.get("date") or datetime.now(timezone.utc).date()), int(x.get("period") or 0)))
     subj = db.session.get(Subject, sid) if sid else None
     prog = db.session.get(Program, pid) if pid else None
     import io, csv as _csv
@@ -13332,7 +13332,7 @@ def api_reports_absentees():
         sid = assigned.subject_id_fk if assigned else None
     if not sid:
         return api_success({"items": [], "total": 0}, {"subject_id": None})
-    cutoff_date = (datetime.utcnow() - timedelta(days=days)).date()
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).date()
     q = select(Attendance).filter(Attendance.subject_id_fk == sid)
     try:
         q = q.filter(Attendance.date_marked >= cutoff_date)
@@ -13372,7 +13372,7 @@ def absentees_export_csv():
         days = 7
     if not sid:
         return Response(b"", headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=absentees.csv"})
-    cutoff_date = (datetime.utcnow() - timedelta(days=days)).date()
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).date()
     q = select(Attendance).filter(Attendance.subject_id_fk == sid)
     try:
         q = q.filter(Attendance.date_marked >= cutoff_date)
@@ -13979,7 +13979,7 @@ def admin_seed_attendance_mock():
         db.session.commit()
         students = db.session.execute(select(Student).filter(Student.program_id_fk == p.program_id, Student.current_semester == semester).limit(10)).scalars().all()
     subj_id = getattr(s, "subject_id", None)
-    base_time = datetime.utcnow()
+    base_time = datetime.now(timezone.utc)
     for idx, st in enumerate(students):
         for j in range(10):
             status = "P" if ((idx >= 5 and j < 9) or (idx < 5 and j < 4)) else "A"

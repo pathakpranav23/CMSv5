@@ -42,7 +42,7 @@ def main():
                             component_name=comp,
                             amount=0.0,
                             is_active=True,
-                            updated_at=datetime.utcnow(),
+                            updated_at=datetime.now(timezone.utc),
                         )
                         db.session.add(row)
                         total_created += 1

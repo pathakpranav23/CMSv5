@@ -23,7 +23,7 @@ def test_nep_exit_report(client, app):
         from cms_app.models import SubjectType
         stype = SubjectType.query.first()
         if not stype:
-            stype = SubjectType(type_code="MJ", description="Major")
+            stype = SubjectType(type_name="Major", type_code="MJ", description="Major")
             db.session.add(stype)
             db.session.flush()
             

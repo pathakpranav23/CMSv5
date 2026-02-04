@@ -42,7 +42,7 @@ def messages():
         start_date_str = request.form.get('start_date')
         end_date_str = request.form.get('end_date')
         
-        start_date = datetime.strptime(start_date_str, '%Y-%m-%dT%H:%M') if start_date_str else datetime.utcnow()
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%dT%H:%M') if start_date_str else datetime.now(timezone.utc)
         end_date = datetime.strptime(end_date_str, '%Y-%m-%dT%H:%M') if end_date_str else None
         
         new_msg = SystemMessage(
