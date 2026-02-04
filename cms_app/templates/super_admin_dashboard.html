@@ -1,0 +1,116 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-0">Super Admin Dashboard</h2>
+            <div class="text-muted">Manage Trusts, Institutes, and Global Configurations</div>
+        </div>
+        <div>
+            <a href="{{ url_for('main.add_trust') }}" class="btn btn-primary">+ Add New Trust</a>
+        </div>
+    </div>
+
+    <!-- Stats Overview -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card bg-primary text-white h-100">
+                <div class="card-body">
+                    <div class="h5">Total Trusts</div>
+                    <div class="display-4">{{ trusts|length }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white h-100">
+                <div class="card-body">
+                    <div class="h5">Total Institutes</div>
+                    <div class="display-4">{{ total_institutes }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-info text-white h-100">
+                <div class="card-body">
+                    <div class="h5">Active Users</div>
+                    <div class="display-4">{{ active_users }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-warning text-dark h-100">
+                <div class="card-body">
+                    <div class="h5">Pending Onboarding</div>
+                    <div class="display-4">0</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trusts List -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-white">
+            <h5 class="mb-0">Registered Trusts / Tenants</h5>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Trust Name</th>
+                        <th>Code</th>
+                        <th>Institutes</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trust in trusts %}
+                    <tr>
+                        <td>#{{ trust.trust_id }}</td>
+                        <td>
+                            <div class="fw-bold">{{ trust.trust_name }}</div>
+                            <div class="small text-muted">{{ trust.contact_email or 'No Email' }}</div>
+                        </td>
+                        <td><span class="badge bg-secondary">{{ trust.trust_code or 'N/A' }}</span></td>
+                        <td>
+                            {% if trust.institutes %}
+                                <ul class="list-unstyled mb-0 small">
+                                {% for inst in trust.institutes %}
+                                    <li>• {{ inst.institute_name }}</li>
+                                {% endfor %}
+                                </ul>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if trust.is_active %}
+                                <span class="badge bg-success">Active</span>
+                            {% else %}
+                                <span class="badge bg-danger">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="d-flex gap-1">
+                                <a href="{{ url_for('main.manage_trust', trust_id=trust.trust_id) }}" class="btn btn-sm btn-outline-primary">Manage</a>
+                                <a href="{{ url_for('main.set_trust_context', trust_id=trust.trust_id) }}" class="btn btn-sm btn-outline-success" title="Switch Workspace">
+                                    <i class="bi bi-arrow-repeat"></i> Workspace
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-muted">
+                            No trusts found. 
+                            <a href="{{ url_for('main.add_trust') }}" class="fw-bold">Add New Trust</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

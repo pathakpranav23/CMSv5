@@ -1,0 +1,75 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-1">
+                    <li class="breadcrumb-item"><a href="{{ url_for('main.super_admin_dashboard') }}">Dashboard</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">Manage Trust</li>
+                </ol>
+            </nav>
+            <h2 class="mb-0">{{ trust.trust_name }}</h2>
+            <div class="text-muted">Code: {{ trust.trust_code or 'N/A' }} | Email: {{ trust.contact_email or 'N/A' }}</div>
+        </div>
+        <div>
+            <a href="{{ url_for('main.set_trust_context', trust_id=trust.trust_id) }}" class="btn btn-outline-success me-2">
+                <i class="bi bi-arrow-repeat"></i> Switch to Workspace
+            </a>
+            <a href="{{ url_for('main.edit_trust', trust_id=trust.trust_id) }}" class="btn btn-outline-primary">Edit Details</a>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- Institutes Section -->
+        <div class="col-md-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Institutes / Colleges</h5>
+                    <a href="{{ url_for('main.add_institute_to_trust', trust_id=trust.trust_id) }}" class="btn btn-sm btn-primary">+ Add Institute</a>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>ID</th>
+                                <th>Institute Name</th>
+                                <th>Code</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for inst in trust.institutes %}
+                            <tr>
+                                <td>#{{ inst.institute_id }}</td>
+                                <td>{{ inst.institute_name }}</td>
+                                <td>{{ inst.institute_code or '-' }}</td>
+                                <td>
+                                    <a href="{{ url_for('main.edit_institute', institute_id=inst.institute_id) }}" class="btn btn-sm btn-outline-secondary">Settings</a>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="4" class="text-center py-3 text-muted">No institutes found under this trust.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trust Admins Section (Placeholder) -->
+        <div class="col-md-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-white">
+                    <h5 class="mb-0">Trust Administrators</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-0">Admin management coming soon. Currently, users are linked via `trust_id_fk`.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

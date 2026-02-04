@@ -46,7 +46,17 @@ def ensure_student_user(student: Student) -> tuple:
 
     Returns: (username, plain_password, user_obj)
     """
-    username = (student.enrollment_no or '').strip()
+    # Preference: Mobile > Enrollment No
+    username = ""
+    mobile_digits = ""
+    if student.mobile:
+        mobile_digits = ''.join(ch for ch in student.mobile if ch.isdigit())
+        if len(mobile_digits) >= 10:
+             username = mobile_digits
+    
+    if not username:
+        username = (student.enrollment_no or '').strip()
+
     if not username:
         # Fallback to generated username if enrollment missing
         base = (student.first_name or 'student').replace(' ', '').lower()
@@ -55,7 +65,13 @@ def ensure_student_user(student: Student) -> tuple:
     user = db.session.execute(
         select(User).filter_by(username=username)
     ).scalars().first()
-    plain_password = gen_password(10)
+    
+    # Password Logic: Mobile if available, else random
+    if mobile_digits and len(mobile_digits) >= 10:
+        plain_password = mobile_digits
+    else:
+        plain_password = gen_password(10)
+        
     password_hash = generate_password_hash(plain_password)
 
     # Determine program id
@@ -64,7 +80,13 @@ def ensure_student_user(student: Student) -> tuple:
     role = 'student'
 
     if not user:
-        user = User(username=username, password_hash=password_hash, role=role, program_id_fk=program_id)
+        user = User(
+            username=username, 
+            password_hash=password_hash, 
+            role=role, 
+            program_id_fk=program_id,
+            must_change_password=True
+        )
         db.session.add(user)
         db.session.flush()  # assign user_id
     else:
@@ -72,6 +94,7 @@ def ensure_student_user(student: Student) -> tuple:
         user.role = role
         user.program_id_fk = program_id
         user.password_hash = password_hash
+        user.must_change_password = True
 
     # Link student to user
     student.user_id_fk = user.user_id

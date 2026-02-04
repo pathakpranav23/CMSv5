@@ -8,6 +8,7 @@ from sqlalchemy import inspect
 from werkzeug.exceptions import RequestEntityTooLarge
 from functools import wraps
 from flask_migrate import Migrate
+from datetime import timedelta
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_caching import Cache
@@ -34,6 +35,10 @@ cache = Cache()
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key")
+    
+    # Session Timeout: 5 minutes
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=5)
+    
     REDIS_URL = os.environ.get("REDIS_URL")
     if REDIS_URL:
         app.config["CACHE_TYPE"] = "RedisCache"

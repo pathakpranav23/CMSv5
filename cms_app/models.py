@@ -108,13 +108,21 @@ class User(UserMixin, db.Model):
     program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))  # For Principals
     username = db.Column(db.String(128), unique=True, nullable=False)
     email = db.Column(db.String(128))
+    # New: Mobile for Recovery
+    mobile = db.Column(db.String(20))
     password_hash = db.Column(db.String(256))
     role = db.Column(db.String(32), default="student")  # admin, principal, faculty, student, clerk
     preferred_lang = db.Column(db.String(8))
     is_active = db.Column(db.Boolean, default=True)
+    
+    # New: Force password change on first login
+    must_change_password = db.Column(db.Boolean, default=False)
 
     # New: Super Admin Flag
     is_super_admin = db.Column(db.Boolean, default=False)
+    
+    # New: Tenant/Trust Isolation
+    trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"))
 
     def get_id(self):
         return str(self.user_id)
@@ -132,6 +140,7 @@ class Faculty(db.Model):
     department = db.Column(db.String(64))
     
     # Extra profile fields
+    photo_url = db.Column(db.String(255))
     emp_id = db.Column(db.String(32))
     date_of_joining = db.Column(db.Date)
     highest_qualification = db.Column(db.String(64))

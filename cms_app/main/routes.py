@@ -4,7 +4,7 @@ from werkzeug.utils import secure_filename
 import os
 import csv
 from sqlalchemy import or_, select, and_, cast, Integer
-from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator
+from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
 from ..api_utils import api_success, api_error
@@ -2254,6 +2254,13 @@ def login():
             flash("Invalid credentials.", "danger")
             return render_template("login.html")
         login_user(user)
+        session.permanent = True  # Enforce 5 minute timeout
+
+        # Force password change if required
+        if getattr(user, 'must_change_password', False):
+            flash("Please change your password to continue.", "warning")
+            return redirect(url_for("main.change_password_first"))
+
         flash("Logged in successfully.", "success")
         # Email reminder if none configured
         try:
@@ -2285,12 +2292,138 @@ def logout():
     return redirect(url_for("main.login"))
 
 
+@main_bp.route("/change_password_first", methods=["GET", "POST"])
+@login_required
+def change_password_first():
+    # If not required, redirect to dashboard
+    if not getattr(current_user, 'must_change_password', False):
+        return redirect(url_for("main.dashboard"))
+
+    if request.method == "POST":
+        new_pass = request.form.get("new_password")
+        confirm_pass = request.form.get("confirm_password")
+        email = (request.form.get("email") or "").strip()
+        mobile = (request.form.get("mobile") or "").strip()
+        
+        if not new_pass or not confirm_pass:
+            flash("Please fill in all password fields.", "danger")
+        elif new_pass != confirm_pass:
+            flash("Passwords do not match.", "danger")
+        elif len(new_pass) < 6:
+            flash("Password must be at least 6 characters.", "danger")
+        elif not email:
+            flash("Recovery Email is required.", "danger")
+        elif not mobile:
+            flash("Recovery Mobile Number is required.", "danger")
+        else:
+            # Update password and recovery info
+            current_user.password_hash = generate_password_hash(new_pass)
+            current_user.must_change_password = False
+            current_user.email = email
+            current_user.mobile = mobile
+
+            # Auto-sync to Faculty/Student profile if applicable
+            try:
+                from ..models import Faculty, Student
+                if current_user.role == "Faculty":
+                    fac = db.session.execute(select(Faculty).filter_by(user_id_fk=current_user.user_id)).scalars().first()
+                    if fac:
+                        fac.email = email
+                        fac.mobile = mobile
+                elif current_user.role == "Student":
+                    stu = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
+                    if stu:
+                        stu.email = email
+                        stu.mobile = mobile
+            except Exception:
+                pass # Fail silently on sync, core user update is priority
+
+            db.session.commit()
+            
+            flash("Account secured successfully. Please log in again.", "success")
+            logout_user()
+            return redirect(url_for("main.login"))
+            
+    return render_template("change_password_first.html")
+
+
+@main_bp.route("/api/keep-alive", methods=["POST"])
+@login_required
+def keep_alive():
+    """
+    Extends the user session. Called via JS when user is active.
+    Returns 200 OK.
+    """
+    session.modified = True
+    return jsonify({"status": "ok", "message": "Session extended"})
+
+@main_bp.context_processor
+def inject_trust_context():
+    from ..models import Trust
+    if not current_user.is_authenticated:
+        return {}
+    
+    is_super = getattr(current_user, "is_super_admin", False)
+    if not is_super:
+        return {}
+        
+    active_trust_id = session.get("active_trust_id")
+    active_trust_obj = None
+    if active_trust_id:
+        active_trust_obj = db.session.get(Trust, active_trust_id)
+        
+    # Get all trusts for the dropdown
+    all_trusts = db.session.execute(select(Trust).order_by(Trust.trust_name)).scalars().all()
+    
+    return {
+        "ctx_active_trust": active_trust_obj,
+        "ctx_all_trusts": all_trusts
+    }
+
+@main_bp.route("/set-trust-context/<int:trust_id>")
+@login_required
+def set_trust_context(trust_id):
+    if not getattr(current_user, "is_super_admin", False):
+        flash("Unauthorized", "danger")
+        return redirect(url_for("main.dashboard"))
+        
+    if trust_id == 0:
+        # 0 means Global View
+        session.pop("active_trust_id", None)
+        flash("Switched to Global View", "info")
+        return redirect(url_for("main.super_admin_dashboard"))
+        
+    from ..models import Trust
+    trust = db.session.get(Trust, trust_id)
+    if not trust:
+        flash("Trust not found", "danger")
+        return redirect(url_for("main.super_admin_dashboard"))
+        
+    session["active_trust_id"] = trust_id
+    flash(f"Switched context to {trust.trust_name}", "success")
+    return redirect(url_for("main.dashboard"))
+
 @main_bp.route("/dashboard")
 @login_required
 # Cache removed to ensure redirects (like Faculty -> dedicated dashboard) always fire immediately
 def dashboard():
-    from ..models import Student, Notification, FeePayment
+    # Super Admin Redirection Logic
+    # If Super Admin accesses /dashboard without a specific trust_id context, redirect to Super Admin Dashboard.
+    # If trust_id is provided, they are "Acting as Admin" for that Trust.
+    is_super = getattr(current_user, "is_super_admin", False)
+    trust_id_arg = request.args.get("trust_id")
+    
+    if is_super and not trust_id_arg:
+        # Check session for active trust context
+        session_trust_id = session.get("active_trust_id")
+        if session_trust_id:
+             trust_id_arg = str(session_trust_id)
+        else:
+             return redirect(url_for("main.super_admin_dashboard"))
+
+    from ..models import Student, Notification, FeePayment, Trust, Institute
     role = (getattr(current_user, "role", None) or (request.args.get("role") or "principal")).strip().lower()
+    role_lower = role
 
     # Redirect Faculty to their dedicated dashboard
     if role == "faculty":
@@ -2302,6 +2435,21 @@ def dashboard():
 
     user_id_raw = str(getattr(current_user, "user_id", "")) or (request.args.get("user_id") or "")
     program_id_raw = str(getattr(current_user, "program_id_fk", "")) or (request.args.get("program_id") or "")
+
+    # Determine Effective Trust Context
+    effective_trust_id = None
+    acting_trust = None
+    if is_super and trust_id_arg:
+        try:
+            effective_trust_id = int(trust_id_arg)
+            acting_trust = db.session.get(Trust, effective_trust_id)
+            if acting_trust:
+                role = "admin"
+                role_lower = "admin"
+        except:
+            pass
+    elif not is_super:
+        effective_trust_id = getattr(current_user, "trust_id_fk", None)
 
     # Resolve selected program
     selected_program = None
@@ -2321,8 +2469,21 @@ def dashboard():
                     selected_program = db.session.get(Program, u.program_id_fk)
             except Exception:
                 selected_program = None
-        if not selected_program:
-            selected_program = db.session.execute(select(Program).filter_by(program_name="BCA")).scalars().first()
+    
+    # Auto-select program if not set (Scoped to Trust)
+    if not selected_program:
+        # Prefer "BCA" if it exists within the trust, otherwise first available
+        q_prog = select(Program)
+        if effective_trust_id:
+            q_prog = q_prog.join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+        
+        # Try to find BCA first
+        candidate = db.session.execute(q_prog.filter(Program.program_name == "BCA")).scalars().first()
+        if not candidate:
+            # Fallback to any program in trust
+            candidate = db.session.execute(q_prog).scalars().first()
+        
+        selected_program = candidate
 
     # Compute current academic year (e.g., 2025-26)
     now = datetime.now()
@@ -2332,47 +2493,49 @@ def dashboard():
 
     # Summary metrics scoped to selected program if present
     pid = selected_program.program_id if selected_program else None
+    
     def _safe_count(q):
         try:
             return db.session.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
         except Exception:
             return 0
 
-    students_count = _safe_count(select(Student).filter_by(program_id_fk=pid)) if pid else _safe_count(select(Student))
-    subjects_count = _safe_count(select(Subject).filter_by(program_id_fk=pid)) if pid else _safe_count(select(Subject))
-    faculties_count = _safe_count(select(Faculty).filter_by(program_id_fk=pid)) if pid else _safe_count(select(Faculty))
-    divisions_count = _safe_count(select(Division).filter_by(program_id_fk=pid)) if pid else _safe_count(select(Division))
+    def _get_scoped_query(model):
+        if pid:
+            return select(model).filter_by(program_id_fk=pid)
+        elif effective_trust_id:
+            return select(model).join(Program).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+        else:
+            return select(model)
+
+    students_count = _safe_count(_get_scoped_query(Student))
+    subjects_count = _safe_count(_get_scoped_query(Subject))
+    faculties_count = _safe_count(_get_scoped_query(Faculty))
+    divisions_count = _safe_count(_get_scoped_query(Division))
 
     # Active course assignments (teaching load)
+    q_assign = select(CourseAssignment).join(Subject, CourseAssignment.subject_id_fk == Subject.subject_id).filter(CourseAssignment.is_active == True)
     if pid:
-        assignments_count = _safe_count(
-            select(CourseAssignment).join(Subject, CourseAssignment.subject_id_fk == Subject.subject_id)
-            .filter(Subject.program_id_fk == pid, CourseAssignment.is_active == True)
-        )
-    else:
-        assignments_count = _safe_count(select(CourseAssignment).filter_by(is_active=True))
+        q_assign = q_assign.filter(Subject.program_id_fk == pid)
+    elif effective_trust_id:
+        q_assign = q_assign.join(Program, Subject.program_id_fk == Program.program_id).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+    assignments_count = _safe_count(q_assign)
 
     # Active student-subject enrollments for current academic year
+    q_enroll = select(StudentSubjectEnrollment).filter(StudentSubjectEnrollment.is_active == True, StudentSubjectEnrollment.academic_year == academic_year)
     if pid:
-        subject_ids = db.session.execute(select(Subject.subject_id).filter(Subject.program_id_fk == pid)).scalars().all()
-        if subject_ids:
-            enrollments_count = _safe_count(
-                select(StudentSubjectEnrollment)
-                .filter(StudentSubjectEnrollment.subject_id_fk.in_(subject_ids))
-                .filter(StudentSubjectEnrollment.is_active == True)
-                .filter(StudentSubjectEnrollment.academic_year == academic_year)
-            )
-        else:
-            enrollments_count = 0
-    else:
-        enrollments_count = _safe_count(
-            select(StudentSubjectEnrollment)
-            .filter(StudentSubjectEnrollment.is_active == True)
-            .filter(StudentSubjectEnrollment.academic_year == academic_year)
-        )
+        q_enroll = q_enroll.join(Subject, StudentSubjectEnrollment.subject_id_fk == Subject.subject_id).filter(Subject.program_id_fk == pid)
+    elif effective_trust_id:
+        q_enroll = q_enroll.join(Subject, StudentSubjectEnrollment.subject_id_fk == Subject.subject_id).join(Program, Subject.program_id_fk == Program.program_id).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+    enrollments_count = _safe_count(q_enroll)
 
     # Elective subjects scoped
-    elective_subjects_count = _safe_count(select(Subject).filter_by(program_id_fk=pid, is_elective=True)) if pid else _safe_count(select(Subject).filter_by(is_elective=True))
+    q_elec = select(Subject).filter_by(is_elective=True)
+    if pid:
+        q_elec = q_elec.filter_by(program_id_fk=pid)
+    elif effective_trust_id:
+        q_elec = q_elec.join(Program).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+    elective_subjects_count = _safe_count(q_elec)
 
     summary = {
         "program": selected_program.program_name if selected_program else ("All Programs" if role == "admin" else "BCA"),
@@ -2387,19 +2550,25 @@ def dashboard():
     }
 
     try:
-        st_missing_mobile = db.session.scalar(
-            select(func.count()).select_from(Student).filter(
-                or_(Student.mobile == None, func.trim(Student.mobile) == "")
-            )
-        ) or 0
+        q_st_miss = select(Student).filter(or_(Student.mobile == None, func.trim(Student.mobile) == ""))
+        if pid:
+            q_st_miss = q_st_miss.filter_by(program_id_fk=pid)
+        elif effective_trust_id:
+            q_st_miss = q_st_miss.join(Program).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+        st_missing_mobile = _safe_count(q_st_miss)
     except Exception:
         st_missing_mobile = 0
+
     try:
-        st_no_user = db.session.scalar(
-            select(func.count()).select_from(Student).filter(Student.user_id_fk == None)
-        ) or 0
+        q_st_no_user = select(Student).filter(Student.user_id_fk == None)
+        if pid:
+            q_st_no_user = q_st_no_user.filter_by(program_id_fk=pid)
+        elif effective_trust_id:
+            q_st_no_user = q_st_no_user.join(Program).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+        st_no_user = _safe_count(q_st_no_user)
     except Exception:
         st_no_user = 0
+        
     summary["students_missing_mobile"] = st_missing_mobile
     summary["students_without_user"] = st_no_user
 
@@ -2607,7 +2776,10 @@ def dashboard():
     # Admin program list for picker
     program_list = []
     if role == "admin":
-        program_list = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+        q_prog_list = select(Program)
+        if effective_trust_id:
+            q_prog_list = q_prog_list.join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+        program_list = db.session.execute(q_prog_list.order_by(Program.program_name.asc())).scalars().all()
     # Charts program filter (admin-only)
     chart_program_id = None
     try:
@@ -3437,6 +3609,7 @@ def dashboard():
         charts=charts,
         charts_semester_scope=(charts_semester_scope if (role_lower == 'admin') else None),
         student_view=student_view,
+        acting_trust=acting_trust,
     )
 
 @main_bp.route("/announcements")
@@ -4575,11 +4748,55 @@ def account_settings():
                     if len(digits) < 10 or len(digits) > 15:
                         errors.append("Mobile must be 10–15 digits.")
 
+                # Handle Photo Upload
+                photo_file = request.files.get("photo_file")
+                remove_photo = request.form.get("remove_photo")
+                
+                if remove_photo:
+                    # Remove old photo logic
+                    if linked_faculty.photo_url and linked_faculty.photo_url.startswith("/static/"):
+                        try:
+                             old_path = os.path.join(current_app.root_path, linked_faculty.photo_url.lstrip("/"))
+                             if os.path.exists(old_path):
+                                 os.remove(old_path)
+                        except Exception:
+                             pass
+                    linked_faculty.photo_url = None
+                
+                elif photo_file and photo_file.filename:
+                    filename = secure_filename(photo_file.filename)
+                    ext = os.path.splitext(filename)[1].lower()
+                    if ext not in [".png", ".jpg", ".jpeg", ".gif"]:
+                        errors.append("Invalid file type. Allowed: png, jpg, jpeg, gif")
+                    else:
+                         try:
+                             # consistent naming: faculty_{id}_{timestamp}.ext
+                             new_filename = f"faculty_{linked_faculty.faculty_id}_{int(time.time())}{ext}"
+                             upload_dir = os.path.join(current_app.root_path, "static", "uploads", "faculty")
+                             os.makedirs(upload_dir, exist_ok=True)
+                             
+                             photo_path = os.path.join(upload_dir, new_filename)
+                             photo_file.save(photo_path)
+                             
+                             # Remove old photo if exists
+                             if linked_faculty.photo_url and linked_faculty.photo_url.startswith("/static/"):
+                                 try:
+                                     old_path = os.path.join(current_app.root_path, linked_faculty.photo_url.lstrip("/"))
+                                     if os.path.exists(old_path):
+                                         os.remove(old_path)
+                                 except Exception:
+                                     pass
+
+                             linked_faculty.photo_url = f"/static/uploads/faculty/{new_filename}"
+                         except Exception as e:
+                             errors.append(f"Failed to upload photo: {str(e)}")
+
                 if not errors:
                     try:
                         linked_faculty.full_name = full_name
                         linked_faculty.email = email
                         linked_faculty.mobile = mobile
+                        # photo_url is already updated on the object if changed
                         db.session.commit()
                         flash("Profile updated successfully.", "success")
                         return redirect(url_for("main.account_settings"))
@@ -4718,7 +4935,7 @@ def faculty_profile(faculty_id):
         "email": (f.email or pick(extra, {"email", "mail"}) or ""),
         "mobile": (f.mobile or pick(extra, {"mobile", "phone", "contact"}) or ""),
         "designation": (f.designation or pick(extra, {"designation", "title", "role"}) or ""),
-        "photo_url": (pick(extra, PHOTO_KEYS) or ""),
+        "photo_url": (f.photo_url or pick(extra, PHOTO_KEYS) or ""),
     }
 
     # Fallback: if no photo_url is set, try to resolve by Emp ID
@@ -4970,14 +5187,20 @@ def faculty_new():
                 if not u:
                     # Generate a temporary password if missing
                     if not user_password:
-                        import secrets, string
-                        alphabet = string.ascii_letters + string.digits
-                        user_password = "".join(secrets.choice(alphabet) for _ in range(10))
+                        # Use mobile digits if available as default password
+                        mobile_digits = ''.join(ch for ch in mobile if ch.isdigit()) if mobile else ''
+                        if len(mobile_digits) >= 10:
+                            user_password = mobile_digits
+                        else:
+                            import secrets, string
+                            alphabet = string.ascii_letters + string.digits
+                            user_password = "".join(secrets.choice(alphabet) for _ in range(10))
                     u = User(
                         username=user_username,
                         password_hash=generate_password_hash(user_password),
                         role="Faculty",
                         program_id_fk=program_id_fk,
+                        must_change_password=True,
                     )
                     db.session.add(u)
                     db.session.flush()  # get user_id
@@ -5182,12 +5405,14 @@ def faculty_edit(faculty_id: int):
 
         # Validate photo if provided
         photo_url = None
-        # Initialize with existing photo URL from extras
-        try:
-            _extra_curr = _json.loads(f.extra_data or "{}")
-        except Exception:
-            _extra_curr = {}
-        photo_url = _extra_curr.get("Photo URL") or None
+        # Initialize with existing photo URL from column or extras
+        photo_url = f.photo_url
+        if not photo_url:
+            try:
+                _extra_curr = _json.loads(f.extra_data or "{}")
+                photo_url = _extra_curr.get("Photo URL")
+            except Exception:
+                pass
 
         if photo_file and photo_file.filename:
             allowed_ext = {"png", "jpg", "jpeg", "gif"}
@@ -5289,8 +5514,11 @@ def faculty_edit(faculty_id: int):
         set_or_remove("Notes", notes)
         set_or_remove("Specialization", specialization)
         set_or_remove("Certifications", certifications)
-        # Apply photo URL (set or remove)
-        set_or_remove("Photo URL", photo_url)
+        
+        # Apply photo URL to column, remove from extra
+        f.photo_url = photo_url
+        if "Photo URL" in extra:
+            del extra["Photo URL"]
 
         f.full_name = full_name
         f.program_id_fk = program_id_fk
@@ -5886,6 +6114,56 @@ def students_new():
             current_semester=current_semester,
         )
         db.session.add(s)
+
+        # Create User for Student (Mobile/Mobile strategy)
+        try:
+            # Username: Mobile (if 10+ digits) else Enrollment No
+            user_username = ""
+            mobile_digits = "".join(ch for ch in mobile if ch.isdigit()) if mobile else ""
+            if len(mobile_digits) >= 10:
+                user_username = mobile_digits
+            else:
+                user_username = enrollment_no
+
+            # Password: Mobile (if 10+ digits) else Random
+            user_password = ""
+            if len(mobile_digits) >= 10:
+                user_password = mobile_digits
+            else:
+                import secrets
+                import string
+                alphabet = string.ascii_letters + string.digits
+                user_password = "".join(secrets.choice(alphabet) for _ in range(10))
+
+            # Check if user exists
+            existing_u = db.session.execute(select(User).filter_by(username=user_username)).scalars().first()
+            if not existing_u:
+                new_u = User(
+                    username=user_username,
+                    password_hash=generate_password_hash(user_password),
+                    role="student",
+                    program_id_fk=program_id_fk,
+                    must_change_password=True,
+                    mobile=mobile,
+                    email=None # Students might not have email initially
+                )
+                db.session.add(new_u)
+                db.session.flush()
+                s.user_id_fk = new_u.user_id
+            else:
+                # If user exists, link it (assuming it's the same person)
+                # But strictly, if username=mobile, it might be claimed.
+                # If username=enrollment, it's unique.
+                # For safety, if user exists, we don't overwrite password, just link if role matches
+                if existing_u.role == "student":
+                    s.user_id_fk = existing_u.user_id
+        except Exception as e:
+            # Log error but don't fail student creation? 
+            # Or better, fail to ensure consistency.
+            # For now, let's allow student creation but flash warning if user creation fails
+            print(f"Failed to create user for student {enrollment_no}: {e}")
+            pass
+
         db.session.commit()
         flash(f"Student {enrollment_no} created successfully.", "success")
         return redirect(url_for("main.students"))
@@ -8068,7 +8346,7 @@ def user_new():
                 "program_id_fk": program_id_raw,
             })
 
-        u = User(username=username, password_hash=generate_password_hash(password), role=role, program_id_fk=program_id_fk)
+        u = User(username=username, password_hash=generate_password_hash(password), role=role, program_id_fk=program_id_fk, must_change_password=True)
         db.session.add(u)
         db.session.commit()
         flash("User created successfully.", "success")
@@ -9406,6 +9684,170 @@ def attendance_report_faculty():
         csv_export_url=csv_export_url_faculty,
     )
 # Attendance search: by student name or enrollment, with date/week/month filters
+@main_bp.route("/super-admin/dashboard")
+@login_required
+def super_admin_dashboard():
+    # Strict Access Check
+    if not getattr(current_user, "is_super_admin", False):
+        flash("Unauthorized access.", "danger")
+        return redirect(url_for("main.dashboard"))
+
+    # Fetch Stats
+    trusts = db.session.execute(select(Trust).order_by(Trust.trust_id)).scalars().all()
+    institutes = db.session.execute(select(Institute)).scalars().all()
+    total_institutes = len(institutes)
+    
+    # Simple active user count (approx)
+    active_users = db.session.scalar(select(func.count(User.user_id)).filter_by(is_active=True))
+
+    return render_template(
+        "super_admin_dashboard.html",
+        trusts=trusts,
+        total_institutes=total_institutes,
+        active_users=active_users
+    )
+
+@main_bp.route("/super-admin/trust/add", methods=["GET", "POST"])
+@login_required
+def add_trust():
+    if not getattr(current_user, "is_super_admin", False):
+        abort(403)
+        
+    if request.method == "POST":
+        t_name = (request.form.get("trust_name") or "").strip()
+        t_code = (request.form.get("trust_code") or "").strip()
+        t_email = (request.form.get("contact_email") or "").strip()
+        
+        if not t_name:
+            flash("Trust Name is required.", "danger")
+        else:
+            try:
+                new_trust = Trust(
+                    trust_name=t_name,
+                    trust_code=t_code,
+                    contact_email=t_email,
+                    is_active=True
+                )
+                db.session.add(new_trust)
+                db.session.commit()
+                flash("New Trust added successfully!", "success")
+                return redirect(url_for("main.super_admin_dashboard"))
+            except Exception as e:
+                db.session.rollback()
+                flash(f"Error adding trust: {str(e)}", "danger")
+
+    return render_template("add_trust.html")
+
+@main_bp.route("/super-admin/trust/<int:trust_id>")
+@login_required
+def manage_trust(trust_id):
+    if not getattr(current_user, "is_super_admin", False):
+        abort(403)
+        
+    trust = db.session.get(Trust, trust_id)
+    if not trust:
+        flash("Trust not found.", "danger")
+        return redirect(url_for("main.super_admin_dashboard"))
+        
+    return render_template("manage_trust.html", trust=trust)
+
+@main_bp.route("/super-admin/trust/<int:trust_id>/edit", methods=["GET", "POST"])
+@login_required
+def edit_trust(trust_id):
+    if not getattr(current_user, "is_super_admin", False):
+        abort(403)
+        
+    trust = db.session.get(Trust, trust_id)
+    if not trust:
+        flash("Trust not found.", "danger")
+        return redirect(url_for("main.super_admin_dashboard"))
+
+    if request.method == "POST":
+        trust.trust_name = request.form.get("trust_name")
+        trust.trust_code = request.form.get("trust_code")
+        trust.contact_email = request.form.get("contact_email")
+        trust.address = request.form.get("address")
+        trust.contact_phone = request.form.get("contact_phone")
+        trust.website = request.form.get("website")
+        trust.vision = request.form.get("vision")
+        trust.mission = request.form.get("mission")
+        
+        try:
+            db.session.commit()
+            flash("Trust details updated successfully.", "success")
+            return redirect(url_for("main.manage_trust", trust_id=trust.trust_id))
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Error updating trust: {str(e)}", "danger")
+
+    return render_template("edit_trust.html", trust=trust)
+
+@main_bp.route("/super-admin/trust/<int:trust_id>/institute/add", methods=["GET", "POST"])
+@login_required
+def add_institute_to_trust(trust_id):
+    if not getattr(current_user, "is_super_admin", False):
+        abort(403)
+        
+    trust = db.session.get(Trust, trust_id)
+    if not trust:
+        flash("Trust not found.", "danger")
+        return redirect(url_for("main.super_admin_dashboard"))
+
+    if request.method == "POST":
+        i_name = request.form.get("institute_name")
+        i_code = request.form.get("institute_code")
+        i_affil = request.form.get("affiliation_body")
+        i_aicte = request.form.get("aicte_code")
+        
+        if not i_name:
+            flash("Institute Name is required.", "danger")
+        else:
+            try:
+                new_inst = Institute(
+                    trust_id_fk=trust.trust_id,
+                    institute_name=i_name,
+                    institute_code=i_code,
+                    affiliation_body=i_affil,
+                    aicte_code=i_aicte,
+                    is_active=True
+                )
+                db.session.add(new_inst)
+                db.session.commit()
+                flash("Institute added successfully.", "success")
+                return redirect(url_for("main.manage_trust", trust_id=trust.trust_id))
+            except Exception as e:
+                db.session.rollback()
+                flash(f"Error adding institute: {str(e)}", "danger")
+
+    return render_template("add_institute_simple.html", trust_id=trust.trust_id, institute=None)
+
+@main_bp.route("/super-admin/institute/<int:institute_id>/edit", methods=["GET", "POST"])
+@login_required
+def edit_institute(institute_id):
+    if not getattr(current_user, "is_super_admin", False):
+        abort(403)
+        
+    institute = db.session.get(Institute, institute_id)
+    if not institute:
+        flash("Institute not found.", "danger")
+        return redirect(url_for("main.super_admin_dashboard"))
+        
+    if request.method == "POST":
+        institute.institute_name = request.form.get("institute_name")
+        institute.institute_code = request.form.get("institute_code")
+        institute.affiliation_body = request.form.get("affiliation_body")
+        institute.aicte_code = request.form.get("aicte_code")
+        
+        try:
+            db.session.commit()
+            flash("Institute updated successfully.", "success")
+            return redirect(url_for("main.manage_trust", trust_id=institute.trust_id_fk))
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Error updating institute: {str(e)}", "danger")
+
+    return render_template("add_institute_simple.html", trust_id=institute.trust_id_fk, institute=institute)
+
 @main_bp.route("/attendance/search", methods=["GET"])
 @login_required
 def attendance_search():

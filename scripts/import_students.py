@@ -5,6 +5,7 @@ import csv
 from datetime import datetime
 from typing import Dict, List
 from sqlalchemy import select
+from werkzeug.security import generate_password_hash
 
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
@@ -168,6 +169,49 @@ def to_int(val):
         return None
 
 
+def ensure_student_user(enrollment_no, mobile, program_id):
+    """
+    Ensures a User account exists for the student.
+    Strategy:
+      - Username: Mobile (if >= 10 digits) else Enrollment No
+      - Password: Mobile (if >= 10 digits) else Enrollment No
+      - Force Password Change: True
+    Returns: user_id
+    """
+    try:
+        mobile_digits = "".join(ch for ch in str(mobile) if ch.isdigit()) if mobile else ""
+        
+        # Determine username and password
+        if len(mobile_digits) >= 10:
+            username = mobile_digits
+            password_raw = mobile_digits
+        else:
+            username = str(enrollment_no)
+            password_raw = str(enrollment_no)
+            
+        # Check if user exists
+        user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
+        
+        if not user:
+            user = User(
+                username=username,
+                password_hash=generate_password_hash(password_raw),
+                role="student",
+                program_id_fk=program_id,
+                mobile=mobile_digits,
+                must_change_password=True,
+                is_active=True
+            )
+            db.session.add(user)
+            db.session.flush()
+            
+        return user.user_id
+    except Exception as e:
+        print(f"Error ensuring user for student {enrollment_no}: {e}")
+        return None
+
+
+
 def import_excel(path: str, program_name: str = None, semester_hint: int = None, dry_run: bool = False):
     # Determine semester
     semester = semester_hint or find_semester_from_filename(path) or 0
@@ -306,10 +350,14 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
             current_semester = semester or to_int(data.get("current_semester"))
             roll_no = cell_to_str(data.get("roll_no"))
 
+            # Ensure User exists
+            user_id = ensure_student_user(enrollment_no, mobile, program.program_id)
+
             student = db.session.execute(select(Student).filter_by(enrollment_no=enrollment_no)).scalars().first()
             if not student:
                 student = Student(
                     enrollment_no=enrollment_no,
+                    user_id_fk=user_id,
                     program_id_fk=program.program_id,
                     division_id_fk=division.division_id,
                     last_name=surname,
@@ -329,6 +377,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
             else:
                 student.program_id_fk = program.program_id
                 student.division_id_fk = division.division_id
+                if not student.user_id_fk and user_id:
+                    student.user_id_fk = user_id
                 student.last_name = surname or student.last_name
                 student.first_name = student_name or student.first_name
                 student.mobile = mobile or student.mobile
@@ -448,10 +498,14 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
 
             current_semester = semester or to_int(data.get("current_semester"))
 
+            # Ensure User exists
+            user_id = ensure_student_user(enrollment_no, mobile, program.program_id)
+
             student = db.session.execute(select(Student).filter_by(enrollment_no=enrollment_no)).scalars().first()
             if not student:
                 student = Student(
                     enrollment_no=enrollment_no,
+                    user_id_fk=user_id,
                     program_id_fk=program.program_id,
                     division_id_fk=division.division_id,
                     surname=surname,
@@ -470,6 +524,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
             else:
                 student.program_id_fk = program.program_id
                 student.division_id_fk = division.division_id
+                if not student.user_id_fk and user_id:
+                    student.user_id_fk = user_id
                 student.surname = surname or student.surname
                 student.student_name = student_name or student.student_name
                 student.mobile = mobile or student.mobile

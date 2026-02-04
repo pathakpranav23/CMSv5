@@ -16,6 +16,7 @@ if PROJECT_ROOT not in sys.path:
 from cms_app import create_app, db
 from cms_app.models import Program, User, Faculty
 from sqlalchemy import select
+from werkzeug.security import generate_password_hash
 
 
 HEADER_MAP: Dict[str, List[str]] = {
@@ -164,12 +165,23 @@ def upsert_faculty(program_name: str, path: str):
                 select(User).filter_by(username=username)
             ).scalars().first()
             if not user:
-                user = User(username=username, role="Faculty", program_id_fk=program.program_id)
+                # Default password for imported faculty: Password123
+                # Must change password on first login
+                user = User(
+                    username=username, 
+                    role="Faculty", 
+                    program_id_fk=program.program_id,
+                    password_hash=generate_password_hash("Password123"),
+                    must_change_password=True
+                )
                 db.session.add(user)
                 db.session.flush()  # get user_id
             else:
                 user.role = "Faculty"
                 user.program_id_fk = program.program_id
+                # Ensure existing users also have to change password if they haven't logged in? 
+                # No, only force for new users or if explicitly reset.
+
 
             # Upsert Faculty record using email if present, else username
             fac_q = None

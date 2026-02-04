@@ -5,14 +5,19 @@
   <div class="page-hero mb-3">
     <div class="d-flex justify-content-between align-items-center flex-wrap">
       <div class="mb-2">
-        <div class="h4 mb-0">{{ t('The Group of Parekh Colleges - Mahuva') }}</div>
-        <div class="small">{{ t('Managed by Shri Balvant Parekh Education Trust (SBPET)') }}</div>
+        {% if acting_trust %}
+            <div class="h4 mb-0">{{ acting_trust.trust_name }}</div>
+            <div class="small">{{ t('Managed by') }} {{ acting_trust.trust_name }}</div>
+        {% else %}
+            <div class="h4 mb-0">{{ t('The Group of Parekh Colleges - Mahuva') }}</div>
+            <div class="small">{{ t('Managed by Shri Balvant Parekh Education Trust (SBPET)') }}</div>
+        {% endif %}
       </div>
       <div class="actions d-flex gap-2 flex-wrap">
         <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.notice_board') }}">{{ t('Notices') }}</a>
         <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.module_announcements') }}">{{ t('Announcements') }}</a>
         {% if current_user.is_authenticated %}
-          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.dashboard', chart_semester=request.args.get('chart_semester'), chart_program_id=request.args.get('chart_program_id')) }}">{{ t('Refresh') }}</a>
+          <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.dashboard', chart_semester=request.args.get('chart_semester'), chart_program_id=request.args.get('chart_program_id'), trust_id=request.args.get('trust_id')) }}">{{ t('Refresh') }}</a>
         {% endif %}
         {% if redis_active is not none %}
           {% if redis_active %}
@@ -24,6 +29,26 @@
       </div>
     </div>
   </div>
+
+  {% if acting_trust %}
+    <div class="alert alert-warning d-flex justify-content-between align-items-center mb-3 shadow-sm border-warning">
+        <div>
+            <div class="d-flex align-items-center gap-2">
+                <i class="bi bi-shield-lock-fill fs-4 text-warning-emphasis"></i>
+                <div>
+                    <h5 class="mb-0 text-warning-emphasis">Acting as Admin</h5>
+                    <div class="small text-muted">You are viewing this dashboard as an administrator for <strong>{{ acting_trust.trust_name }}</strong>.</div>
+                </div>
+            </div>
+        </div>
+        <div>
+                    <a href="{{ url_for('main.set_trust_context', trust_id=0) }}" class="btn btn-warning">
+                        <i class="bi bi-arrow-left"></i> Return to Global View
+                    </a>
+                </div>
+    </div>
+  {% endif %}
+
   {% if announcements and (announcements|length) > 0 %}
     {% for a in announcements %}
       <div class="alert alert-{{ a.severity or 'info' }} d-flex justify-content-between align-items-center" role="alert">

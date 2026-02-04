@@ -115,22 +115,37 @@ def step2_staff():
                     
                     full_name = row.get('name') or row.get('full name')
                     email = row.get('email')
+                    mobile = row.get('mobile')
                     role = row.get('role', 'Faculty').capitalize()
                     designation = row.get('designation', 'Assistant Professor')
                     
                     if not full_name or not email:
                         continue
+
+                    # Determine Username and Password
+                    # Preference: Mobile > Email (for non-admin/principal)
+                    user_username = email
+                    user_password_plain = 'Password123'
+                    
+                    is_privileged = role.lower() in ['admin', 'principal', 'super admin']
+                    
+                    if mobile and not is_privileged:
+                        # Basic cleanup
+                        digits = ''.join(ch for ch in mobile if ch.isdigit())
+                        if len(digits) >= 10:
+                            user_username = digits
+                            user_password_plain = digits
                         
                     # Check if user exists
-                    existing_user = User.query.filter_by(username=email).first()
+                    existing_user = User.query.filter_by(username=user_username).first()
                     if not existing_user:
                         # Create User
-                        # Default password: 'Password123' (In production, email them a link)
                         new_user = User(
-                            username=email,
+                            username=user_username,
                             email=email,
                             role=role,
-                            password_hash=generate_password_hash('Password123')
+                            password_hash=generate_password_hash(user_password_plain),
+                            must_change_password=True
                         )
                         db.session.add(new_user)
                         db.session.flush()
@@ -161,7 +176,7 @@ def step2_staff():
 @login_required
 def step2_template():
     # Return a CSV template
-    csv_content = "Name,Email,Role,Designation\nJohn Doe,john@example.com,Faculty,Assistant Professor\nJane Smith,jane@example.com,Principal,Principal"
+    csv_content = "Name,Email,Mobile,Role,Designation\nJohn Doe,john@example.com,9876543210,Faculty,Assistant Professor\nJane Smith,jane@example.com,9123456789,Principal,Principal"
     return Response(
         csv_content,
         mimetype="text/csv",
