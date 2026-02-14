@@ -96,7 +96,7 @@
           {% endif %}
 
           <!-- Group 4: Super Admin (Purple Theme) -->
-          {% if current_user.is_super_admin %}
+          {% if current_user.is_super_admin and not ctx_active_trust %}
           <div class="nav-group mt-2 pt-2 border-top border-secondary border-opacity-50">
             <div class="small fw-bold text-uppercase px-3 mb-1" style="font-size: 0.75rem; letter-spacing: 0.5px; color: #d63384; opacity: 1;">SUPER ADMIN</div>
             <li><a href="{{ url_for('super_admin.dashboard') }}"><span class="module-icon"><i class="bi bi-lightning-charge-fill" style="color: #d63384;"></i></span><span class="label">Control Tower</span></a><br class="nav-break"></li>
@@ -267,8 +267,8 @@
         </div>
         <div class="modal-body text-center py-4">
           <p class="fs-5 mb-2">Are you still there?</p>
-          <p class="text-muted">Your session will expire in <strong id="sessionCountdown" class="text-danger fs-4">30</strong> seconds.</p>
-          <p class="small text-muted mb-0">For security, we automatically log you out after 5 minutes of inactivity.</p>
+          <p class="text-muted">Your session will expire in <strong id="sessionCountdown" class="text-danger fs-4">60</strong> seconds.</p>
+          <p class="small text-muted mb-0">For security, we automatically log you out after 10 minutes of inactivity.</p>
         </div>
         <div class="modal-footer justify-content-center bg-light">
           <a href="{{ url_for('main.logout') }}" class="btn btn-outline-danger px-4">Log Out</a>

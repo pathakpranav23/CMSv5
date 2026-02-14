@@ -3,8 +3,8 @@
 
 document.addEventListener('DOMContentLoaded', function() {
     // Configuration (Sync with server settings)
-    const SESSION_LIFETIME = 5 * 60 * 1000; // 5 minutes in milliseconds
-    const WARNING_TIME = 30 * 1000;         // Show warning 30s before expiry
+    const SESSION_LIFETIME = 10 * 60 * 1000; // 10 minutes in milliseconds
+    const WARNING_TIME = 60 * 1000;         // Show warning 60s before expiry (User requested message)
     const CHECK_INTERVAL = 5 * 1000;        // Check timer every 5s
     
     let lastActivity = Date.now();

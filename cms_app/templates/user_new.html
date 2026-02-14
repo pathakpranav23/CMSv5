@@ -36,6 +36,20 @@
         {% endfor %}
       </select>
     </div>
+
+    {% if trusts %}
+    <div class="mb-3">
+      <label class="form-label fw-bold text-danger">Trust (Super Admin Only)</label>
+      <select name="trust_id_fk" class="form-select border-danger">
+        <option value="">— Global User (No Trust) —</option>
+        {% for t in trusts %}
+          <option value="{{ t.trust_id }}" {% if form_data.trust_id_fk|string == t.trust_id|string %}selected{% endif %}>{{ t.trust_name }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text text-danger">Assigning a Trust will ISOLATE this user to that Trust.</div>
+    </div>
+    {% endif %}
+
     <div class="mb-3">
       <label class="form-label">Program (for Principal)</label>
       <select name="program_id_fk" class="form-select">

@@ -153,6 +153,11 @@ class Faculty(db.Model):
     medium_expertise = db.Column(db.String(32))
     extra_data = db.Column(db.Text)  # JSON store for flexible fields
     
+    # New: Tenant/Trust Isolation
+    trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"))
+
+    is_active = db.Column(db.Boolean, default=True)
+    
 
 
 class Student(db.Model):
@@ -178,6 +183,9 @@ class Student(db.Model):
     # Medium of instruction (e.g., English, Gujarati)
     medium_tag = db.Column(db.String(32))
     
+    # New: Tenant/Trust Isolation
+    trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"))
+
     is_active = db.Column(db.Boolean, default=True)
 
 

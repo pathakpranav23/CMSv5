@@ -36,8 +36,8 @@ def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key")
     
-    # Session Timeout: 5 minutes
-    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=5)
+    # Session Timeout: 10 minutes
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=10)
     
     REDIS_URL = os.environ.get("REDIS_URL")
     if REDIS_URL:

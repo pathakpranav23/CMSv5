@@ -1,11 +1,11 @@
 from datetime import datetime, time
-from flask import render_template, request, jsonify, flash, redirect, url_for, current_app
+from flask import render_template, request, jsonify, flash, redirect, url_for, current_app, session
 from flask_login import login_required, current_user
-from sqlalchemy import and_
+from sqlalchemy import and_, select
 
 from . import timetable_bp
 from .. import db
-from ..models import Program, Division, Subject, TimetableSlot, TimetableSettings, CourseAssignment, Faculty, SubjectType, Student
+from ..models import Program, Division, Subject, TimetableSlot, TimetableSettings, CourseAssignment, Faculty, SubjectType, Student, Institute
 from ..decorators import role_required
 
 def _get_timetable_settings(program_id, academic_year):
@@ -74,7 +74,21 @@ def manage():
 
     else:
         # Real Data Logic
-        programs = Program.query.all()
+        # Trust Isolation
+        trust_id = None
+        if getattr(current_user, "is_super_admin", False):
+            trust_id = session.get("active_trust_id")
+        else:
+            trust_id = getattr(current_user, "trust_id_fk", None)
+
+        if trust_id:
+            programs = db.session.execute(
+                select(Program)
+                .join(Institute)
+                .where(Institute.trust_id_fk == trust_id)
+            ).scalars().all()
+        else:
+            programs = []
         
         # Defaults for Principal
         if current_user.role == "principal" and current_user.program_id_fk:
@@ -165,7 +179,39 @@ def save_slot():
     
     if not (division_id and day and period):
         return jsonify({"error": "Missing coordinates"}), 400
-        
+
+    # Trust Isolation Check
+    trust_id = None
+    if getattr(current_user, "is_super_admin", False):
+        trust_id = session.get("active_trust_id")
+    else:
+        trust_id = getattr(current_user, "trust_id_fk", None)
+    
+    if not trust_id:
+         return jsonify({"error": "Unauthorized context"}), 403
+
+    # Validate Division
+    div = db.session.get(Division, division_id)
+    if not div:
+        return jsonify({"error": "Division not found"}), 404
+    
+    # Traverse: Division -> Program -> Institute -> Trust
+    # Note: Accessing relationships might trigger lazy loads.
+    # Using explicit IDs is safer if relationships aren't loaded, but models.py shows backrefs.
+    try:
+        if div.program.institute.trust_id_fk != int(trust_id):
+             return jsonify({"error": "Unauthorized division access"}), 403
+    except Exception:
+         return jsonify({"error": "Validation error"}), 500
+
+    # Validate Subject if provided
+    if subject_id:
+        sub = db.session.get(Subject, subject_id)
+        if not sub:
+            return jsonify({"error": "Subject not found"}), 404
+        if sub.program.institute.trust_id_fk != int(trust_id):
+            return jsonify({"error": "Unauthorized subject access"}), 403
+
     slot = TimetableSlot.query.filter_by(
         division_id_fk=division_id,
         day_of_week=day,
@@ -252,6 +298,30 @@ def update_settings():
     program_id = request.form.get("program_id")
     academic_year = request.form.get("academic_year")
     
+    # Trust Isolation Check
+    trust_id = None
+    if getattr(current_user, "is_super_admin", False):
+        trust_id = session.get("active_trust_id")
+    else:
+        trust_id = getattr(current_user, "trust_id_fk", None)
+        
+    if not trust_id:
+        flash("Unauthorized context", "danger")
+        return redirect(request.referrer)
+
+    program = db.session.get(Program, program_id)
+    if not program:
+        flash("Program not found", "danger")
+        return redirect(request.referrer)
+        
+    try:
+        if program.institute.trust_id_fk != int(trust_id):
+             flash("Unauthorized program access", "danger")
+             return redirect(request.referrer)
+    except:
+         flash("Validation error", "danger")
+         return redirect(request.referrer)
+
     settings = _get_timetable_settings(program_id, academic_year)
     if not settings:
         settings = TimetableSettings(program_id_fk=program_id, academic_year=academic_year)
