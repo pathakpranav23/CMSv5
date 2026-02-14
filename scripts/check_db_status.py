@@ -2,10 +2,17 @@
 import sqlite3
 import os
 
-db_path = os.path.join(os.path.dirname(__file__), "cms.db")
+# Look for cms.db in the parent directory (project root)
+db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cms.db"))
+if not os.path.exists(db_path):
+    # Fallback to current working directory
+    db_path = os.path.abspath("cms.db")
+    
 if not os.path.exists(db_path):
     print(f"Error: {db_path} not found")
     exit(1)
+
+print(f"Using database at: {db_path}")
 
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()

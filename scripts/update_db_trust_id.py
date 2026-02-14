@@ -2,12 +2,17 @@
 import sqlite3
 import os
 
-DB_PATH = "cms.db"
+# Look for cms.db in the parent directory (project root) or CWD
+DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cms.db"))
+if not os.path.exists(DB_PATH):
+    DB_PATH = os.path.abspath("cms.db")
 
 def check_and_update_schema():
     if not os.path.exists(DB_PATH):
         print(f"Error: {DB_PATH} not found.")
         return
+
+    print(f"Updating database at: {DB_PATH}")
 
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
