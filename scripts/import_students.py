@@ -66,6 +66,20 @@ HEADER_MAP: Dict[str, List[str]] = {
     "gender": ["gender", "sex"],
     "photo_url": ["photo", "student photo", "photo url", "image", "profile photo"],
     "permanent_address": ["permanent address", "address"],
+    "aadhar_no": [
+        "aadhar card number",
+        "aadhaar card number",
+        "aadhar no",
+        "aadhaar no",
+        "aadhar",
+        "aadhaar",
+    ],
+    "category": [
+        "category",
+        "caste category",
+        "caste",
+        "reservation category",
+    ],
     # Instruction medium (optional; primarily for BCom)
     "medium_tag": [
         "medium",
@@ -349,6 +363,11 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
 
             current_semester = semester or to_int(data.get("current_semester"))
             roll_no = cell_to_str(data.get("roll_no"))
+            aadhar_no = cell_to_str(data.get("aadhar_no"))
+            category = cell_to_str(data.get("category"))
+
+            aadhar_no = cell_to_str(data.get("aadhar_no"))
+            category = cell_to_str(data.get("category"))
 
             # Ensure User exists
             user_id = ensure_student_user(enrollment_no, mobile, program.program_id)
@@ -371,6 +390,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                     permanent_address=permanent_address,
                     current_semester=current_semester,
                     roll_no=roll_no,
+                    aadhar_no=aadhar_no or None,
+                    category=category or None,
                 )
                 db.session.add(student)
                 created += 1
@@ -388,6 +409,10 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                 student.photo_url = photo_url or student.photo_url
                 student.permanent_address = permanent_address or student.permanent_address
                 student.current_semester = current_semester or student.current_semester
+                if aadhar_no:
+                    student.aadhar_no = aadhar_no
+                if category:
+                    student.category = category
                 if roll_no:
                     student.roll_no = roll_no
                 updated += 1
@@ -518,6 +543,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                     photo_url=photo_url,
                     permanent_address=permanent_address,
                     current_semester=current_semester,
+                    aadhar_no=aadhar_no or None,
+                    category=category or None,
                 )
                 db.session.add(student)
                 created += 1

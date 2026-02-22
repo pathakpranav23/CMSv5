@@ -21,21 +21,22 @@ def fix_student_schema():
             'photo_url': 'VARCHAR(255)',
             'permanent_address': 'VARCHAR(255)',
             'medium_tag': 'VARCHAR(32)',
-            'current_semester': 'INTEGER'
+            'current_semester': 'INTEGER',
+            'aadhar_no': 'VARCHAR(32)',
+            'category': 'VARCHAR(32)'
         }
 
-        with db.engine.connect() as conn:
-            for col_name, col_type in new_columns.items():
-                if col_name not in columns:
-                    print(f"Adding missing column: {col_name} ({col_type})")
-                    try:
-                        conn.execute(text(f"ALTER TABLE students ADD COLUMN {col_name} {col_type}"))
-                        conn.commit()
-                        print(f"  - Added {col_name}")
-                    except Exception as e:
-                        print(f"  - Failed to add {col_name}: {e}")
-                else:
-                    print(f"Column '{col_name}' already exists.")
+        conn = db.session.connection()
+        for col_name, col_type in new_columns.items():
+            if col_name not in columns:
+                print(f"Adding missing column: {col_name} ({col_type})")
+                try:
+                    conn.execute(text(f"ALTER TABLE students ADD COLUMN {col_name} {col_type}"))
+                    print(f"  - Added {col_name}")
+                except Exception as e:
+                    print(f"  - Failed to add {col_name}: {e}")
+            else:
+                print(f"Column '{col_name}' already exists.")
             
         print("Schema update check completed.")
 

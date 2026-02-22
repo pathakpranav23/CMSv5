@@ -15,7 +15,7 @@ div_row = cursor.fetchone()
 if div_row:
     div_id = div_row[0]
     print(f"Division A ID: {div_id}")
-    cursor.execute("SELECT roll_no, student_name, surname FROM students WHERE division_id_fk = ? ORDER BY roll_no ASC LIMIT 10", (div_id,))
+    cursor.execute("SELECT roll_no, student_name, surname FROM students WHERE division_id_fk = ? AND is_active = 1 AND current_semester = 4 ORDER BY CAST(roll_no AS INTEGER) ASC, roll_no ASC LIMIT 10", (div_id,))
     for row in cursor.fetchall():
         print(row)
 else:

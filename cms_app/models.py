@@ -182,6 +182,8 @@ class Student(db.Model):
     current_semester = db.Column(db.Integer)
     # Medium of instruction (e.g., English, Gujarati)
     medium_tag = db.Column(db.String(32))
+    aadhar_no = db.Column(db.String(32))
+    category = db.Column(db.String(32))
     
     # New: Tenant/Trust Isolation
     trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"))
