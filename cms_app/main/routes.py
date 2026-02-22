@@ -4,7 +4,7 @@ from werkzeug.utils import secure_filename
 import os
 import csv
 from sqlalchemy import or_, select, and_, cast, Integer
-from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute
+from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
 from ..api_utils import api_success, api_error
@@ -2488,7 +2488,9 @@ def dashboard():
                 selected_program = None
     
     # Auto-select program if not set (Scoped to Trust)
-    if not selected_program:
+    # For Admin: keep overview across all programs by default (no auto program selection).
+    # For Principal/other roles: default to a concrete program (prefer BCA).
+    if not selected_program and role != "admin":
         # Prefer "BCA" if it exists within the trust, otherwise first available
         q_prog = select(Program)
         if effective_trust_id:
@@ -2508,8 +2510,13 @@ def dashboard():
     end_year_short = str((start_year + 1))[-2:]
     academic_year = f"{start_year}-{end_year_short}"
 
-    # Summary metrics scoped to selected program if present
-    pid = selected_program.program_id if selected_program else None
+    # Summary metrics scope:
+    # - Admin: overview across all programs in the trust (pid=None, trust scoped)
+    # - Others (Principal etc.): scoped to a specific program when available
+    if role == "admin":
+        pid = None
+    else:
+        pid = selected_program.program_id if selected_program else None
     
     def _safe_count(q):
         try:
@@ -2584,8 +2591,16 @@ def dashboard():
         q_elec = q_elec.join(Program).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
     elective_subjects_count = _safe_count(q_elec)
 
+    # Program label for dashboard header:
+    # - Admin: always show "All Programs" (overview)
+    # - Others: show selected program name, or fallback "BCA"
+    if role == "admin":
+        program_label = "All Programs"
+    else:
+        program_label = selected_program.program_name if selected_program else "BCA"
+
     summary = {
-        "program": selected_program.program_name if selected_program else ("All Programs" if role == "admin" else "BCA"),
+        "program": program_label,
         "academic_year": academic_year,
         "students": students_count,
         "subjects": subjects_count,
@@ -2607,6 +2622,16 @@ def dashboard():
         st_missing_mobile = 0
 
     try:
+        q_st_cat_missing = select(Student).filter(or_(Student.category == None, func.trim(Student.category) == ""))
+        if pid:
+            q_st_cat_missing = q_st_cat_missing.filter_by(program_id_fk=pid)
+        elif effective_trust_id:
+            q_st_cat_missing = q_st_cat_missing.join(Program).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+        st_cat_missing = _safe_count(q_st_cat_missing)
+    except Exception:
+        st_cat_missing = 0
+
+    try:
         q_st_no_user = select(Student).filter(Student.user_id_fk == None)
         if pid:
             q_st_no_user = q_st_no_user.filter_by(program_id_fk=pid)
@@ -2617,6 +2642,7 @@ def dashboard():
         st_no_user = 0
         
     summary["students_missing_mobile"] = st_missing_mobile
+    summary["students_missing_category"] = st_cat_missing
     summary["students_without_user"] = st_no_user
 
     # Attendance summary for dashboard (today), scoped to principal's program
@@ -2754,9 +2780,32 @@ def dashboard():
             "present": week_counts["P"],
             "absent": week_counts["A"],
             "late": week_counts["L"],
-            # Percent series for dashboard ratio view
             "present_pct": week_pct_present,
             "absent_pct": week_pct_absent,
+        }
+
+        try:
+            if week_pct_present:
+                avg_present = round(sum(week_pct_present) / len(week_pct_present), 1)
+                avg_absent = round(sum(week_pct_absent) / len(week_pct_absent), 1)
+                risk_days = sum(1 for v in week_pct_present if v < 75.0)
+                days_total = len(week_pct_present)
+            else:
+                avg_present = 0.0
+                avg_absent = 0.0
+                risk_days = 0
+                days_total = 0
+        except Exception:
+            avg_present = 0.0
+            avg_absent = 0.0
+            risk_days = 0
+            days_total = 0
+
+        summary["att_risk_overview"] = {
+            "avg_present_pct": avg_present,
+            "avg_absent_pct": avg_absent,
+            "risk_days": risk_days,
+            "days_total": days_total,
         }
 
         # Monthly chart (selected month)
@@ -2849,6 +2898,111 @@ def dashboard():
         semester_list = []
         att_selected = {"semester": None, "semester_raw": None, "subject_id": None, "division_id": None}
         chart_semester = None
+
+    summary["fees_overview"] = {
+        "total_due": 0.0,
+        "total_collected": 0.0,
+        "total_outstanding": 0.0,
+        "collection_pct": 0.0,
+        "rows_count": 0,
+    }
+    summary["fees_risk"] = {
+        "full": 0,
+        "partial": 0,
+        "none": 0,
+        "zero_payment": 0,
+        "partial_payment": 0,
+    }
+
+    try:
+        fees_disabled_cfg = current_app.config.get("FEES_DISABLED", False)
+    except Exception:
+        fees_disabled_cfg = False
+
+    if not fees_disabled_cfg and role in ("admin", "principal"):
+        def _scope_fees_query(q):
+            try:
+                if role == "admin":
+                    if effective_trust_id:
+                        return q.join(Student, Student.enrollment_no == FeesRecord.student_id_fk).join(Program).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+                elif role == "principal":
+                    pid_scope = getattr(current_user, "program_id_fk", None)
+                    if pid_scope:
+                        return q.join(Student, Student.enrollment_no == FeesRecord.student_id_fk).filter(Student.program_id_fk == pid_scope)
+            except Exception:
+                return q
+            return q
+
+        try:
+            base_q = _scope_fees_query(
+                select(
+                    func.sum(FeesRecord.amount_due),
+                    func.sum(FeesRecord.amount_paid),
+                    func.count(FeesRecord.fee_id),
+                ).select_from(FeesRecord)
+            )
+            total_due_raw, total_paid_raw, rows_count = db.session.execute(base_q).one()
+            total_due = float(total_due_raw or 0.0)
+            total_paid = float(total_paid_raw or 0.0)
+            total_outstanding = max(total_due - total_paid, 0.0)
+            if total_due > 0:
+                collection_pct = round((total_paid * 100.0) / total_due, 1)
+            else:
+                collection_pct = 0.0
+            summary["fees_overview"] = {
+                "total_due": round(total_due, 2),
+                "total_collected": round(total_paid, 2),
+                "total_outstanding": round(total_outstanding, 2),
+                "collection_pct": collection_pct,
+                "rows_count": int(rows_count or 0),
+            }
+        except Exception:
+            summary["fees_overview"] = {
+                "total_due": 0.0,
+                "total_collected": 0.0,
+                "total_outstanding": 0.0,
+                "collection_pct": 0.0,
+                "rows_count": 0,
+            }
+
+        try:
+            full_q = _scope_fees_query(
+                select(func.count())
+                .select_from(FeesRecord)
+                .filter(FeesRecord.amount_due > 0)
+                .filter(FeesRecord.amount_paid >= (FeesRecord.amount_due - 0.01))
+            )
+            partial_q = _scope_fees_query(
+                select(func.count())
+                .select_from(FeesRecord)
+                .filter(FeesRecord.amount_due > 0)
+                .filter(FeesRecord.amount_paid > 0)
+                .filter(FeesRecord.amount_paid < (FeesRecord.amount_due - 0.01))
+            )
+            none_q = _scope_fees_query(
+                select(func.count())
+                .select_from(FeesRecord)
+                .filter(FeesRecord.amount_due > 0)
+                .filter(or_(FeesRecord.amount_paid == None, FeesRecord.amount_paid <= 0))
+            )
+            full_count = int(db.session.scalar(full_q) or 0)
+            partial_count = int(db.session.scalar(partial_q) or 0)
+            none_count = int(db.session.scalar(none_q) or 0)
+            summary["fees_risk"] = {
+                "full": full_count,
+                "partial": partial_count,
+                "none": none_count,
+                "zero_payment": none_count,
+                "partial_payment": partial_count,
+            }
+        except Exception:
+            summary["fees_risk"] = {
+                "full": 0,
+                "partial": 0,
+                "none": 0,
+                "zero_payment": 0,
+                "partial_payment": 0,
+            }
 
     # Admin program list for picker
     program_list = []
@@ -3068,6 +3222,62 @@ def dashboard():
             # Expenses demo: 70-85% of income
             expenses_series = [round(v * 0.78, 2) for v in income_series]
             return {"labels": labels, "income": income_series, "expenses": expenses_series}
+
+        def _gender_by_program():
+            data = []
+            for pid, name in prog_map.items():
+                try:
+                    rows = db.session.execute(
+                        select(Student.gender).filter_by(program_id_fk=pid)
+                    ).all()
+                except Exception:
+                    rows = []
+                male = 0
+                female = 0
+                other = 0
+                for (g_raw,) in rows:
+                    g = (g_raw or "").strip().lower()
+                    if g in ("male", "m"):
+                        male += 1
+                    elif g in ("female", "f"):
+                        female += 1
+                    elif g:
+                        other += 1
+                data.append({
+                    "label": name,
+                    "male": male,
+                    "female": female,
+                    "other": other,
+                })
+            return data
+
+        def _category_gender_by_program():
+            data = []
+            for pid, name in prog_map.items():
+                try:
+                    rows = db.session.execute(
+                        select(Student.category, Student.gender).filter_by(program_id_fk=pid)
+                    ).all()
+                except Exception:
+                    rows = []
+                counts = {}
+                for cat_raw, g_raw in rows:
+                    cat = (cat_raw or "Category Missing").strip() or "Category Missing"
+                    g = (g_raw or "").strip().lower()
+                    key = cat
+                    if key not in counts:
+                        counts[key] = {"male": 0, "female": 0, "other": 0}
+                    if g in ("male", "m"):
+                        counts[key]["male"] += 1
+                    elif g in ("female", "f"):
+                        counts[key]["female"] += 1
+                    elif g:
+                        counts[key]["other"] += 1
+                data.append({
+                    "program": name,
+                    "categories": counts,
+                })
+            return data
 
         # Principal/Clerk scoped helpers
         def _students_by_semester(program_id: int, selected_semester: int = None):
@@ -3358,12 +3568,24 @@ def dashboard():
                 except Exception:
                     return 0
 
+            def _timetable_settings_for_program(program_id: int):
+                try:
+                    return db.session.scalar(
+                        select(func.count())
+                        .select_from(TimetableSettings)
+                        .filter_by(program_id_fk=program_id, academic_year=academic_year)
+                    ) or 0
+                except Exception:
+                    return 0
+
             if chart_program_id:
                 charts = {
                     "students_by_program": [{"label": prog_map.get(chart_program_id), "value": _students_for_program(chart_program_id)}],
                     "fees_by_program": [{"label": prog_map.get(chart_program_id), "value": _fees_for_program(chart_program_id)}],
                     "staff_by_program": [{"label": prog_map.get(chart_program_id), "value": _staff_for_program(chart_program_id)}],
                     "income_vs_expenses": _income_vs_expenses_annual(),
+                    "gender_by_program": _gender_by_program(),
+                    "category_gender_by_program": _category_gender_by_program(),
                 }
             else:
                 charts = {
@@ -3371,31 +3593,39 @@ def dashboard():
                     "fees_by_program": _fees_by_program(),
                     "staff_by_program": _staff_by_program(),
                     "income_vs_expenses": _income_vs_expenses_annual(),
+                    "gender_by_program": _gender_by_program(),
+                    "category_gender_by_program": _category_gender_by_program(),
                 }
             try:
                 zero_students = []
                 zero_staff = []
                 zero_fees = []
+                zero_timetable = []
                 for pid_item, name_item in prog_map.items():
                     s_cnt = _students_for_program(pid_item)
                     f_cnt = _staff_for_program(pid_item)
                     fee_amt = _fees_for_program(pid_item)
+                    t_cnt = _timetable_settings_for_program(pid_item)
                     if s_cnt == 0:
                         zero_students.append(name_item)
                     if f_cnt == 0:
                         zero_staff.append(name_item)
                     if fee_amt == 0:
                         zero_fees.append(name_item)
+                    if t_cnt == 0:
+                        zero_timetable.append(name_item)
                 charts["admin_insights"] = {
                     "no_students_programs": zero_students,
                     "no_staff_programs": zero_staff,
                     "no_fees_programs": zero_fees,
+                    "no_timetable_programs": zero_timetable,
                 }
             except Exception:
                 charts["admin_insights"] = {
                     "no_students_programs": [],
                     "no_staff_programs": [],
                     "no_fees_programs": [],
+                    "no_timetable_programs": [],
                 }
             charts_semester_scope = None
         else:
@@ -13890,6 +14120,59 @@ def attendance_students_export_csv():
             ])
     data = buf.getvalue().encode("utf-8")
     return Response(data, headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=attendance_threshold.csv"})
+
+
+@main_bp.route("/admin/reports/students-missing-category", methods=["GET"])
+@login_required
+@role_required("admin", "principal")
+def students_missing_category_report():
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+
+    # Determine Effective Trust Context (for admin)
+    from ..models import Trust, Institute  # already imported at top; safe to re-import
+    effective_trust_id = None
+    is_super = getattr(current_user, "is_super_admin", False)
+    if is_super:
+        if "active_trust_id" in session:
+            try:
+                effective_trust_id = int(session["active_trust_id"])
+            except Exception:
+                effective_trust_id = None
+    else:
+        effective_trust_id = getattr(current_user, "trust_id_fk", None)
+
+    q = (
+        select(Student, Program.program_name)
+        .join(Program, Student.program_id_fk == Program.program_id)
+        .filter(or_(Student.category == None, func.trim(Student.category) == ""))
+        .filter(Student.is_active == True)
+    )
+
+    if role == "principal":
+        pid_scope = getattr(current_user, "program_id_fk", None)
+        if pid_scope:
+            q = q.filter(Student.program_id_fk == pid_scope)
+    else:
+        if effective_trust_id:
+            q = q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(
+                Institute.trust_id_fk == effective_trust_id
+            )
+
+    q = q.order_by(Program.program_name.asc(), Student.current_semester.asc(), Student.enrollment_no.asc())
+    rows = db.session.execute(q).all()
+
+    items = []
+    for st, program_name in rows:
+        items.append(
+            {
+                "enrollment_no": getattr(st, "enrollment_no", ""),
+                "name": (((getattr(st, "student_name", "") or "") + " " + (getattr(st, "surname", "") or "")).strip()),
+                "semester": getattr(st, "current_semester", None),
+                "program_name": program_name,
+            }
+        )
+
+    return render_template("students_missing_category_report.html", items=items, role=role)
 
 @main_bp.route("/fees/export.csv", methods=["GET"])
 @login_required

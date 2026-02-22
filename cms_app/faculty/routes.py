@@ -90,6 +90,7 @@ def dashboard():
     # 4. Identify At-Risk Students (< 60% Attendance)
     at_risk_students = []
     
+    students_snapshot = []
     if assigned_pairs:
         # We need per-student attendance stats for the assigned subjects
         # Query: Student ID, Subject ID, Total Lectures, Present Count
@@ -171,13 +172,62 @@ def dashboard():
                             "attended": attended,
                             "total": total_lectures
                         })
+        div_info = {}
+        for a in assignments:
+            div_id = a.Division.division_id
+            if div_id not in div_info:
+                prog = a.Program
+                div = a.Division
+                div_info[div_id] = {
+                    "program_code": prog.program_code or prog.program_name,
+                    "semester": div.semester,
+                    "division_code": div.division_code,
+                }
+        if division_ids:
+            counts_rows = db.session.query(
+                Student.division_id_fk,
+                Student.gender,
+                func.count(Student.enrollment_no),
+            ).filter(
+                Student.division_id_fk.in_(division_ids)
+            ).group_by(
+                Student.division_id_fk,
+                Student.gender,
+            ).all()
+            counts_map = {}
+            for div_id, g_raw, cnt in counts_rows:
+                g = (g_raw or "").strip().lower()
+                entry = counts_map.setdefault(div_id, {"male": 0, "female": 0, "other": 0})
+                if g in ("male", "m"):
+                    entry["male"] += cnt
+                elif g in ("female", "f"):
+                    entry["female"] += cnt
+                else:
+                    entry["other"] += cnt
+            for div_id in sorted(division_ids):
+                info = div_info.get(div_id)
+                if not info:
+                    continue
+                c = counts_map.get(div_id, {"male": 0, "female": 0, "other": 0})
+                total = c["male"] + c["female"] + c["other"]
+                students_snapshot.append({
+                    "program_code": info["program_code"],
+                    "semester": info["semester"],
+                    "division_code": info["division_code"],
+                    "boys": c["male"],
+                    "girls": c["female"],
+                    "other": c["other"],
+                    "total": total,
+                })
+        students_snapshot.sort(key=lambda x: (x["program_code"], x["semester"], x["division_code"]))
 
     return render_template(
         "faculty/dashboard.html", 
         faculty=faculty, 
         assignments=assignments,
         lecture_stats=lecture_stats,
-        at_risk_students=at_risk_students
+        at_risk_students=at_risk_students,
+        students_snapshot=students_snapshot
     )
 
 @faculty_bp.route("/timetable")

@@ -112,6 +112,23 @@
           <div class="label">{{ t('Divisions') }}</div>
           <div class="value">{{ summary.divisions or 0 }}</div>
         </div>
+        {% if (current_user.role|lower) in ['admin','principal'] and summary.attendance_today %}
+        {% set att = summary.attendance_today %}
+        <div class="kpi">
+          <div class="label">{{ t('Attendance Today') }}</div>
+          <div class="value">
+            {% if att.total %}
+              {{ ((att.present + att.late) * 100) // att.total }}%
+            {% else %}
+              {{ t('N/A') }}
+            {% endif %}
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="label">{{ t('Missing Mobile') }}</div>
+          <div class="value">{{ summary.students_missing_mobile or 0 }}</div>
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -254,7 +271,7 @@
         <div class="col">
           <div class="card">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Students by Program') }}</div></div>
-            <div class="card-body"><canvas id="chartStudentsProgram" height="140"></canvas></div>
+            <div class="card-body"><canvas id="chartStudentsProgram" height="100"></canvas></div>
           </div>
         </div>
         <div class="col">
@@ -265,19 +282,181 @@
         </div>
         <div class="col">
           <div class="card">
-            <div class="card-header card-header-standard"><div class="card-title">{{ t('Staff Count by Program') }}</div></div>
-            <div class="card-body"><canvas id="chartStaffProgram" height="140"></canvas></div>
-          </div>
-        </div>
-        <div class="col">
-          <div class="card">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Annual Income vs Expenses') }}</div></div>
             <div class="card-body"><canvas id="chartIncomeExpensesAnnual" height="140"></canvas></div>
           </div>
         </div>
+        <div class="col">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Program Summary (Students & Diversity)') }}</div></div>
+            <div class="card-body">
+              {% if charts.category_gender_by_program %}
+                {% set grand = namespace(male=0, female=0, other=0, total=0, reserved=0) %}
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>{{ t('Program') }}</th>
+                        <th class="text-end">{{ t('Total') }}</th>
+                        <th class="text-end">{{ t('Boys') }}</th>
+                        <th class="text-end">{{ t('Girls') }}</th>
+                        <th class="text-end d-none d-sm-table-cell">{{ t('Other') }}</th>
+                        <th class="text-end d-none d-md-table-cell">{{ t('% Girls') }}</th>
+                        <th class="text-end d-none d-md-table-cell">{{ t('% Reserved') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for pg in charts.category_gender_by_program %}
+                        {% set prog = namespace(male=0, female=0, other=0, total=0, reserved=0) %}
+                        {% for cat, vals in pg.categories.items() %}
+                          {% set c_male = vals.male|default(0) %}
+                          {% set c_female = vals.female|default(0) %}
+                          {% set c_other = vals.other|default(0) %}
+                          {% set c_total = c_male + c_female + c_other %}
+                          {% set prog.male = prog.male + c_male %}
+                          {% set prog.female = prog.female + c_female %}
+                          {% set prog.other = prog.other + c_other %}
+                          {% set prog.total = prog.total + c_total %}
+                          {% set cat_label = (cat or 'Category Missing')|trim|upper %}
+                          {% if cat_label not in ['GENERAL', 'CATEGORY MISSING'] %}
+                            {% set prog.reserved = prog.reserved + c_total %}
+                          {% endif %}
+                        {% endfor %}
+                        {% set grand.male = grand.male + prog.male %}
+                        {% set grand.female = grand.female + prog.female %}
+                        {% set grand.other = grand.other + prog.other %}
+                        {% set grand.total = grand.total + prog.total %}
+                        {% set grand.reserved = grand.reserved + prog.reserved %}
+                        {% if prog.total > 0 %}
+                          {% set pct_girls = (prog.female * 100.0) / prog.total %}
+                          {% set pct_reserved = (prog.reserved * 100.0) / prog.total %}
+                        {% else %}
+                          {% set pct_girls = 0 %}
+                          {% set pct_reserved = 0 %}
+                        {% endif %}
+                        <tr>
+                          <td>{{ pg.program }}</td>
+                          <td class="text-end">{{ prog.total }}</td>
+                          <td class="text-end">{{ prog.male }}</td>
+                          <td class="text-end">{{ prog.female }}</td>
+                          <td class="text-end d-none d-sm-table-cell">{{ prog.other }}</td>
+                          <td class="text-end d-none d-md-table-cell">{{ "%.1f"|format(pct_girls) }}%</td>
+                          <td class="text-end d-none d-md-table-cell">{{ "%.1f"|format(pct_reserved) }}%</td>
+                        </tr>
+                      {% endfor %}
+                      {% if grand.total > 0 %}
+                        {% set g_pct_girls = (grand.female * 100.0) / grand.total %}
+                        {% set g_pct_reserved = (grand.reserved * 100.0) / grand.total %}
+                      {% else %}
+                        {% set g_pct_girls = 0 %}
+                        {% set g_pct_reserved = 0 %}
+                      {% endif %}
+                      <tr class="table-secondary fw-semibold">
+                        <td>{{ t('All Programs') }}</td>
+                        <td class="text-end">{{ grand.total }}</td>
+                        <td class="text-end">{{ grand.male }}</td>
+                        <td class="text-end">{{ grand.female }}</td>
+                        <td class="text-end d-none d-sm-table-cell">{{ grand.other }}</td>
+                        <td class="text-end d-none d-md-table-cell">{{ "%.1f"|format(g_pct_girls) }}%</td>
+                        <td class="text-end d-none d-md-table-cell">{{ "%.1f"|format(g_pct_reserved) }}%</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No student data available.') }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
       </div>
       <div class="row g-3 mt-2">
-        <div class="col-md-4">
+        <div class="col">
+          <div class="card">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Category-wise Gender by Program') }}</div></div>
+            <div class="card-body">
+              {% if charts.category_gender_by_program %}
+                <div class="table-responsive" style="max-height: 360px; overflow-y: auto;">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>{{ t('Program') }}</th>
+                        <th>{{ t('Category') }}</th>
+                        <th class="text-end">{{ t('Boys') }}</th>
+                        <th class="text-end">{{ t('Girls') }}</th>
+                        <th class="text-end d-none d-sm-table-cell">{{ t('Other') }}</th>
+                        <th class="text-end">{{ t('Total') }}</th>
+                        <th class="text-end d-none d-md-table-cell">{{ t('% Girls') }}</th>
+                        <th class="text-end d-none d-md-table-cell">{{ t('% of Program') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for pg in charts.category_gender_by_program %}
+                        {% set items = pg.categories.items()|list %}
+                        {% if items %}
+                          {% set prog_tot = namespace(total=0, male=0, female=0, other=0) %}
+                          {% for cat, vals in items %}
+                            {% set c_male = vals.male|default(0) %}
+                            {% set c_female = vals.female|default(0) %}
+                            {% set c_other = vals.other|default(0) %}
+                            {% set c_total = c_male + c_female + c_other %}
+                            {% set prog_tot.total = prog_tot.total + c_total %}
+                            {% set prog_tot.male = prog_tot.male + c_male %}
+                            {% set prog_tot.female = prog_tot.female + c_female %}
+                            {% set prog_tot.other = prog_tot.other + c_other %}
+                          {% endfor %}
+                          {% for cat, vals in items|sort %}
+                            {% set c_male = vals.male|default(0) %}
+                            {% set c_female = vals.female|default(0) %}
+                            {% set c_other = vals.other|default(0) %}
+                            {% set c_total = c_male + c_female + c_other %}
+                            {% if prog_tot.total > 0 %}
+                              {% set pct_girls = (c_female * 100.0) / c_total if c_total > 0 else 0 %}
+                              {% set pct_of_prog = (c_total * 100.0) / prog_tot.total %}
+                            {% else %}
+                              {% set pct_girls = 0 %}
+                              {% set pct_of_prog = 0 %}
+                            {% endif %}
+                            <tr>
+                              <td>{{ pg.program }}</td>
+                              <td>{{ cat or 'Category Missing' }}</td>
+                              <td class="text-end">{{ c_male }}</td>
+                              <td class="text-end">{{ c_female }}</td>
+                              <td class="text-end d-none d-sm-table-cell">{{ c_other }}</td>
+                              <td class="text-end">{{ c_total }}</td>
+                              <td class="text-end d-none d-md-table-cell">{{ "%.1f"|format(pct_girls) }}%</td>
+                              <td class="text-end d-none d-md-table-cell">{{ "%.1f"|format(pct_of_prog) }}%</td>
+                            </tr>
+                          {% endfor %}
+                          {% if prog_tot.total > 0 %}
+                            {% set prog_pct_girls = (prog_tot.female * 100.0) / prog_tot.total %}
+                          {% else %}
+                            {% set prog_pct_girls = 0 %}
+                          {% endif %}
+                          <tr class="table-secondary">
+                            <td class="fw-semibold">{{ pg.program }}</td>
+                            <td class="fw-semibold">{{ t('Total') }}</td>
+                            <td class="text-end fw-semibold">{{ prog_tot.male }}</td>
+                            <td class="text-end fw-semibold">{{ prog_tot.female }}</td>
+                            <td class="text-end fw-semibold d-none d-sm-table-cell">{{ prog_tot.other }}</td>
+                            <td class="text-end fw-semibold">{{ prog_tot.total }}</td>
+                            <td class="text-end fw-semibold d-none d-md-table-cell">{{ "%.1f"|format(prog_pct_girls) }}%</td>
+                            <td class="text-end fw-semibold d-none d-md-table-cell">100%</td>
+                          </tr>
+                        {% endif %}
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No student data available.') }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="row g-3 mt-2">
+        <div class="col-md-3">
           <div class="card h-100">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Programs With No Students') }}</div></div>
             <div class="card-body">
@@ -293,7 +472,7 @@
             </div>
           </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
           <div class="card h-100">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Programs With No Staff') }}</div></div>
             <div class="card-body">
@@ -309,12 +488,33 @@
             </div>
           </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Programs With No Timetable') }}</div></div>
+            <div class="card-body">
+              {% if charts.admin_insights and charts.admin_insights.no_timetable_programs %}
+                <ul class="mb-0">
+                  {% for name in charts.admin_insights.no_timetable_programs %}
+                    <li>{{ name }}</li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <div class="text-muted small">{{ t('All programs have a timetable configured.') }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="col-md-3">
           <div class="card h-100">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Data Quality') }}</div></div>
             <div class="card-body">
               <div class="small mb-1">{{ t('Students without mobile number:') }} {{ summary.students_missing_mobile }}</div>
-              <div class="small">{{ t('Students without user account:') }} {{ summary.students_without_user }}</div>
+              <div class="small mb-1">{{ t('Students without user account:') }} {{ summary.students_without_user }}</div>
+              <div class="small">
+                <a href="{{ url_for('main.students_missing_category_report') }}" class="text-decoration-none">
+                  {{ t('Students with Category Missing:') }} {{ summary.students_missing_category }}
+                </a>
+              </div>
             </div>
           </div>
         </div>
@@ -333,52 +533,138 @@
           <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.students') }}">{{ t('Students') }}</a>
         {% endif %}
       </div>
-      <div class="row row-cols-1 row-cols-md-2 g-3">
-        <div class="col">
-          <div class="card">
+      <div class="row g-3 mb-2">
+        <div class="col-md-4">
+          <div class="card h-100">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Students by Semester (My Program)') }}</div></div>
-            <div class="card-body"><canvas id="chartStudentsSemester" height="140"></canvas></div>
+            <div class="card-body">
+              {% if charts.students_by_semester %}
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>{{ t('Sem') }}</th>
+                        <th class="text-end">{{ t('Students') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for idx in range(charts.students_by_semester.labels|length) %}
+                        <tr>
+                          <td>{{ charts.students_by_semester.labels[idx] }}</td>
+                          <td class="text-end">{{ charts.students_by_semester.data[idx] }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No student data available.') }}</div>
+              {% endif %}
+            </div>
           </div>
         </div>
-        <div class="col">
-          <div class="card">
-            <div class="card-header card-header-standard"><div class="card-title">{{ t('Fees Collection by Semester (My Program)') }}</div></div>
-            <div class="card-body"><canvas id="chartFeesSemester" height="140"></canvas></div>
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Fees by Semester (My Program)') }}</div></div>
+            <div class="card-body">
+              {% if charts.fees_by_semester %}
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>{{ t('Sem') }}</th>
+                        <th class="text-end">{{ t('Amount (INR)') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for idx in range(charts.fees_by_semester.labels|length) %}
+                        <tr>
+                          <td>{{ charts.fees_by_semester.labels[idx] }}</td>
+                          <td class="text-end">{{ charts.fees_by_semester.data[idx] }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No fee data available.') }}</div>
+              {% endif %}
+            </div>
           </div>
         </div>
-        <div class="col">
-          <div class="card">
-            <div class="card-header card-header-standard"><div class="card-title">{{ t('Male/Female Students by Semester') }}</div></div>
-            <div class="card-body"><canvas id="chartGenderSemester" height="140"></canvas></div>
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Gender by Semester (My Program)') }}</div></div>
+            <div class="card-body">
+              {% if charts.gender_by_semester %}
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>{{ t('Sem') }}</th>
+                        <th class="text-end">{{ t('Boys') }}</th>
+                        <th class="text-end">{{ t('Girls') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for idx in range(charts.gender_by_semester.labels|length) %}
+                        <tr>
+                          <td>{{ charts.gender_by_semester.labels[idx] }}</td>
+                          <td class="text-end">{{ charts.gender_by_semester.male[idx] }}</td>
+                          <td class="text-end">{{ charts.gender_by_semester.female[idx] }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No gender data available.') }}</div>
+              {% endif %}
+            </div>
           </div>
         </div>
-        <div class="col">
-          <div class="card">
+      </div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="card h-100">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Attendance Trend (Last 7 Days)') }}</div></div>
-            <div class="card-body"><canvas id="chartAttendanceWeek" height="140"></canvas></div>
+            <div class="card-body">
+              <canvas id="chartAttendanceWeek" height="120"></canvas>
+            </div>
           </div>
         </div>
         {% if (current_user.role|lower) == 'principal' %}
-            <div class="col">
-              <div class="card">
-                <div class="card-header card-header-standard"><div class="card-title">{{ t('Semester Results by Subject (Avg GPA)') }}</div></div>
-                <div class="card-body"><canvas id="chartSubjectResults" height="140"></canvas></div>
-              </div>
-            </div>
-            <div class="col">
-              <div class="card">
-                <div class="card-header card-header-standard"><div class="card-title">{{ t('Attendance Heatmap (Last 6 Months)') }}</div></div>
-                <div class="card-body">
-                  <div id="cal-heatmap" style="overflow-x: auto;"></div>
-                  <div class="d-flex justify-content-between small text-muted mt-2">
-                    <span>Less</span>
-                    <span>More</span>
-                  </div>
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Results Snapshot (Avg GPA by Subject)') }}</div></div>
+            <div class="card-body">
+              {% if charts.subject_results and charts.subject_results.labels %}
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>{{ t('Subject') }}</th>
+                        <th class="text-end">{{ t('Avg GPA') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for idx in range(charts.subject_results.labels|length) %}
+                        <tr>
+                          <td>{{ charts.subject_results.labels[idx] }}</td>
+                          <td class="text-end">{{ charts.subject_results.data[idx] }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
                 </div>
-              </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No result data available.') }}</div>
+              {% endif %}
             </div>
-            {% endif %}
           </div>
+        </div>
+        {% endif %}
+      </div>
       {% if clerk_fees and (current_user.role|lower) == 'clerk' %}
       <div class="row g-3 mt-2">
         <div class="col-md-4">
@@ -421,217 +707,262 @@
     
   </div>
 
-  {% if current_user.is_authenticated and (current_user.role|lower in ['admin','principal']) %}
-  <div class="modules-grid mb-4">
-    <div class="d-flex justify-content-between align-items-center mb-2">
-      <div class="h5 mb-0">{{ t('Admin Modules') }}</div>
-      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.module_admin') }}">{{ t('Open Admin Center') }}</a>
+  {% if summary.att_risk_overview and (current_user.role|lower in ['admin','principal']) %}
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <div class="h6 mb-0">{{ t('Academic Health & At-Risk Attendance') }}</div>
+      <a href="{{ url_for('main.attendance_report_admin') }}" class="btn btn-sm btn-outline-secondary">
+        {{ t('Open Attendance Report') }}
+      </a>
     </div>
-    <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-3">
-      <div class="col">
-        <div class="module-card card">
-          <a class="stretched-link" href="{{ url_for('main.module_announcements') }}" aria-label="Announcements"></a>
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-megaphone"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Announcements') }}</div>
-              <div class="small text-muted">{{ t('Create and publish alerts') }}</div>
-            </div>
+    <div class="card-body">
+      <div class="row row-cols-1 row-cols-sm-2 row-cols-md-4 g-3">
+        <div class="col">
+          <div class="text-muted small">{{ t('7-day Avg Present %') }}</div>
+          <div class="h4 mb-0">{{ summary.att_risk_overview.avg_present_pct }}%</div>
+        </div>
+        <div class="col">
+          <div class="text-muted small">{{ t('7-day Avg Absent %') }}</div>
+          <div class="h4 mb-0">{{ summary.att_risk_overview.avg_absent_pct }}%</div>
+        </div>
+        <div class="col">
+          <div class="text-muted small">{{ t('Days below 75% (last 7 days)') }}</div>
+          <div class="h4 mb-0">
+            {{ summary.att_risk_overview.risk_days }}
+            <span class="small text-muted">/ {{ summary.att_risk_overview.days_total }}</span>
           </div>
         </div>
-      </div>
-
-      <div class="col">
-        <div class="module-card card">
-          <a class="stretched-link" href="{{ url_for('main.module_attendance') }}" aria-label="Attendance"></a>
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-calendar-check"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Attendance') }}</div>
-              <div class="small text-muted">{{ t('Mark, view, and report') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="col">
-        <div class="module-card card">
-          <a class="stretched-link" href="{{ url_for('main.module_students') }}" aria-label="Students"></a>
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-people"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Students') }}</div>
-              <div class="small text-muted">{{ t('Manage student records') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="col">
-        <div class="module-card card">
-          <a class="stretched-link" href="{{ url_for('main.module_subjects') }}" aria-label="Subjects"></a>
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-journal-bookmark"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Subjects') }}</div>
-              <div class="small text-muted">{{ t('Configure and assign') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="col">
-        <div class="module-card card">
-          <a class="stretched-link" href="{{ url_for('main.materials_hub') }}" aria-label="Materials"></a>
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-folder2"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Materials') }}</div>
-              <div class="small text-muted">{{ t('Share and manage') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="col">
-        <div class="module-card card">
-          <a class="stretched-link" href="{{ url_for('main.module_faculty') }}" aria-label="Staff"></a>
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-person-badge"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Staff') }}</div>
-              <div class="small text-muted">{{ t('Profiles and assignments') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {% if (current_user.role|lower) in ['admin','principal','clerk'] %}
-      <div class="col">
-        <div class="module-card card">
-          <a class="stretched-link" href="{{ url_for('main.module_divisions') }}" aria-label="Divisions"></a>
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-diagram-3"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Divisions') }}</div>
-              <div class="small text-muted">{{ t('Semesters and batches') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-      {% endif %}
-
-      {% if not fees_disabled and (current_user.role|lower) in ['admin','principal','clerk'] %}
-      <div class="col">
-        <div class="module-card card">
-          {% if (current_user.role|lower) == 'clerk' %}
-            <a class="stretched-link" href="{{ url_for('main.fees_entry') }}" aria-label="Fees"></a>
+        <div class="col">
+          <div class="text-muted small">{{ t('Today Attendance (P+L)') }}</div>
+          {% if summary.attendance_today %}
+            {% set att = summary.attendance_today %}
+            {% if att.total %}
+              <div class="h4 mb-0">{{ ((att.present + att.late) * 100) // att.total }}%</div>
+            {% else %}
+              <div class="h4 mb-0">{{ t('N/A') }}</div>
+            {% endif %}
           {% else %}
-            <a class="stretched-link" href="{{ url_for('main.module_fees') }}" aria-label="Fees"></a>
+            <div class="h4 mb-0">{{ t('N/A') }}</div>
           {% endif %}
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-cash-coin"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Fees Module') }}</div>
-              <div class="small text-muted">{{ t('Collection and reports') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-      {% endif %}
-
-      <div class="col">
-        <div class="module-card card">
-          <a class="stretched-link" href="{{ url_for('main.programs_list') }}" aria-label="Programs"></a>
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-mortarboard"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Programs') }}</div>
-              <div class="small text-muted">{{ t('Create and manage programs') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="col">
-        <div class="module-card card">
-          <a class="stretched-link" href="{{ url_for('main.users_list') }}" aria-label="Accounts"></a>
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-people"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Manage Accounts') }}</div>
-              <div class="small text-muted">{{ t('Create and manage accounts') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="col">
-        <div class="module-card card">
-          <a class="stretched-link" href="{{ url_for('main.module_admin') }}" aria-label="Admin"></a>
-          <div class="card-body d-flex align-items-center gap-3">
-            <span class="module-icon"><i class="bi bi-sliders"></i></span>
-            <div>
-              <div class="h6 mb-0">{{ t('Admin Module') }}</div>
-              <div class="small text-muted">{{ t('Configuration and tools') }}</div>
-            </div>
-          </div>
         </div>
       </div>
     </div>
   </div>
   {% endif %}
 
-  <div class="row row-cols-2 row-cols-sm-2 row-cols-md-3 row-cols-lg-6 g-3 mb-4 dashboard-metrics">
-    <div class="col">
-      <div class="card text-center">
-        <div class="card-body">
-          <div class="h5 mb-1">{{ t('Students') }}</div>
-          <div class="display-6">{{ summary.students }}</div>
+  {% if (current_user.role|lower in ['admin','principal']) and not fees_disabled and summary.fees_overview %}
+  {% set fo = summary.fees_overview %}
+  {% set fr = summary.fees_risk %}
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <div class="h6 mb-0">{{ t('Fees & Finance Overview') }}</div>
+      <a href="{{ url_for('main.module_fees') }}" class="btn btn-sm btn-outline-secondary">
+        {{ t('Open Fees Module') }}
+      </a>
+    </div>
+    <div class="card-body">
+      <div class="row row-cols-1 row-cols-sm-2 row-cols-md-4 g-3 mb-3">
+        <div class="col">
+          <div class="text-muted small">{{ t('Total Due (All Records)') }}</div>
+          <div class="h4 mb-0">₹ {{ fo.total_due|round(2) }}</div>
+        </div>
+        <div class="col">
+          <div class="text-muted small">{{ t('Total Collected') }}</div>
+          <div class="h4 mb-0">₹ {{ fo.total_collected|round(2) }}</div>
+        </div>
+        <div class="col">
+          <div class="text-muted small">{{ t('Total Outstanding') }}</div>
+          <div class="h4 mb-0">₹ {{ fo.total_outstanding|round(2) }}</div>
+        </div>
+        <div class="col">
+          <div class="text-muted small">{{ t('Collection %') }}</div>
+          <div class="h4 mb-0">{{ fo.collection_pct }}%</div>
         </div>
       </div>
+      {% if fr %}
+      <div class="small text-muted">
+        {{ t('Risk Snapshot') }}:
+        {{ t('Unpaid fee records') }}: {{ fr.none }},
+        {{ t('Partial payments') }}: {{ fr.partial }},
+        {{ t('Fully paid') }}: {{ fr.full }}
+      </div>
+      {% endif %}
     </div>
-    <div class="col">
-      <div class="card text-center">
-        <div class="card-body">
-          <div class="h5 mb-1">{{ t('Subjects') }}</div>
-          <div class="display-6">{{ summary.subjects }}</div>
+  </div>
+  {% endif %}
+
+  {% if current_user.is_authenticated and (current_user.role|lower in ['admin','principal']) %}
+  <div class="modules-grid mb-4">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="h6 mb-0">{{ t('Admin Modules') }}</div>
+        <div class="d-flex align-items-center gap-2">
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.module_admin') }}">{{ t('Open Admin Center') }}</a>
+          <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#adminModules" aria-expanded="false" aria-controls="adminModules">
+            {{ t('Show / Hide') }}
+          </button>
         </div>
       </div>
-    </div>
-    <div class="col">
-      <div class="card text-center">
+      <div id="adminModules" class="collapse">
         <div class="card-body">
-          <div class="h5 mb-1">{{ t('Staff') }}</div>
-          <div class="display-6">{{ summary.faculties }}</div>
-        </div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="card text-center">
-        <div class="card-body">
-          <div class="h5 mb-1">{{ t('Divisions') }}</div>
-          <div class="display-6">{{ summary.divisions }}</div>
-        </div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="card text-center">
-        <div class="card-body">
-          <div class="h5 mb-1">{{ t('Assignments') }}</div>
-          <div class="display-6">{{ summary.assignments }}</div>
-        </div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="card text-center">
-        <div class="card-body">
-          <div class="h5 mb-1">{{ t('Enrollments') }}</div>
-          <div class="display-6">{{ summary.enrollments }}</div>
+          <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-3">
+            <div class="col">
+              <div class="module-card card">
+                <a class="stretched-link" href="{{ url_for('main.module_announcements') }}" aria-label="Announcements"></a>
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-megaphone"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Announcements') }}</div>
+                    <div class="small text-muted">{{ t('Create and publish alerts') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col">
+              <div class="module-card card">
+                <a class="stretched-link" href="{{ url_for('main.module_attendance') }}" aria-label="Attendance"></a>
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-calendar-check"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Attendance') }}</div>
+                    <div class="small text-muted">{{ t('Mark, view, and report') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col">
+              <div class="module-card card">
+                <a class="stretched-link" href="{{ url_for('main.module_students') }}" aria-label="Students"></a>
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-people"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Students') }}</div>
+                    <div class="small text-muted">{{ t('Manage student records') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col">
+              <div class="module-card card">
+                <a class="stretched-link" href="{{ url_for('main.module_subjects') }}" aria-label="Subjects"></a>
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-journal-bookmark"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Subjects') }}</div>
+                    <div class="small text-muted">{{ t('Configure and assign') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col">
+              <div class="module-card card">
+                <a class="stretched-link" href="{{ url_for('main.materials_hub') }}" aria-label="Materials"></a>
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-folder2"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Materials') }}</div>
+                    <div class="small text-muted">{{ t('Share and manage') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col">
+              <div class="module-card card">
+                <a class="stretched-link" href="{{ url_for('main.module_faculty') }}" aria-label="Staff"></a>
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-person-badge"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Staff') }}</div>
+                    <div class="small text-muted">{{ t('Profiles and assignments') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {% if (current_user.role|lower) in ['admin','principal','clerk'] %}
+            <div class="col">
+              <div class="module-card card">
+                <a class="stretched-link" href="{{ url_for('main.module_divisions') }}" aria-label="Divisions"></a>
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-diagram-3"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Divisions') }}</div>
+                    <div class="small text-muted">{{ t('Semesters and batches') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% endif %}
+
+            {% if not fees_disabled and (current_user.role|lower) in ['admin','principal','clerk'] %}
+            <div class="col">
+              <div class="module-card card">
+                {% if (current_user.role|lower) == 'clerk' %}
+                  <a class="stretched-link" href="{{ url_for('main.fees_entry') }}" aria-label="Fees"></a>
+                {% else %}
+                  <a class="stretched-link" href="{{ url_for('main.module_fees') }}" aria-label="Fees"></a>
+                {% endif %}
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-cash-coin"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Fees Module') }}</div>
+                    <div class="small text-muted">{{ t('Collection and reports') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% endif %}
+
+            <div class="col">
+              <div class="module-card card">
+                <a class="stretched-link" href="{{ url_for('main.programs_list') }}" aria-label="Programs"></a>
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-mortarboard"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Programs') }}</div>
+                    <div class="small text-muted">{{ t('Create and manage programs') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col">
+              <div class="module-card card">
+                <a class="stretched-link" href="{{ url_for('main.users_list') }}" aria-label="Accounts"></a>
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-people"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Manage Accounts') }}</div>
+                    <div class="small text-muted">{{ t('Create and manage accounts') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col">
+              <div class="module-card card">
+                <a class="stretched-link" href="{{ url_for('main.module_admin') }}" aria-label="Admin"></a>
+                <div class="card-body d-flex align-items-center gap-3">
+                  <span class="module-icon"><i class="bi bi-sliders"></i></span>
+                  <div>
+                    <div class="h6 mb-0">{{ t('Admin Module') }}</div>
+                    <div class="small text-muted">{{ t('Configuration and tools') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
         </div>
       </div>
     </div>
   </div>
+  {% endif %}
 
   <!-- Post-metrics cards removed to avoid duplication -->
   
@@ -793,36 +1124,6 @@
 
     // Principal/Clerk charts
     if (!isAdmin && charts) {
-      // Students by Semester (pie)
-      const el5 = document.getElementById('chartStudentsSemester');
-      if (el5 && charts.students_by_semester) {
-        new Chart(el5, {
-          type: 'pie',
-          data: { labels: charts.students_by_semester.labels, datasets: [{ data: charts.students_by_semester.data, backgroundColor: ['#0d6efd','#6f42c1','#198754','#fd7e14','#20c997','#6610f2'] }] },
-          options: { responsive:true, plugins:{ legend:{ position:'bottom' } } }
-        });
-      }
-      // Fees by Semester (bar)
-      const el6 = document.getElementById('chartFeesSemester');
-      if (el6 && charts.fees_by_semester) {
-        new Chart(el6, {
-          type: 'bar',
-          data: { labels: charts.fees_by_semester.labels, datasets: [{ label:'Amount (INR)', data: charts.fees_by_semester.data, backgroundColor:'#0d6efd' }] },
-          options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
-        });
-      }
-      // Gender by Semester (stacked bar)
-      const el7 = document.getElementById('chartGenderSemester');
-      if (el7 && charts.gender_by_semester) {
-        new Chart(el7, {
-          type: 'bar',
-          data: { labels: charts.gender_by_semester.labels, datasets: [
-            { label:'Male', data: charts.gender_by_semester.male, backgroundColor:'#0d6efd' },
-            { label:'Female', data: charts.gender_by_semester.female, backgroundColor:'#e83e8c' }
-          ] },
-          options: { responsive:true, plugins:{ legend:{ position:'bottom' } }, scales:{ x:{ stacked:true }, y:{ stacked:true, beginAtZero:true, precision:0 } } }
-        });
-      }
       const elWeek = document.getElementById('chartAttendanceWeek');
       if (elWeek && attWeek && attWeek.labels && attWeek.labels.length) {
         new Chart(elWeek, {
