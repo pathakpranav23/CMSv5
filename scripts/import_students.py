@@ -252,8 +252,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
     existing_students = db.session.execute(
         select(Student).filter_by(program_id_fk=program.program_id, current_semester=semester)
     ).scalars().all()
-    existing_enrollments = {s.enrollment_no for s in existing_students}
     processed_enrollments = set()
+    mediums_seen = set()
 
     cfg = load_program_mediums()
     try:
@@ -348,6 +348,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
             if allowed and medium_tag and medium_tag not in allowed:
                 errors.append(f"Row {row_idx}: medium '{medium_tag}' not allowed for {program.program_name}")
                 medium_tag = default_m
+            mediums_seen.add((medium_tag or "").strip())
 
             dob_val = data.get("date_of_birth")
             dob = None
@@ -363,9 +364,6 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
 
             current_semester = semester or to_int(data.get("current_semester"))
             roll_no = cell_to_str(data.get("roll_no"))
-            aadhar_no = cell_to_str(data.get("aadhar_no"))
-            category = cell_to_str(data.get("category"))
-
             aadhar_no = cell_to_str(data.get("aadhar_no"))
             category = cell_to_str(data.get("category"))
 
@@ -508,6 +506,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
             if allowed and medium_tag and medium_tag not in allowed:
                 errors.append(f"Row {r+1}: medium '{medium_tag}' not allowed for {program.program_name}")
                 medium_tag = default_m
+            mediums_seen.add((medium_tag or "").strip())
 
             dob_val = data.get("date_of_birth")
             dob = None
@@ -522,6 +521,8 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                         pass
 
             current_semester = semester or to_int(data.get("current_semester"))
+            aadhar_no = cell_to_str(data.get("aadhar_no"))
+            category = cell_to_str(data.get("category"))
 
             # Ensure User exists
             user_id = ensure_student_user(enrollment_no, mobile, program.program_id)
@@ -570,14 +571,29 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                 student.medium_tag = medium_tag or (student.medium_tag or None)
                 errors.append(f"Row {r+1}: failed to compute medium_tag due to data format")
 
-    # Delete students that are in DB for this Program+Semester but NOT in the Excel file
-    students_to_delete = existing_enrollments - processed_enrollments
-    for enr in students_to_delete:
-        if enr:
-            s_to_del = db.session.execute(select(Student).filter_by(enrollment_no=enr)).scalars().first()
-            if s_to_del:
-                db.session.delete(s_to_del)
+    # Delete students that are in DB for this Program+Semester but NOT in the Excel file.
+    # For multi-medium programs like B.Com, only delete students that share the same medium(s)
+    # as rows present in this import, so importing English does not delete Gujarati, and vice versa.
+    if mediums_seen:
+        normalized_mediums = {m.strip() for m in mediums_seen}
+        for existing in existing_students:
+            enr = existing.enrollment_no
+            if not enr or enr in processed_enrollments:
+                continue
+            existing_medium = (existing.medium_tag or "").strip()
+            if existing_medium in normalized_mediums:
+                db.session.delete(existing)
                 deleted += 1
+    else:
+        # Fallback: no medium information, keep legacy behavior (program+semester full replacement)
+        existing_enrollments = {s.enrollment_no for s in existing_students}
+        students_to_delete = existing_enrollments - processed_enrollments
+        for enr in students_to_delete:
+            if enr:
+                s_to_del = db.session.execute(select(Student).filter_by(enrollment_no=enr)).scalars().first()
+                if s_to_del:
+                    db.session.delete(s_to_del)
+                    deleted += 1
 
     if not dry_run:
         db.session.commit()
