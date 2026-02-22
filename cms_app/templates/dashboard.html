@@ -636,30 +636,37 @@
         {% if (current_user.role|lower) == 'principal' %}
         <div class="col-md-6">
           <div class="card h-100">
-            <div class="card-header card-header-standard"><div class="card-title">{{ t('Results Snapshot (Avg GPA by Subject)') }}</div></div>
-            <div class="card-body">
-              {% if charts.subject_results and charts.subject_results.labels %}
-                <div class="table-responsive">
-                  <table class="table table-sm align-middle mb-0">
-                    <thead class="table-light">
-                      <tr>
-                        <th>{{ t('Subject') }}</th>
-                        <th class="text-end">{{ t('Avg GPA') }}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {% for idx in range(charts.subject_results.labels|length) %}
+            <div class="card-header card-header-standard d-flex justify-content-between align-items-center">
+              <div class="card-title mb-0">{{ t('Results Snapshot (Avg GPA by Subject)') }}</div>
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#resultsSnapshotBody" aria-expanded="true" aria-controls="resultsSnapshotBody">
+                <span class="results-toggle-label-show">{{ t('Hide') }}</span>
+              </button>
+            </div>
+            <div id="resultsSnapshotBody" class="collapse show">
+              <div class="card-body">
+                {% if charts.subject_results and charts.subject_results.labels %}
+                  <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                      <thead class="table-light">
                         <tr>
-                          <td>{{ charts.subject_results.labels[idx] }}</td>
-                          <td class="text-end">{{ charts.subject_results.data[idx] }}</td>
+                          <th>{{ t('Subject') }}</th>
+                          <th class="text-end">{{ t('Avg GPA') }}</th>
                         </tr>
-                      {% endfor %}
-                    </tbody>
-                  </table>
-                </div>
-              {% else %}
-                <div class="text-muted small">{{ t('No result data available.') }}</div>
-              {% endif %}
+                      </thead>
+                      <tbody>
+                        {% for idx in range(charts.subject_results.labels|length) %}
+                          <tr>
+                            <td>{{ charts.subject_results.labels[idx] }}</td>
+                            <td class="text-end">{{ charts.subject_results.data[idx] }}</td>
+                          </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                {% else %}
+                  <div class="text-muted small">{{ t('No result data available.') }}</div>
+                {% endif %}
+              </div>
             </div>
           </div>
         </div>
@@ -902,8 +909,11 @@
             {% if not fees_disabled and (current_user.role|lower) in ['admin','principal','clerk'] %}
             <div class="col">
               <div class="module-card card">
-                {% if (current_user.role|lower) == 'clerk' %}
+                {% set role_lower = (current_user.role or '')|lower %}
+                {% if role_lower == 'clerk' %}
                   <a class="stretched-link" href="{{ url_for('main.fees_entry') }}" aria-label="Fees"></a>
+                {% elif role_lower == 'admin' %}
+                  <a class="stretched-link" href="{{ url_for('main.fees_payment_status') }}" aria-label="Fees"></a>
                 {% else %}
                   <a class="stretched-link" href="{{ url_for('main.module_fees') }}" aria-label="Fees"></a>
                 {% endif %}

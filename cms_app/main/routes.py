@@ -954,7 +954,7 @@ def fees_receipt_semester():
         return redirect(url_for("main.dashboard"))
 
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    if role not in ("admin", "clerk", "principal"):
+    if role not in ("admin", "clerk", "principal", "student"):
         flash("You are not authorized to access fees receipt.", "danger")
         return redirect(url_for("main.dashboard"))
 
@@ -972,14 +972,35 @@ def fees_receipt_semester():
         mr = medium_raw.strip().lower()
         if mr not in ("common", "none", "null", ""):
             medium = medium_raw.strip().capitalize()
-    # Enforce program scoping: clerk/principal are locked to their program
+    # Enforce program scoping:
+    # - clerk/principal are locked to their program
+    # - student is locked to their own program and enrollment
     user_program = None
     try:
         user_program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
         user_program = db.session.get(Program, user_program_id) if user_program_id else None
     except Exception:
         user_program = None
-    if role in ("clerk", "principal") and user_program:
+
+    if role == "student":
+        # Resolve the logged-in student's profile and force context to that student/program
+        try:
+            me = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
+        except Exception:
+            me = None
+        if not me:
+            flash("Student profile not found.", "danger")
+            return redirect(url_for("main.dashboard"))
+        student = me
+        enr_raw = student.enrollment_no
+        if student.program_id_fk:
+            user_program = db.session.get(Program, student.program_id_fk)
+        if user_program:
+            program_id = user_program.program_id
+            programs = [user_program]
+        else:
+            program_id = None
+    elif role in ("clerk", "principal") and user_program:
         program_id = user_program.program_id
         # Limit programs list to the scoped program to avoid confusion
         programs = [user_program]
@@ -1060,11 +1081,13 @@ def fees_receipt_semester():
                 receipt_upi_uri = f"upi://pay?pa={vpa}&pn={quote(payee) if payee else ''}&am={amt_str}&cu=INR&tn={note}"
     except Exception:
         receipt_upi_uri = None
-    # Include latest verified payment info (if available) for the student and semester
     verified_payment = None
+    verified_by_user = None
+    created_by_user = None
+    audit_ref = None
     try:
         if student and selected_program and semester:
-            from ..models import FeePayment
+            from ..models import FeePayment, User
             qp = db.session.execute(
                 select(FeePayment)
                 .filter_by(enrollment_no=student.enrollment_no, program_id_fk=selected_program.program_id, semester=semester)
@@ -1072,8 +1095,30 @@ def fees_receipt_semester():
             ).scalars().first()
             if qp and ((qp.status or "").strip().lower() == "verified"):
                 verified_payment = qp
+                try:
+                    verifier_id = getattr(qp, "verified_by_fk", None) or getattr(qp, "verified_by_user_id", None)
+                    if verifier_id:
+                        verified_by_user = db.session.get(User, verifier_id)
+                except Exception:
+                    verified_by_user = None
+                try:
+                    creator_id = getattr(qp, "created_by_user_id", None)
+                    if creator_id:
+                        created_by_user = db.session.get(User, creator_id)
+                except Exception:
+                    created_by_user = None
+                try:
+                    ts = getattr(qp, "created_at", None) or getattr(qp, "verified_at", None)
+                    if ts:
+                        date_part = ts.strftime("%Y%m%d")
+                        audit_ref = f"FEES-{date_part}-{qp.payment_id:06d}"
+                except Exception:
+                    audit_ref = None
     except Exception:
         verified_payment = None
+        verified_by_user = None
+        created_by_user = None
+        audit_ref = None
 
     # Temporary preview receipt number for non-verified previews
     preview_receipt_no = None
@@ -1096,6 +1141,9 @@ def fees_receipt_semester():
         student=student,
         bank_details=bank_details,
         verified_payment=verified_payment,
+        verified_by_user=verified_by_user,
+        created_by_user=created_by_user,
+        audit_ref=audit_ref,
         preview_receipt_no=preview_receipt_no,
         receipt_upi_uri=receipt_upi_uri,
     )
@@ -1529,10 +1577,34 @@ def fees_payment_mark_paid(enrollment_no):
         proof_image_path=proof_rel_path,
         status="submitted",
         remarks=remarks or None,
+        created_by_user_id=getattr(current_user, "user_id", None),
     )
     try:
         db.session.add(fp)
         db.session.commit()
+        # Persistent notification for the student (dashboard only; email handled later)
+        try:
+            from ..models import Notification
+            import json as _json
+            payload = {
+                "program_id": fp.program_id_fk,
+                "semester": fp.semester,
+                "medium": fp.medium_tag,
+                "payment_id": fp.payment_id,
+                "utr": fp.utr,
+            }
+            n = Notification(
+                student_id_fk=s.enrollment_no,
+                kind="fee_submitted",
+                title="Payment submitted",
+                message=f"Your payment submission (UTR: {fp.utr}) has been recorded and is pending verification.",
+                data_json=_json.dumps(payload),
+                payment_id_fk=fp.payment_id,
+            )
+            db.session.add(n)
+            db.session.commit()
+        except Exception:
+            pass
         flash("UTR and screenshot submitted for verification.", "success")
     except Exception:
         db.session.rollback()
@@ -11186,7 +11258,7 @@ def admin_program_import():
 # Fees module and routes
 @main_bp.route("/modules/fees")
 @login_required
-@role_required("clerk", "admin")
+@role_required("admin", "principal", "clerk")
 def module_fees():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     # Compute Semester 1 totals per program from DB-backed fee structure
