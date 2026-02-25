@@ -84,6 +84,23 @@
       <option value="Other" {{ 'selected' if g == 'Other' else '' }}>Other</option>
     </select>
   </div>
+
+  <div class="col-md-4">
+    <label for="category" class="form-label">Category</label>
+    <select id="category" name="category" class="form-select" required>
+      {% set cat = form_data.get('category','') %}
+      <option value="">-- Select --</option>
+      <option value="OPEN" {{ 'selected' if cat == 'OPEN' else '' }}>OPEN</option>
+      <option value="OBC" {{ 'selected' if cat == 'OBC' else '' }}>OBC</option>
+      <option value="SC" {{ 'selected' if cat == 'SC' else '' }}>SC</option>
+      <option value="ST" {{ 'selected' if cat == 'ST' else '' }}>ST</option>
+      <option value="EWS" {{ 'selected' if cat == 'EWS' else '' }}>EWS</option>
+    </select>
+  </div>
+  <div class="col-md-4">
+    <label for="aadhar_no" class="form-label">Aadhar Number</label>
+    <input type="text" id="aadhar_no" name="aadhar_no" class="form-control" value="{{ form_data.get('aadhar_no','') }}" maxlength="12" placeholder="12-digit number" />
+  </div>
   <div class="col-md-4">
     <label for="medium_tag" class="form-label">Medium</label>
     {% set m = form_data.get('medium_tag','') %}

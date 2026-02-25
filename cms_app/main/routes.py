@@ -6420,6 +6420,8 @@ def students_new():
         dob_raw = form.get("date_of_birth") or ""
         mobile = (form.get("mobile") or "").strip()
         current_semester_raw = form.get("current_semester")
+        category = (form.get("category") or "").strip()
+        aadhar_no = (form.get("aadhar_no") or "").strip()
         # New optional fields
         gender = ((form.get("gender") or "").strip()).capitalize()
         medium_tag = ((form.get("medium_tag") or "").strip()).capitalize()
@@ -6436,6 +6438,8 @@ def students_new():
             errors.append("Program is required.")
         if not student_name:
             errors.append("Student Name is required.")
+        if not category:
+            errors.append("Category is required.")
 
         # Validate uniqueness
         if enrollment_no and db.session.get(Student, enrollment_no):
@@ -6474,8 +6478,15 @@ def students_new():
         if gender and gender not in ("Male", "Female", "Other"):
             errors.append("Gender must be Male, Female, or Other.")
         # Medium validation
-        if medium_tag and medium_tag not in ("English", "Gujarati"):
-            errors.append("Medium must be English or Gujarati.")
+        if medium_tag and medium_tag not in ("English", "Gujarati", "General"):
+            errors.append("Medium must be English, Gujarati, or General.")
+        # Aadhar validation
+        if aadhar_no:
+            aadhar_digits = "".join(ch for ch in aadhar_no if ch.isdigit())
+            if len(aadhar_digits) != 12:
+                errors.append("Aadhar Number must be exactly 12 digits.")
+            else:
+                aadhar_no = aadhar_digits # sanitize to digits only
         # Validate and save photo file if provided
         if photo_file and photo_file.filename:
             allowed_ext = {"png", "jpg", "jpeg", "gif"}
@@ -6538,6 +6549,8 @@ def students_new():
                     "mobile": mobile,
                     "gender": gender,
                     "medium_tag": medium_tag,
+                    "category": category,
+                    "aadhar_no": aadhar_no,
                     # photo_file cannot be re-populated after error
                     "permanent_address": permanent_address,
                     "current_semester": current_semester_raw,
@@ -6567,6 +6580,8 @@ def students_new():
             photo_url=photo_url or None,
             permanent_address=permanent_address or None,
             current_semester=current_semester,
+            category=category or None,
+            aadhar_no=aadhar_no or None,
         )
         db.session.add(s)
 
@@ -6678,6 +6693,8 @@ def students_edit(enrollment_no):
         dob_raw = form.get("date_of_birth") or ""
         mobile = (form.get("mobile") or "").strip()
         current_semester_raw = form.get("current_semester")
+        category = (form.get("category") or "").strip()
+        aadhar_no = (form.get("aadhar_no") or "").strip()
         gender = ((form.get("gender") or "").strip()).capitalize()
         medium_tag = ((form.get("medium_tag") or "").strip()).capitalize()
         photo_file = request.files.get("photo_file")
@@ -6689,6 +6706,8 @@ def students_edit(enrollment_no):
             errors.append("Program is required.")
         if not student_name:
             errors.append("Student Name is required.")
+        if not category:
+            errors.append("Category is required.")
 
         # Parse integers
         try:
@@ -6722,6 +6741,14 @@ def students_edit(enrollment_no):
             errors.append("Gender must be Male, Female, or Other.")
         if medium_tag and medium_tag not in ("English", "Gujarati", "General"):
             errors.append("Medium must be English, Gujarati, or General.")
+
+        # Aadhar validation
+        if aadhar_no:
+            aadhar_digits = "".join(ch for ch in aadhar_no if ch.isdigit())
+            if len(aadhar_digits) != 12:
+                errors.append("Aadhar Number must be exactly 12 digits.")
+            else:
+                aadhar_no = aadhar_digits # sanitize to digits only
 
         # Validate and save photo file if provided
         if photo_file and photo_file.filename:
@@ -6769,6 +6796,8 @@ def students_edit(enrollment_no):
         s.gender = gender or None
         s.medium_tag = medium_tag or None
         s.permanent_address = permanent_address or None
+        s.category = category or None
+        s.aadhar_no = aadhar_no or None
 
         if errors:
             flash("Please fix the highlighted errors before submission.", "danger")
@@ -6799,6 +6828,8 @@ def students_edit(enrollment_no):
                     "mobile": mobile,
                     "gender": gender,
                     "medium_tag": medium_tag,
+                    "category": category,
+                    "aadhar_no": aadhar_no,
                     "permanent_address": permanent_address,
                     "current_semester": current_semester_raw,
                     "photo_url": s.photo_url or "",
@@ -6840,6 +6871,8 @@ def students_edit(enrollment_no):
         "mobile": s.mobile or "",
         "gender": s.gender or "",
         "medium_tag": s.medium_tag or "",
+        "category": s.category or "",
+        "aadhar_no": s.aadhar_no or "",
         "permanent_address": s.permanent_address or "",
         "current_semester": s.current_semester or "",
         "photo_url": s.photo_url or "",
