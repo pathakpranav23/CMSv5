@@ -6523,13 +6523,12 @@ def students_new():
             # Show a general flash along with inline errors
             flash("Please fix the highlighted errors before submission.", "danger")
             programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
-            # Restrict dropdown to generic BCom only
+            # Scope restriction: principals/clerks only see their assigned program
             try:
-                def _is_generic_bcom(name: str) -> bool:
-                    s = (name or "").strip().upper()
-                    s = s.replace(".", "").replace(" ", "")
-                    return s == "BCOM"
-                programs = [p for p in programs if _is_generic_bcom(p.program_name)]
+                user_role = (getattr(current_user, "role", "") or "").strip().lower()
+                principal_program = getattr(current_user, "program_id_fk", None)
+                if user_role in ("principal", "clerk") and principal_program:
+                    programs = [p for p in programs if p.program_id == principal_program]
             except Exception:
                 pass
             divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
@@ -6650,13 +6649,12 @@ def students_new():
 
     # GET: render form
     programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
-    # Restrict dropdown to generic BCom only
+    # Scope restriction: principals/clerks only see their assigned program
     try:
-        def _is_generic_bcom(name: str) -> bool:
-            s = (name or "").strip().upper()
-            s = s.replace(".", "").replace(" ", "")
-            return s == "BCOM"
-        programs = [p for p in programs if _is_generic_bcom(p.program_name)]
+        user_role = (getattr(current_user, "role", "") or "").strip().lower()
+        principal_program = getattr(current_user, "program_id_fk", None)
+        if user_role in ("principal", "clerk") and principal_program:
+            programs = [p for p in programs if p.program_id == principal_program]
     except Exception:
         pass
     divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
@@ -6802,13 +6800,12 @@ def students_edit(enrollment_no):
         if errors:
             flash("Please fix the highlighted errors before submission.", "danger")
             programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
-            # Restrict dropdown to generic BCom only
+            # Scope restriction: principals/clerks only see their assigned program
             try:
-                def _is_generic_bcom(name: str) -> bool:
-                    s = (name or "").strip().upper()
-                    s = s.replace(".", "").replace(" ", "")
-                    return s == "BCOM"
-                programs = [p for p in programs if _is_generic_bcom(p.program_name)]
+                user_role = (getattr(current_user, "role", "") or "").strip().lower()
+                principal_program = getattr(current_user, "program_id_fk", None)
+                if user_role in ("principal", "clerk") and principal_program:
+                    programs = [p for p in programs if p.program_id == principal_program]
             except Exception:
                 pass
             divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
@@ -6850,13 +6847,12 @@ def students_edit(enrollment_no):
 
     # GET: render form with existing values
     programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
-    # Restrict dropdown to generic BCom only
+    # Scope restriction: principals/clerks only see their assigned program
     try:
-        def _is_generic_bcom(name: str) -> bool:
-            s = (name or "").strip().upper()
-            s = s.replace(".", "").replace(" ", "")
-            return s == "BCOM"
-        programs = [p for p in programs if _is_generic_bcom(p.program_name)]
+        user_role = (getattr(current_user, "role", "") or "").strip().lower()
+        principal_program = getattr(current_user, "program_id_fk", None)
+        if user_role in ("principal", "clerk") and principal_program:
+            programs = [p for p in programs if p.program_id == principal_program]
     except Exception:
         pass
     divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
