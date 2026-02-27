@@ -48,7 +48,12 @@
       <option value="">-- None --</option>
       {% for d in divisions %}
         {% set key = d.division_id %}
-        <option value="{{ key }}" {{ 'selected' if form_data.get('division_id_fk') == key|string else '' }}>{{ d.semester }} - {{ d.division_code }}</option>
+        <option value="{{ key }}" 
+                data-program-id="{{ d.program_id_fk }}"
+                data-semester="{{ d.semester }}"
+                {{ 'selected' if form_data.get('division_id_fk') == key|string else '' }}>
+          {{ d.division_code }}
+        </option>
       {% endfor %}
     </select>
   </div>
@@ -160,10 +165,45 @@
         }
       }
     }
+    const divSel = document.getElementById('division_id_fk');
+    const semSel = document.getElementById('current_semester');
+
+    function updateDivisions() {
+      if (!divSel || !progSel || !semSel) return;
+      const progId = progSel.value;
+      const sem = semSel.value;
+      const options = divSel.querySelectorAll('option');
+
+      options.forEach(opt => {
+        if (opt.value === "") { // -- None --
+          opt.style.display = "";
+          return;
+        }
+        const optProgId = opt.getAttribute('data-program-id');
+        const optSem = opt.getAttribute('data-semester');
+        if (optProgId === progId && optSem === sem) {
+          opt.style.display = "";
+        } else {
+          opt.style.display = "none";
+          if (divSel.value === opt.value) {
+            divSel.value = "";
+          }
+        }
+      });
+    }
+
     if (progSel) {
-      progSel.addEventListener('change', updateMediumState);
+      progSel.addEventListener('change', () => {
+        updateMediumState();
+        updateDivisions();
+      });
       updateMediumState();
     }
+    if (semSel) {
+      semSel.addEventListener('change', updateDivisions);
+    }
+    // Initialize divisions on load
+    updateDivisions();
   })();
 </script>
 {% endblock %}

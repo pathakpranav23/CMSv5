@@ -6531,7 +6531,10 @@ def students_new():
                     programs = [p for p in programs if p.program_id == principal_program]
             except Exception:
                 pass
-            divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
+            divisions_q = select(Division).order_by(Division.semester, Division.division_code)
+            if user_role in ("principal", "clerk") and principal_program:
+                divisions_q = divisions_q.filter_by(program_id_fk=principal_program)
+            divisions = db.session.execute(divisions_q).scalars().all()
             return render_template(
                 "students_new.html",
                 programs=programs,
@@ -6657,7 +6660,15 @@ def students_new():
             programs = [p for p in programs if p.program_id == principal_program]
     except Exception:
         pass
-    divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
+    divisions_q = select(Division).order_by(Division.semester, Division.division_code)
+    try:
+        user_role = (getattr(current_user, "role", "") or "").strip().lower()
+        principal_program = getattr(current_user, "program_id_fk", None)
+        if user_role in ("principal", "clerk") and principal_program:
+            divisions_q = divisions_q.filter_by(program_id_fk=principal_program)
+    except Exception:
+        pass
+    divisions = db.session.execute(divisions_q).scalars().all()
     return render_template("students_new.html", programs=programs, divisions=divisions, errors=[], form_data={})
 
 
@@ -6808,7 +6819,10 @@ def students_edit(enrollment_no):
                     programs = [p for p in programs if p.program_id == principal_program]
             except Exception:
                 pass
-            divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
+            divisions_q = select(Division).order_by(Division.semester, Division.division_code)
+            if user_role in ("principal", "clerk") and principal_program:
+                divisions_q = divisions_q.filter_by(program_id_fk=principal_program)
+            divisions = db.session.execute(divisions_q).scalars().all()
             return render_template(
                 "students_edit.html",
                 programs=programs,
@@ -6855,7 +6869,15 @@ def students_edit(enrollment_no):
             programs = [p for p in programs if p.program_id == principal_program]
     except Exception:
         pass
-    divisions = db.session.execute(select(Division).order_by(Division.semester, Division.division_code)).scalars().all()
+    divisions_q = select(Division).order_by(Division.semester, Division.division_code)
+    try:
+        user_role = (getattr(current_user, "role", "") or "").strip().lower()
+        principal_program = getattr(current_user, "program_id_fk", None)
+        if user_role in ("principal", "clerk") and principal_program:
+            divisions_q = divisions_q.filter_by(program_id_fk=principal_program)
+    except Exception:
+        pass
+    divisions = db.session.execute(divisions_q).scalars().all()
     form_data = {
         "enrollment_no": s.enrollment_no,
         "program_id_fk": s.program_id_fk,
