@@ -14677,7 +14677,7 @@ def module_analytics():
     today = date.today()
     q_daily = select(
         Attendance, 
-        Faculty.faculty_name, 
+        Faculty.full_name, 
         Faculty.designation, 
         Subject.subject_name,
         Division.division_code,
@@ -14750,7 +14750,7 @@ def module_analytics():
     
     # Improved Weekly Query: Group by Lecture Unique Keys
     q_week_agg = select(
-        Faculty.faculty_name,
+        Faculty.full_name,
         Attendance.date_marked,
         Attendance.period_no,
         Attendance.division_id_fk,
@@ -14770,7 +14770,7 @@ def module_analytics():
         q_week_agg = q_week_agg.filter(Division.program_id_fk == user_pid)
 
     q_week_agg = q_week_agg.group_by(
-        Faculty.faculty_name,
+        Faculty.full_name,
         Attendance.date_marked,
         Attendance.period_no,
         Attendance.division_id_fk,
@@ -14798,8 +14798,8 @@ def module_analytics():
     # 3. Performance Alerts
     performance_alerts = {"high": [], "low": []}
     
-    fac_ids = db.session.execute(select(Faculty.faculty_id, Faculty.faculty_name)).all()
-    fac_lookup = {f.faculty_name: f.faculty_id for f in fac_ids}
+    fac_ids = db.session.execute(select(Faculty.faculty_id, Faculty.full_name)).all()
+    fac_lookup = {f.full_name: f.faculty_id for f in fac_ids}
 
     for item in weekly_grid:
         fid = fac_lookup.get(item["faculty_name"])
@@ -14840,12 +14840,12 @@ def analytics_notify():
         abort(404)
     
     if not faculty.email:
-        flash(f"Cannot send notification: {faculty.faculty_name} has no email address.", "danger")
+        flash(f"Cannot send notification: {faculty.full_name} has no email address.", "danger")
         return redirect(url_for("main.module_analytics"))
 
     if notif_type == "warning":
         subject = "Action Required: Academic Delivery Review"
-        body = f"""Dear Prof. {faculty.faculty_name},
+        body = f"""Dear Prof. {faculty.full_name},
 
 This is an automated alert regarding your lecture completion rate for this week.
 It appears to be below the expected target.
@@ -14855,18 +14855,18 @@ If you are facing any issues, please contact the Principal's office.
 
 Regards,
 Principal's Office"""
-        flash(f"Warning sent to {faculty.faculty_name}.", "warning")
+        flash(f"Warning sent to {faculty.full_name}.", "warning")
         
     elif notif_type == "appreciation":
         subject = "Appreciation: Excellent Academic Performance"
-        body = f"""Dear Prof. {faculty.faculty_name},
+        body = f"""Dear Prof. {faculty.full_name},
 
 We noticed your excellent lecture delivery and student engagement this week.
 Thank you for your dedication and hard work. Keep it up!
 
 Regards,
 Principal's Office"""
-        flash(f"Appreciation sent to {faculty.faculty_name}!", "success")
+        flash(f"Appreciation sent to {faculty.full_name}!", "success")
     
     # Fire and forget email
     try:

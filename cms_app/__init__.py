@@ -1,6 +1,7 @@
 import os
 import secrets
 import time
+import uuid
 from flask import Flask, session, request, url_for, flash, redirect, current_app, render_template
 from flask_login import LoginManager, current_user
 from flask_sqlalchemy import SQLAlchemy
@@ -393,6 +394,27 @@ def create_app():
             return api_error(str(e.code), e.description or "", e.code)
         except Exception:
             return str(e), e.code
+
+    @app.errorhandler(Exception)
+    def handle_unexpected_exception(e):
+        error_id = uuid.uuid4().hex[:12]
+        try:
+            app.logger.exception("Unhandled exception (ref=%s)", error_id)
+        except Exception:
+            pass
+        try:
+            path = (request.path or "")
+            accept = (request.headers.get("Accept") or "").lower()
+            is_api = ("/api/" in path) or path.startswith("/api") or ("application/json" in accept)
+        except Exception:
+            is_api = False
+        if is_api:
+            try:
+                from .api_utils import api_error
+                return api_error("500", f"Internal server error (ref {error_id})", 500)
+            except Exception:
+                return {"success": False, "error": {"code": "500", "message": f"Internal server error (ref {error_id})"}}, 500
+        return f"Internal server error (ref {error_id})", 500
 
     # UPI config defaults
     app.config.setdefault("UPI_VPA", "college@bank")
