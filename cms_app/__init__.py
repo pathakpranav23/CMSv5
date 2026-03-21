@@ -2,9 +2,12 @@ import os
 import secrets
 import time
 import uuid
+import sqlite3
 from flask import Flask, session, request, url_for, flash, redirect, current_app, render_template
 from flask_login import LoginManager, current_user
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 from sqlalchemy import inspect
 from werkzeug.exceptions import RequestEntityTooLarge
 from functools import wraps
@@ -31,6 +34,8 @@ def _rate_key():
 
 limiter = Limiter(key_func=_rate_key)
 cache = Cache()
+
+_sqlite_pragmas_registered = False
 
 
 def create_app():
@@ -73,12 +78,51 @@ def create_app():
 
     # Database configuration: use DATABASE_URL if provided, else sqlite file
     database_url = os.environ.get("DATABASE_URL")
+    if database_url and database_url.startswith("postgres://"):
+        database_url = "postgresql://" + database_url[len("postgres://"):]
+    if database_url and database_url.startswith("postgresql"):
+        try:
+            import psycopg2  # noqa: F401
+        except Exception:
+            database_url = None
     if not database_url:
         db_path = os.path.join(os.path.dirname(__file__), "..", "cms.db")
         database_url = f"sqlite:///{os.path.abspath(db_path)}"
 
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    if (database_url or "").startswith("sqlite:"):
+        app.config.setdefault(
+            "SQLALCHEMY_ENGINE_OPTIONS",
+            {
+                "connect_args": {"timeout": 30, "check_same_thread": False},
+                "pool_pre_ping": True,
+            },
+        )
+        global _sqlite_pragmas_registered
+        if not _sqlite_pragmas_registered:
+            @event.listens_for(Engine, "connect")
+            def _set_sqlite_pragmas(dbapi_connection, _):
+                if not isinstance(dbapi_connection, sqlite3.Connection):
+                    return
+                try:
+                    cur = dbapi_connection.cursor()
+                    try:
+                        cur.execute("PRAGMA journal_mode=WAL;")
+                    except Exception:
+                        pass
+                    try:
+                        cur.execute("PRAGMA synchronous=NORMAL;")
+                    except Exception:
+                        pass
+                    try:
+                        cur.execute("PRAGMA busy_timeout=5000;")
+                    except Exception:
+                        pass
+                    cur.close()
+                except Exception:
+                    pass
+            _sqlite_pragmas_registered = True
 
     app.config.setdefault("RATELIMIT_STORAGE_URI", "memory://")
     db.init_app(app)
@@ -198,9 +242,126 @@ def create_app():
             token = secrets.token_urlsafe(32)
             session["csrf_token"] = token
             session["csrf_token_issued_at"] = now
-        def _csrf_token():
-            return token
-        return {"csrf_token": _csrf_token, "csrf_token_value": token}
+        class _CsrfToken(str):
+            def __call__(self):
+                return str(self)
+            def __html__(self):
+                return str(self)
+        tok = _CsrfToken(token)
+        return {"csrf_token": tok, "csrf_token_value": token}
+
+    @app.context_processor
+    def inject_breadcrumbs():
+        from werkzeug.routing import BuildError
+
+        items = []
+        try:
+            endpoint = (request.endpoint or "").strip()
+        except Exception:
+            endpoint = ""
+        try:
+            path = (request.path or "").strip()
+        except Exception:
+            path = ""
+
+        def _safe_url(ep, **kwargs):
+            try:
+                return url_for(ep, **kwargs)
+            except BuildError:
+                return None
+            except Exception:
+                return None
+
+        mapping = {
+            "main.dashboard": ("Dashboard", "main.dashboard"),
+            "main.module_admin": ("Admin Module", "main.module_admin"),
+            "main.student_lifecycle": ("Student Lifecycle", "main.student_lifecycle"),
+            "main.staff_lifecycle": ("Staff Lifecycle", "main.staff_lifecycle"),
+            "main.students_semester_promotion": ("Semester Promotion", "main.students_semester_promotion"),
+            "main.admin_import_logs": ("Import Logs", "main.admin_import_logs"),
+            "main.admin_logbook": ("LogBook", "main.admin_logbook"),
+            "main.admin_workflow_new_academic_year": ("New Academic Year Setup", "main.admin_workflow_new_academic_year"),
+            "main.admin_system_status": ("System Status", "main.admin_system_status"),
+            "main.students": ("Students", "main.students"),
+            "main.subjects_list": ("Subjects", "main.subjects_list"),
+            "main.programs_list": ("Programs", "main.programs_list"),
+            "main.reports_hub": ("Reports", "main.reports_hub"),
+            "main.documents_index": ("Documents", "main.documents_index"),
+            "main.attendance_mark": ("Attendance", "main.attendance_mark"),
+            "main.module_attendance": ("Attendance", "main.module_attendance"),
+            "main.module_students": ("Students", "main.module_students"),
+            "main.module_subjects": ("Subjects", "main.module_subjects"),
+            "main.module_faculty": ("Staff", "main.module_faculty"),
+            "main.module_fees": ("Fees Module", "main.module_fees"),
+            "main.module_divisions": ("Divisions", "main.module_divisions"),
+            "main.module_analytics": ("Analytics", "main.module_analytics"),
+        }
+
+        label = None
+        ep = None
+        if endpoint in mapping:
+            label, ep = mapping[endpoint]
+
+        if ep:
+            if endpoint not in ("main.module_admin",) and endpoint.startswith("main.") and endpoint not in ("main.dashboard",):
+                if endpoint in ("main.student_lifecycle", "main.staff_lifecycle", "main.students_semester_promotion", "main.admin_import_logs", "main.admin_logbook", "main.admin_workflow_new_academic_year", "main.admin_system_status"):
+                    items.append({"label": "Admin Module", "url": _safe_url("main.module_admin")})
+            items.append({"label": label, "url": _safe_url(ep) if endpoint != ep else None})
+        elif endpoint:
+            nice = endpoint.split(".")[-1].replace("_", " ").strip().title()
+            if endpoint.startswith("main.") and (endpoint.startswith("main.admin") or path.startswith("/admin") or path.startswith("/modules/admin")):
+                items.append({"label": "Admin Module", "url": _safe_url("main.module_admin")})
+            items.append({"label": nice or "Page", "url": None})
+
+        return {"breadcrumb_items": items}
+
+    @app.context_processor
+    def inject_command_palette():
+        from werkzeug.routing import BuildError
+
+        try:
+            from flask_login import current_user
+        except Exception:
+            current_user = None
+
+        def _safe_url(ep, **kwargs):
+            try:
+                return url_for(ep, **kwargs)
+            except BuildError:
+                return None
+            except Exception:
+                return None
+
+        role = ""
+        is_super = False
+        if getattr(current_user, "is_authenticated", False):
+            role = (getattr(current_user, "role", "") or "").strip().lower()
+            is_super = bool(getattr(current_user, "is_super_admin", False))
+
+        actions = []
+        if role:
+            actions.append({"id": "dashboard", "label": "Dashboard", "hint": "Home", "url": _safe_url("main.dashboard"), "tags": ["home"]})
+            actions.append({"id": "admin_module", "label": "Admin Module", "hint": "Tools and workflows", "url": _safe_url("main.module_admin"), "tags": ["admin", "tools"]})
+            actions.append({"id": "logbook", "label": "LogBook", "hint": "All logs in one place", "url": _safe_url("main.admin_logbook"), "tags": ["logs", "audit"]})
+            actions.append({"id": "student_lifecycle", "label": "Student Lifecycle", "hint": "Archive, alumni, restore, recycle bin", "url": _safe_url("main.student_lifecycle"), "tags": ["students", "archive", "alumni"]})
+            actions.append({"id": "staff_lifecycle", "label": "Staff Lifecycle", "hint": "Archive/restore staff", "url": _safe_url("main.staff_lifecycle"), "tags": ["staff", "archive"]})
+            actions.append({"id": "semester_promotion", "label": "Semester Promotion", "hint": "Promote students between semesters", "url": _safe_url("main.students_semester_promotion"), "tags": ["students", "promotion"]})
+            actions.append({"id": "workflow_new_ay", "label": "New Academic Year Setup", "hint": "Guided yearly rollover", "url": _safe_url("main.admin_workflow_new_academic_year"), "tags": ["workflow", "setup"]})
+            actions.append({"id": "students_list", "label": "Students", "hint": "Search and manage students", "url": _safe_url("main.students"), "tags": ["students", "search"]})
+            actions.append({"id": "staff_list", "label": "Staff", "hint": "Search staff and accounts", "url": _safe_url("main.faculty_list"), "tags": ["staff", "users"]})
+            actions.append({"id": "reports", "label": "Reports", "hint": "Exports and analytics", "url": _safe_url("main.reports_hub"), "tags": ["reports", "export"]})
+            actions.append({"id": "documents", "label": "Documents", "hint": "Manuals and PDFs", "url": _safe_url("main.documents_index"), "tags": ["docs"]})
+
+            if role in ("admin", "principal", "clerk"):
+                actions.append({"id": "students_import", "label": "Bulk Import Students", "hint": "Upload Excel", "url": _safe_url("main.students_import"), "tags": ["import", "students"]})
+            if role in ("admin", "principal"):
+                actions.append({"id": "import_logs", "label": "Import Logs", "hint": "Review bulk imports", "url": _safe_url("main.admin_import_logs"), "tags": ["import", "logs"]})
+
+            if is_super:
+                actions.append({"id": "super_student_purge", "label": "Student Purge (Super Admin)", "hint": "Danger Zone", "url": _safe_url("super_admin.students_purge"), "tags": ["danger", "purge"]})
+
+        actions = [a for a in actions if a.get("url")]
+        return {"command_palette_actions": actions}
 
     @app.before_request
     def ensure_rate_key():

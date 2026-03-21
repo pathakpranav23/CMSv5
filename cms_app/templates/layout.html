@@ -58,16 +58,27 @@
             <li><a href="{{ url_for('main.dashboard') }}"><span class="module-icon"><i class="bi bi-speedometer text-primary"></i></span><span class="label">{{ t('Dashboard') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.module_announcements') }}"><span class="module-icon"><i class="bi bi-megaphone text-primary"></i></span><span class="label">{{ t('Announcements') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.module_attendance') }}"><span class="module-icon"><i class="bi bi-calendar-check text-primary"></i></span><span class="label">{{ t('Attendance') }}</span></a><br class="nav-break"></li>
-            <li><a href="{{ url_for('main.module_students') }}"><span class="module-icon"><i class="bi bi-people text-primary"></i></span><span class="label">{{ t('Students') }}</span></a><br class="nav-break"></li>
-            <li><a href="{{ url_for('main.module_subjects') }}"><span class="module-icon"><i class="bi bi-journal-bookmark text-primary"></i></span><span class="label">{{ t('Subjects') }}</span></a><br class="nav-break"></li>
-            {% if (current_user.role|lower) in ['admin','principal'] %}
-            <li><a href="{{ url_for('timetable.manage') }}"><span class="module-icon"><i class="bi bi-calendar-week text-primary"></i></span><span class="label">{{ t('Timetable') }}</span></a><br class="nav-break"></li>
-            {% endif %}
             <li><a href="{{ url_for('main.materials_hub') }}"><span class="module-icon"><i class="bi bi-folder2 text-primary"></i></span><span class="label">{{ t('Materials') }}</span></a><br class="nav-break"></li>
             {% if (current_user.role|lower) in ['admin','principal','clerk','faculty'] %}
               <li><a href="{{ url_for('exams.dashboard') }}"><span class="module-icon"><i class="bi bi-mortarboard text-primary"></i></span><span class="label">{{ t('Exams') }}</span></a><br class="nav-break"></li>
             {% endif %}
-            <li><a href="{{ url_for('main.module_faculty') }}"><span class="module-icon"><i class="bi bi-person-badge text-primary"></i></span><span class="label">{{ t('Staff') }}</span></a><br class="nav-break"></li>
+            <li>
+              <a data-bs-toggle="collapse" href="#navAcademicsMore" role="button" aria-expanded="false" aria-controls="navAcademicsMore">
+                <span class="module-icon"><i class="bi bi-chevron-down text-primary"></i></span>
+                <span class="label">{{ t('More') }}</span>
+              </a>
+              <br class="nav-break">
+              <div class="collapse" id="navAcademicsMore">
+                <ul class="nav d-block ps-2">
+                  <li><a href="{{ url_for('main.module_students') }}"><span class="module-icon"><i class="bi bi-people text-primary"></i></span><span class="label">{{ t('Students') }}</span></a><br class="nav-break"></li>
+                  <li><a href="{{ url_for('main.module_subjects') }}"><span class="module-icon"><i class="bi bi-journal-bookmark text-primary"></i></span><span class="label">{{ t('Subjects') }}</span></a><br class="nav-break"></li>
+                  <li><a href="{{ url_for('main.module_faculty') }}"><span class="module-icon"><i class="bi bi-person-badge text-primary"></i></span><span class="label">{{ t('Staff') }}</span></a><br class="nav-break"></li>
+                  {% if (current_user.role|lower) in ['admin','principal'] %}
+                  <li><a href="{{ url_for('timetable.manage') }}"><span class="module-icon"><i class="bi bi-calendar-week text-primary"></i></span><span class="label">{{ t('Timetable') }}</span></a><br class="nav-break"></li>
+                  {% endif %}
+                </ul>
+              </div>
+            </li>
           </div>
 
           <!-- Group 2: Administration (Warning/Gold Theme) -->
@@ -133,6 +144,8 @@
         <button class="btn btn-outline-light btn-sm" id="sidebarToggle"><i class="bi bi-list"></i> Menu</button>
         <span class="fw-bold">Parekh Colleges</span>
   <div class="d-flex align-items-center gap-2">
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.dashboard') }}" title="Dashboard"><i class="bi bi-house"></i></a>
+    <button class="btn btn-outline-light btn-sm" type="button" data-action="open-command-palette" title="Command Palette"><i class="bi bi-search"></i></button>
     <button class="btn btn-outline-light btn-sm" onclick="history.back()" title="Back"><i class="bi bi-arrow-left"></i></button>
     <span class="small fw-semibold" style="color: var(--nav-fg);">
       {% if current_user.is_authenticated %}
@@ -147,6 +160,22 @@
     </div>
   </div>
 </div>
+
+      {% if breadcrumb_items and breadcrumb_items|length > 0 %}
+      <div class="d-lg-none px-3 py-2 border-bottom" style="background: rgba(255,255,255,0.9);">
+        <nav aria-label="breadcrumb">
+          <ol class="breadcrumb mb-0 small">
+            {% for b in breadcrumb_items %}
+              {% if b.url %}
+                <li class="breadcrumb-item"><a href="{{ b.url }}">{{ t(b.label) }}</a></li>
+              {% else %}
+                <li class="breadcrumb-item active" aria-current="page">{{ t(b.label) }}</li>
+              {% endif %}
+            {% endfor %}
+          </ol>
+        </nav>
+      </div>
+      {% endif %}
 
       <!-- Enhanced Navigation Bar for all pages -->
       <nav class="enhanced-nav d-none d-lg-flex align-items-center justify-content-between px-3 py-2 border-bottom">
@@ -177,6 +206,19 @@
           </div>
           {% endif %}
 
+          {% if breadcrumb_items and breadcrumb_items|length > 0 %}
+            <nav aria-label="breadcrumb" class="d-inline-block ms-2">
+              <ol class="breadcrumb mb-0 small">
+                {% for b in breadcrumb_items %}
+                  {% if b.url %}
+                    <li class="breadcrumb-item"><a href="{{ b.url }}">{{ t(b.label) }}</a></li>
+                  {% else %}
+                    <li class="breadcrumb-item active" aria-current="page">{{ t(b.label) }}</li>
+                  {% endif %}
+                {% endfor %}
+              </ol>
+            </nav>
+          {% endif %}
           {% block breadcrumb %}{% endblock %}
         </div>
         <div class="nav-controls d-flex align-items-center gap-3">
@@ -187,9 +229,9 @@
               Hello Guest
             {% endif %}
           </span>
+          <button class="btn btn-sm btn-outline-secondary" type="button" data-action="open-command-palette" title="Command Palette (Ctrl+K)"><i class="bi bi-search"></i></button>
           <button class="btn btn-sm btn-outline-secondary" id="scrollToTop" title="Scroll to Top"><i class="bi bi-arrow-up"></i></button>
           <button class="btn btn-sm btn-outline-secondary" id="scrollToBottom" title="Scroll to Bottom"><i class="bi bi-arrow-down"></i></button>
-          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.dashboard') }}" title="Back to Dashboard"><i class="bi bi-speedometer"></i></a>
           <div class="btn-group">
             <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.set_lang', code='en') }}">EN</a>
             <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.set_lang', code='gu') }}">GU</a>
@@ -256,7 +298,9 @@
   
   <!-- Session Management Script -->
   {% if current_user.is_authenticated %}
-  <script src="{{ url_for('static', filename='js/session_manager.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/session_manager.js', v=1) }}"></script>
+  <script src="{{ url_for('static', filename='js/command_palette.js', v=2) }}"></script>
+  <script id="commandPaletteActions" type="application/json">{{ (command_palette_actions or []) | tojson }}</script>
   
   <!-- Session Warning Modal -->
   <div class="modal fade" id="sessionWarningModal" tabindex="-1" aria-hidden="true" style="z-index: 10000;">
@@ -273,6 +317,22 @@
         <div class="modal-footer justify-content-center bg-light">
           <a href="{{ url_for('main.logout') }}" class="btn btn-outline-danger px-4">Log Out</a>
           <button type="button" class="btn btn-primary px-4 fw-bold" id="btnStayLoggedIn">Stay Logged In</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="commandPaletteModal" tabindex="-1" aria-hidden="true" style="z-index: 10001;">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content shadow-lg">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-search me-2"></i>Command Palette</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="text" class="form-control" id="commandPaletteInput" placeholder="Type to search… (try: students, logbook, promotion, stu 23BCA001)" autocomplete="off" />
+          <div class="small text-muted mt-2">Shortcuts: Ctrl+K, Esc, ↑/↓, Enter</div>
+          <div class="list-group mt-3" id="commandPaletteResults"></div>
         </div>
       </div>
     </div>

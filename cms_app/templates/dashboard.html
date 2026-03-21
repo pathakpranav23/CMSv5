@@ -534,6 +534,20 @@
         {% endif %}
       </div>
       <div class="row g-3 mb-2">
+        {% if (current_user.role|lower) == 'principal' %}
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Admin Module') }}</div></div>
+            <div class="card-body">
+              <div class="d-grid gap-2">
+                <a class="btn btn-primary" href="{{ url_for('main.module_admin') }}">{{ t('Open Admin Module') }}</a>
+                <a class="btn btn-outline-secondary" href="{{ url_for('main.admin_logbook') }}">{{ t('Open LogBook') }}</a>
+              </div>
+              <div class="small text-muted mt-2">{{ t('Quick actions, health checks, logs, and workflows.') }}</div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
         <div class="col-md-4">
           <div class="card h-100">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Students by Semester (My Program)') }}</div></div>
@@ -592,6 +606,42 @@
             </div>
           </div>
         </div>
+        {% if (current_user.role|lower) != 'principal' %}
+        <div class="col-md-4">
+          <div class="card h-100">
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Gender by Semester (My Program)') }}</div></div>
+            <div class="card-body">
+              {% if charts.gender_by_semester %}
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>{{ t('Sem') }}</th>
+                        <th class="text-end">{{ t('Boys') }}</th>
+                        <th class="text-end">{{ t('Girls') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for idx in range(charts.gender_by_semester.labels|length) %}
+                        <tr>
+                          <td>{{ charts.gender_by_semester.labels[idx] }}</td>
+                          <td class="text-end">{{ charts.gender_by_semester.male[idx] }}</td>
+                          <td class="text-end">{{ charts.gender_by_semester.female[idx] }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No gender data available.') }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% if (current_user.role|lower) == 'principal' %}
+      <div class="row g-3 mb-2">
         <div class="col-md-4">
           <div class="card h-100">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Gender by Semester (My Program)') }}</div></div>
@@ -624,6 +674,7 @@
           </div>
         </div>
       </div>
+      {% endif %}
       <div class="row g-3">
         <div class="col-md-6">
           <div class="card h-100">
@@ -637,34 +688,40 @@
         <div class="col-md-6">
           <div class="card h-100">
             <div class="card-header card-header-standard d-flex justify-content-between align-items-center">
-              <div class="card-title mb-0">{{ t('Results Snapshot (Avg GPA by Subject)') }}</div>
+              <div class="card-title mb-0">{{ t('Category-wise Students (Boys/Girls)') }}</div>
               <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#resultsSnapshotBody" aria-expanded="true" aria-controls="resultsSnapshotBody">
                 <span class="results-toggle-label-show">{{ t('Hide') }}</span>
               </button>
             </div>
             <div id="resultsSnapshotBody" class="collapse show">
               <div class="card-body">
-                {% if charts.subject_results and charts.subject_results.labels %}
+                {% set cg = charts.category_gender_for_program %}
+                {% if cg and cg.labels and cg.labels|length > 0 %}
+                  <canvas id="chartCategoryGender" height="140"></canvas>
                   <div class="table-responsive">
                     <table class="table table-sm align-middle mb-0">
                       <thead class="table-light">
                         <tr>
-                          <th>{{ t('Subject') }}</th>
-                          <th class="text-end">{{ t('Avg GPA') }}</th>
+                          <th>{{ t('Category') }}</th>
+                          <th class="text-end">{{ t('Boys') }}</th>
+                          <th class="text-end">{{ t('Girls') }}</th>
+                          <th class="text-end">{{ t('Total') }}</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {% for idx in range(charts.subject_results.labels|length) %}
+                        {% for idx in range(cg.labels|length) %}
                           <tr>
-                            <td>{{ charts.subject_results.labels[idx] }}</td>
-                            <td class="text-end">{{ charts.subject_results.data[idx] }}</td>
+                            <td>{{ cg.labels[idx] }}</td>
+                            <td class="text-end">{{ cg.male[idx] }}</td>
+                            <td class="text-end">{{ cg.female[idx] }}</td>
+                            <td class="text-end">{{ cg.total[idx] }}</td>
                           </tr>
                         {% endfor %}
                       </tbody>
                     </table>
                   </div>
                 {% else %}
-                  <div class="text-muted small">{{ t('No result data available.') }}</div>
+                  <div class="text-muted small">{{ t('No category data available.') }}</div>
                 {% endif %}
               </div>
             </div>
@@ -1178,14 +1235,24 @@
           }
         });
       }
-      // Subject Results (principal only)
-      if (isPrincipal && charts.subject_results) {
-        const el8 = document.getElementById('chartSubjectResults');
-        if (el8) {
+      if (isPrincipal && charts.category_gender_for_program) {
+        const el8 = document.getElementById('chartCategoryGender');
+        const cg = charts.category_gender_for_program || {};
+        if (el8 && cg.labels && cg.labels.length) {
           new Chart(el8, {
             type: 'bar',
-            data: { labels: charts.subject_results.labels, datasets: [{ label:'Avg GPA', data: charts.subject_results.data, backgroundColor:'#6f42c1' }] },
-            options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, max:10 } } }
+            data: {
+              labels: cg.labels,
+              datasets: [
+                { label: 'Boys', data: cg.male || [], backgroundColor: '#0d6efd' },
+                { label: 'Girls', data: cg.female || [], backgroundColor: '#e83e8c' }
+              ]
+            },
+            options: {
+              responsive: true,
+              plugins: { legend: { position: 'bottom' } },
+              scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, precision: 0 } }
+            }
           });
         }
       }

@@ -1,0 +1,103 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container-fluid">
+  <div class="section-header d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0 title">LogBook</h2>
+    <div class="actions">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.module_admin') }}">Admin Module</a>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-3">
+          <label class="form-label">Type</label>
+          <select class="form-select" name="kind">
+            {% set k = (filters.kind or 'all') %}
+            <option value="all" {{ 'selected' if k == 'all' else '' }}>All</option>
+            <option value="audit" {{ 'selected' if k == 'audit' else '' }}>Audit</option>
+            <option value="import" {{ 'selected' if k == 'import' else '' }}>Imports</option>
+            <option value="materials" {{ 'selected' if k == 'materials' else '' }}>Materials</option>
+            <option value="passwords" {{ 'selected' if k == 'passwords' else '' }}>Passwords</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Program</label>
+          <select class="form-select" name="program_id">
+            <option value="">All</option>
+            {% for p in programs %}
+              <option value="{{ p.program_id }}" {{ 'selected' if (filters.program_id|string) == (p.program_id|string) else '' }}>{{ p.program_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">User</label>
+          <select class="form-select" name="user_id">
+            <option value="">All</option>
+            {% for u in users %}
+              <option value="{{ u.user_id }}" {{ 'selected' if (filters.user_id|string) == (u.user_id|string) else '' }}>{{ u.username }}{% if u.email %} ({{ u.email }}){% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Limit</label>
+          <select class="form-select" name="limit">
+            {% for n in [100,200,500,1000] %}
+              <option value="{{ n }}" {{ 'selected' if (filters.limit|string) == (n|string) else '' }}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-1">
+          <button class="btn btn-primary w-100">Go</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      {% if entries and entries|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-sm table-striped mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Time</th>
+              <th>Type</th>
+              <th>Action</th>
+              <th>Program</th>
+              <th class="text-end">Sem</th>
+              <th>User</th>
+              <th>Email</th>
+              <th>Summary</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for e in entries %}
+              <tr>
+                <td class="text-nowrap">{{ e.at or '' }}</td>
+                <td>{{ e.type }}</td>
+                <td class="text-nowrap">{{ e.action }}</td>
+                <td>{{ e.program or '-' }}</td>
+                <td class="text-end">{{ e.semester if (e.semester is not none) else '-' }}</td>
+                <td class="text-nowrap">{{ e.user.username or '-' }}{% if e.user.id %} (#{{ e.user.id }}){% endif %}</td>
+                <td class="text-nowrap">{{ e.user.email or '-' }}</td>
+                <td class="small text-muted">
+                  {% if e.summary %}
+                    {{ e.summary }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        <div class="p-3 text-muted">No log entries found for this filter.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -33,7 +33,12 @@
     <div class="mb-3">
       <label class="form-label">Excel File</label>
       <input type="file" name="file" class="form-control" accept=".xlsx,.xls" required>
-      <div class="form-text">Download a sample: <a href="{{ url_for('main.students_import_template') }}">students_import_template.csv</a></div>
+      <div class="form-text">
+        Download templates:
+        <a href="{{ url_for('main.students_import_template_xlsx') }}">students_import_template.xlsx</a>
+        |
+        <a href="{{ url_for('main.students_import_template') }}">students_import_template.csv</a>
+      </div>
       <div class="mt-2">
         <small class="text-muted">Expected columns (order not strict, headers case-insensitive):</small>
         <ul class="text-muted small mb-0">

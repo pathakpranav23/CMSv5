@@ -1,4 +1,4 @@
-from flask import render_template, request, redirect, url_for, flash, current_app
+from flask import render_template, request, redirect, url_for, flash, current_app, session
 from flask_login import login_required, current_user
 from . import super_admin
 from ..models import db, SystemMessage, SystemConfig, Trust, Institute, User
@@ -201,3 +201,301 @@ def config():
     configs = SystemConfig.query.all()
     config_dict = {c.config_key: c.config_value for c in configs}
     return render_template('super_admin/config.html', config=config_dict)
+
+
+@super_admin.route("/students/purge", methods=["GET", "POST"])
+@login_required
+@super_admin_required
+def students_purge():
+    import io
+    import csv
+    import json
+    import time
+    import zipfile
+    from flask import Response
+    from sqlalchemy import select, func
+    from ..models import (
+        Alumni,
+        Attendance,
+        DataAuditLog,
+        ExamMark,
+        FeePayment,
+        FeesRecord,
+        Grade,
+        Notification,
+        Program,
+        Student,
+        StudentCreditLog,
+        StudentSemesterResult,
+        StudentSubjectEnrollment,
+        Trust,
+    )
+
+    trusts = Trust.query.order_by(Trust.trust_name.asc()).all()
+    trust_id_raw = (request.values.get("trust_id") or "").strip()
+    program_id_raw = (request.values.get("program_id") or "").strip()
+    semester_raw = (request.values.get("semester") or "").strip().lower()
+    include_inactive = (request.values.get("include_inactive") or "").strip().lower() in ("1", "true", "yes", "on")
+
+    try:
+        trust_id = int(trust_id_raw) if trust_id_raw else None
+    except Exception:
+        trust_id = None
+    try:
+        program_id = int(program_id_raw) if program_id_raw else None
+    except Exception:
+        program_id = None
+    semester = None
+    if semester_raw and semester_raw not in ("all", ""):
+        try:
+            semester = int(semester_raw)
+        except Exception:
+            semester = None
+
+    def _scope_students_query():
+        q = select(Student)
+        if trust_id:
+            q = q.filter(Student.trust_id_fk == trust_id)
+        if program_id:
+            q = q.filter(Student.program_id_fk == program_id)
+        if semester is not None:
+            q = q.filter(Student.current_semester == semester)
+        if not include_inactive:
+            q = q.filter(Student.is_active == True)
+        return q
+
+    def _get_target_enrollments():
+        q = _scope_students_query().with_only_columns(Student.enrollment_no).order_by(Student.enrollment_no.asc())
+        return [enr for (enr,) in db.session.execute(q).all()]
+
+    def _selection_key():
+        return json.dumps(
+            {
+                "trust_id": trust_id,
+                "program_id": program_id,
+                "semester": semester_raw or "all",
+                "include_inactive": include_inactive,
+            },
+            sort_keys=True,
+        )
+
+    def _write_csv_from_query(zf, filename, model, q):
+        cols = [c.name for c in model.__table__.columns]
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(cols)
+        rows = db.session.execute(q).scalars().all()
+        for obj in rows:
+            w.writerow([getattr(obj, c, "") for c in cols])
+        zf.writestr(filename, buf.getvalue().encode("utf-8"))
+
+    def _backup_zip(enrollments):
+        mem = io.BytesIO()
+        with zipfile.ZipFile(mem, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            _write_csv_from_query(
+                zf,
+                "students.csv",
+                Student,
+                select(Student).filter(Student.enrollment_no.in_(enrollments)).order_by(Student.enrollment_no.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "student_subject_enrollments.csv",
+                StudentSubjectEnrollment,
+                select(StudentSubjectEnrollment).filter(StudentSubjectEnrollment.student_id_fk.in_(enrollments)).order_by(StudentSubjectEnrollment.enrollment_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "attendance.csv",
+                Attendance,
+                select(Attendance).filter(Attendance.student_id_fk.in_(enrollments)).order_by(Attendance.date_marked.asc(), Attendance.period_no.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "fees_records.csv",
+                FeesRecord,
+                select(FeesRecord).filter(FeesRecord.student_id_fk.in_(enrollments)).order_by(FeesRecord.fee_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "fee_payments.csv",
+                FeePayment,
+                select(FeePayment).filter(FeePayment.enrollment_no.in_(enrollments)).order_by(FeePayment.payment_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "exam_marks.csv",
+                ExamMark,
+                select(ExamMark).filter(ExamMark.student_id_fk.in_(enrollments)).order_by(ExamMark.exam_mark_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "student_semester_results.csv",
+                StudentSemesterResult,
+                select(StudentSemesterResult).filter(StudentSemesterResult.student_id_fk.in_(enrollments)).order_by(StudentSemesterResult.result_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "grades.csv",
+                Grade,
+                select(Grade).filter(Grade.student_id_fk.in_(enrollments)).order_by(Grade.grade_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "student_credit_log.csv",
+                StudentCreditLog,
+                select(StudentCreditLog).filter(StudentCreditLog.student_id_fk.in_(enrollments)).order_by(StudentCreditLog.log_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "notifications.csv",
+                Notification,
+                select(Notification).filter(Notification.student_id_fk.in_(enrollments)).order_by(Notification.notification_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "alumni.csv",
+                Alumni,
+                select(Alumni).filter(Alumni.enrollment_no.in_(enrollments)).order_by(Alumni.alumni_id.asc()),
+            )
+        mem.seek(0)
+        return mem.getvalue()
+
+    def _require_backup():
+        sel = _selection_key()
+        ok_at = session.get("super_purge_backup_at")
+        ok_sel = session.get("super_purge_backup_sel")
+        try:
+            ok_at = float(ok_at) if ok_at else None
+        except Exception:
+            ok_at = None
+        if not ok_at or not ok_sel or ok_sel != sel:
+            return False
+        if (time.time() - ok_at) > (30 * 60):
+            return False
+        return True
+
+    def _audit(action, counts):
+        entry = DataAuditLog(
+            action=action,
+            actor_user_id_fk=getattr(current_user, "user_id", None),
+            actor_role="super_admin",
+            trust_id_fk=trust_id,
+            program_id_fk=program_id,
+            semester=(semester if semester is not None else None),
+            selection_json=_selection_key(),
+            counts_json=json.dumps(counts or {}, ensure_ascii=False),
+        )
+        db.session.add(entry)
+
+    programs = []
+    if trust_id:
+        programs = Program.query.join(Institute).filter(Institute.trust_id_fk == trust_id).order_by(Program.program_name.asc()).all()
+
+    try:
+        preview_count = db.session.scalar(select(func.count()).select_from(_scope_students_query().subquery())) or 0
+    except Exception:
+        preview_count = 0
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip().lower()
+        confirm = (request.form.get("confirm") or "").strip()
+        enrollments = _get_target_enrollments()
+        if not enrollments:
+            flash("No students found for the selected scope.", "warning")
+            return redirect(url_for("super_admin.students_purge", trust_id=trust_id_raw, program_id=program_id_raw, semester=(semester_raw or "all")))
+
+        if action == "backup":
+            content = _backup_zip(enrollments)
+            session["super_purge_backup_at"] = time.time()
+            session["super_purge_backup_sel"] = _selection_key()
+            _audit("backup", {"students": len(enrollments)})
+            db.session.commit()
+            fname = f"super_students_backup_{int(time.time())}.zip"
+            return Response(content, headers={"Content-Type": "application/zip", "Content-Disposition": f"attachment; filename={fname}"})
+
+        if action == "purge_all":
+            if confirm != "PURGE":
+                flash("Type PURGE to confirm.", "danger")
+                return redirect(url_for("super_admin.students_purge", trust_id=trust_id_raw, program_id=program_id_raw, semester=(semester_raw or "all")))
+            if not _require_backup():
+                flash("Download backup ZIP first (valid for 30 minutes) before purging.", "danger")
+                return redirect(url_for("super_admin.students_purge", trust_id=trust_id_raw, program_id=program_id_raw, semester=(semester_raw or "all")))
+
+            def _chunks(items, size=500):
+                for i in range(0, len(items), size):
+                    yield items[i : i + size]
+
+            counts = {"students": len(enrollments)}
+            try:
+                deleted = {
+                    "attendance": 0,
+                    "enrollments": 0,
+                    "fees_records": 0,
+                    "fee_payments": 0,
+                    "exam_marks": 0,
+                    "semester_results": 0,
+                    "grades": 0,
+                    "credit_log": 0,
+                    "notifications": 0,
+                    "alumni": 0,
+                    "students": 0,
+                }
+                for chunk in _chunks(enrollments):
+                    deleted["attendance"] += Attendance.query.filter(Attendance.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["enrollments"] += StudentSubjectEnrollment.query.filter(StudentSubjectEnrollment.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["fees_records"] += FeesRecord.query.filter(FeesRecord.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["fee_payments"] += FeePayment.query.filter(FeePayment.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                    deleted["exam_marks"] += ExamMark.query.filter(ExamMark.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["semester_results"] += StudentSemesterResult.query.filter(StudentSemesterResult.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["grades"] += Grade.query.filter(Grade.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["credit_log"] += StudentCreditLog.query.filter(StudentCreditLog.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["notifications"] += Notification.query.filter(Notification.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["alumni"] += Alumni.query.filter(Alumni.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                    deleted["students"] += Student.query.filter(Student.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                counts.update(deleted)
+                _audit("purge_all", counts)
+                db.session.commit()
+                flash(f"Purged {counts.get('students', 0)} student(s).", "warning")
+            except Exception:
+                db.session.rollback()
+                flash("Purge failed.", "danger")
+            return redirect(url_for("super_admin.students_purge", trust_id=trust_id_raw, program_id=program_id_raw, semester=(semester_raw or "all"), include_inactive="1"))
+
+        flash("Unknown action.", "danger")
+        return redirect(url_for("super_admin.students_purge", trust_id=trust_id_raw, program_id=program_id_raw, semester=(semester_raw or "all")))
+
+    logs = []
+    try:
+        ql = select(DataAuditLog).order_by(DataAuditLog.created_at.desc())
+        if trust_id:
+            ql = ql.filter(DataAuditLog.trust_id_fk == trust_id)
+        logs = db.session.execute(ql.limit(50)).scalars().all()
+    except Exception:
+        logs = []
+
+    logs_view = []
+    for r in logs:
+        students_n = None
+        try:
+            cj = json.loads(r.counts_json or "{}")
+            students_n = cj.get("students")
+        except Exception:
+            students_n = None
+        logs_view.append(
+            {
+                "created_at": getattr(r, "created_at", None),
+                "action": getattr(r, "action", ""),
+                "actor_user_id_fk": getattr(r, "actor_user_id_fk", None),
+                "students": students_n,
+            }
+        )
+
+    return render_template(
+        "super_admin/student_purge.html",
+        trusts=trusts,
+        programs=programs,
+        selected={"trust_id": trust_id, "program_id": program_id, "semester": (semester_raw or "all"), "include_inactive": include_inactive},
+        preview_count=preview_count,
+        logs=logs_view,
+    )

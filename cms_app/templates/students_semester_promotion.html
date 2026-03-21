@@ -9,7 +9,27 @@
     </div>
   </div>
 
-  {% if not program %}
+  {% if (current_user.role|lower) == 'admin' and (not program) %}
+    <div class="card mb-3">
+      <div class="card-body">
+        <form method="get" class="row g-2 align-items-end">
+          <div class="col-md-6">
+            <label class="form-label">Program</label>
+            <select class="form-select" name="program_id" required>
+              <option value="">Select program</option>
+              {% for p in (programs or []) %}
+                <option value="{{ p.program_id }}" {% if (selected_program_id|string) == (p.program_id|string) %}selected{% endif %}>{{ p.program_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <button class="btn btn-primary w-100">Continue</button>
+          </div>
+        </form>
+        <div class="small text-muted mt-2">Admins can promote students for any program.</div>
+      </div>
+    </div>
+  {% elif not program %}
     <div class="alert alert-warning">Your account is not mapped to a program. Contact admin.</div>
   {% else %}
     <div class="card mb-3">
@@ -27,6 +47,9 @@
         </div>
         <form method="post" class="row g-3">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          {% if (current_user.role|lower) == 'admin' %}
+            <input type="hidden" name="program_id" value="{{ program.program_id }}">
+          {% endif %}
           <div class="col-md-4">
             <label class="form-label">From Semester</label>
             <select name="from_semester" class="form-select" required>

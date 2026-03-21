@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Dict, List
 from sqlalchemy import select
 from werkzeug.security import generate_password_hash
+from sqlalchemy.exc import OperationalError
 
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
@@ -192,37 +193,58 @@ def ensure_student_user(enrollment_no, mobile, program_id):
       - Force Password Change: True
     Returns: user_id
     """
-    try:
-        mobile_digits = "".join(ch for ch in str(mobile) if ch.isdigit()) if mobile else ""
-        
-        # Determine username and password
-        if len(mobile_digits) >= 10:
-            username = mobile_digits
-            password_raw = mobile_digits
-        else:
-            username = str(enrollment_no)
-            password_raw = str(enrollment_no)
-            
-        # Check if user exists
-        user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
-        
-        if not user:
-            user = User(
-                username=username,
-                password_hash=generate_password_hash(password_raw),
-                role="student",
-                program_id_fk=program_id,
-                mobile=mobile_digits,
-                must_change_password=True,
-                is_active=True
-            )
-            db.session.add(user)
-            db.session.flush()
-            
-        return user.user_id
-    except Exception as e:
-        print(f"Error ensuring user for student {enrollment_no}: {e}")
-        return None
+    mobile_digits = "".join(ch for ch in str(mobile) if ch.isdigit()) if mobile else ""
+
+    if len(mobile_digits) >= 10:
+        username = mobile_digits
+        password_raw = mobile_digits
+    else:
+        username = str(enrollment_no)
+        password_raw = str(enrollment_no)
+
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
+            if user:
+                try:
+                    if hasattr(user, "is_active") and not user.is_active:
+                        user.is_active = True
+                except Exception:
+                    pass
+            if not user:
+                user = User(
+                    username=username,
+                    password_hash=generate_password_hash(password_raw),
+                    role="student",
+                    program_id_fk=program_id,
+                    mobile=mobile_digits,
+                    must_change_password=True,
+                    is_active=True,
+                )
+                db.session.add(user)
+                db.session.flush()
+            return user.user_id
+        except OperationalError as e:
+            msg = str(e).lower()
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            if "database is locked" in msg and attempts < 6:
+                import time
+                time.sleep(0.2 * attempts)
+                continue
+            print(f"Error ensuring user for student {enrollment_no}: {e}")
+            return None
+        except Exception as e:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            print(f"Error ensuring user for student {enrollment_no}: {e}")
+            return None
 
 
 
@@ -239,7 +261,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
     if not program:
         program = Program(program_name=program_name, program_duration_years=3)
         db.session.add(program)
-        db.session.commit()
+        db.session.flush()
 
     created = 0
     updated = 0
@@ -271,6 +293,11 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
 
             enrollment_no = cell_to_str(data.get("enrollment_no"))
             if not enrollment_no:
+                try:
+                    if not any(cell_to_str(v) for v in data.values()):
+                        continue
+                except Exception:
+                    pass
                 # skip rows without enrollment number
                 skipped += 1
                 errors.append(f"Row {row_idx}: missing enrollment_no; skipped")
@@ -294,8 +321,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                     cap = 67 if (program.program_name or "").upper() == "BCA" else (Division.capacity.default.arg if hasattr(Division.capacity, 'default') else 60)
                 division = Division(program_id_fk=program.program_id, semester=semester, division_code=division_code, capacity=cap)
                 db.session.add(division)
-                if not dry_run:
-                    db.session.commit()
+                db.session.flush()
                 divisions_created += 1
             else:
                 # Align capacity with planning when available; avoid uniform forcing
@@ -305,8 +331,6 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                         cap = int(plan.capacity_per_division)
                         if division.capacity != cap:
                             division.capacity = cap
-                            if not dry_run:
-                                db.session.commit()
                     except Exception:
                         pass
 
@@ -390,10 +414,15 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                     roll_no=roll_no,
                     aadhar_no=aadhar_no or None,
                     category=category or None,
+                    is_active=True,
                 )
                 db.session.add(student)
                 created += 1
             else:
+                try:
+                    student.is_active = True
+                except Exception:
+                    pass
                 student.program_id_fk = program.program_id
                 student.division_id_fk = division.division_id
                 if not student.user_id_fk and user_id:
@@ -445,6 +474,11 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
 
             enrollment_no = cell_to_str(data.get("enrollment_no"))
             if not enrollment_no:
+                try:
+                    if not any(cell_to_str(v) for v in data.values()):
+                        continue
+                except Exception:
+                    pass
                 skipped += 1
                 errors.append(f"Row {r+1}: missing enrollment_no; skipped")
                 continue
@@ -465,8 +499,7 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                     cap = 67 if (program.program_name or "").upper() == "BCA" else (Division.capacity.default.arg if hasattr(Division.capacity, 'default') else 60)
                 division = Division(program_id_fk=program.program_id, semester=semester, division_code=division_code, capacity=cap)
                 db.session.add(division)
-                if not dry_run:
-                    db.session.commit()
+                db.session.flush()
                 divisions_created += 1
 
             surname = cell_to_str(data.get("last_name"))
@@ -546,10 +579,15 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
                     current_semester=current_semester,
                     aadhar_no=aadhar_no or None,
                     category=category or None,
+                    is_active=True,
                 )
                 db.session.add(student)
                 created += 1
             else:
+                try:
+                    student.is_active = True
+                except Exception:
+                    pass
                 student.program_id_fk = program.program_id
                 student.division_id_fk = division.division_id
                 if not student.user_id_fk and user_id:

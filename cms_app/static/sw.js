@@ -1,10 +1,12 @@
 // Service Worker for Parekh Colleges CMS
-const CACHE_NAME = 'cms-cache-v4';
+const CACHE_NAME = 'cms-cache-v5';
 const URLS_TO_CACHE = [
   '/',
   '/static/style.css',
   '/static/logo.png',
   '/static/offline.html',
+  '/static/js/session_manager.js?v=1',
+  '/static/js/command_palette.js?v=2',
   'https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css',
   'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css'
 ];

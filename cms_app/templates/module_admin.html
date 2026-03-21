@@ -12,43 +12,93 @@
   {% endif %}
   <p class="text-muted soft-hint">{{ t('Administrative tools and reports.') }}</p>
 
+  {% if top_actions and top_actions|length > 0 %}
+  <div class="row g-3 mb-3">
+    {% for a in top_actions %}
+      {% if a.url %}
+      <div class="col-12 col-md-6 col-xl">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="fw-semibold">{{ a.label }}</div>
+            <div class="small text-muted">{{ a.hint }}</div>
+            <div class="mt-2">
+              <a class="btn btn-sm btn-primary" href="{{ a.url }}">Open</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if health %}
+  <div class="card mb-3">
+    <div class="card-header">Health</div>
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-12 col-md-4"><span class="fw-semibold">Pending fee verifications:</span> <span class="badge text-bg-warning">{{ health.pending_fee_verifications or 0 }}</span></div>
+        <div class="col-12 col-md-4"><span class="fw-semibold">Students missing division:</span> <span class="badge text-bg-warning">{{ health.students_missing_division or 0 }}</span></div>
+        <div class="col-12 col-md-4"><span class="fw-semibold">Division/semester mismatch:</span> <span class="badge text-bg-warning">{{ health.students_division_mismatch or 0 }}</span></div>
+        <div class="col-12 col-md-4"><span class="fw-semibold">Orphan student users:</span> <span class="badge text-bg-warning">{{ health.orphan_student_users or 0 }}</span></div>
+        <div class="col-12 col-md-4"><span class="fw-semibold">Staff missing user mapping:</span> <span class="badge text-bg-warning">{{ health.faculty_missing_user or 0 }}</span></div>
+        <div class="col-12 col-md-4"><span class="fw-semibold">Scheduled student purges:</span> <span class="badge text-bg-warning">{{ health.scheduled_student_purges or 0 }}</span></div>
+      </div>
+      <div class="small text-muted mt-2">These numbers help you find data issues quickly before they cause failures.</div>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="row g-3">
-    <div class="col-md-6">
+    <div class="col-12">
       <div class="card">
         <div class="card-header">{{ t('Quick Actions') }}</div>
         <div class="card-body">
+          <div class="small text-muted mb-2">Fast, safe actions used daily. Bulk / destructive actions are inside Lifecycle pages.</div>
           <div class="list-group">
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_report_admin') }}">{{ t('Attendance Report') }}</a>
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.users_list') }}">{{ t('Manage Accounts') }}</a>
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.subjects_list') }}">{{ t('Subjects') }}</a>
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.students') }}">{{ t('Students') }}</a>
-            {% if role_display_lower == 'admin' %}
-              <a class="list-group-item list-group-item-action" href="{{ url_for('main.programs_list') }}">{{ t('Programs') }}</a>
+            {% if urls.attendance_report %}<a class="list-group-item list-group-item-action" href="{{ urls.attendance_report }}">{{ t('Attendance Report') }}</a>{% endif %}
+            {% if urls.manage_accounts %}<a class="list-group-item list-group-item-action" href="{{ urls.manage_accounts }}">{{ t('Manage Accounts') }}</a>{% endif %}
+            {% if role_display_lower in ['admin', 'principal'] %}
+              {% if urls.student_lifecycle %}<a class="list-group-item list-group-item-action" href="{{ urls.student_lifecycle }}">Student Lifecycle</a>{% endif %}
+              {% if urls.staff_lifecycle %}<a class="list-group-item list-group-item-action" href="{{ urls.staff_lifecycle }}">Staff Lifecycle</a>{% endif %}
+              {% if urls.semester_promotion %}<a class="list-group-item list-group-item-action" href="{{ urls.semester_promotion }}">Semester Promotion</a>{% endif %}
             {% endif %}
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.admin_program_import') }}">{{ t('Program Import') }}</a>
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.admin_import_logs') }}">{{ t('Import Logs') }}</a>
             {% if role_display_lower == 'admin' %}
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.admin_system_status') }}">{{ t('System Status') }}</a>
+              {% if urls.programs %}<a class="list-group-item list-group-item-action" href="{{ urls.programs }}">{{ t('Programs') }}</a>{% endif %}
+            {% endif %}
+            {% if urls.program_import %}<a class="list-group-item list-group-item-action" href="{{ urls.program_import }}">{{ t('Program Import') }}</a>{% endif %}
+            {% if urls.import_logs %}<a class="list-group-item list-group-item-action" href="{{ urls.import_logs }}">{{ t('Import Logs') }}</a>{% endif %}
+            {% if urls.logbook %}<a class="list-group-item list-group-item-action" href="{{ urls.logbook }}">LogBook</a>{% endif %}
+            {% if urls.workflow_new_ay %}<a class="list-group-item list-group-item-action" href="{{ urls.workflow_new_ay }}">New Academic Year Setup</a>{% endif %}
+            {% if role_display_lower == 'admin' %}
+            {% if urls.system_status %}<a class="list-group-item list-group-item-action" href="{{ urls.system_status }}">{{ t('System Status') }}</a>{% endif %}
             {% endif %}
             {% if role_display_lower in ['admin', 'principal'] %}
-              <a class="list-group-item list-group-item-action" href="{{ url_for('main.students_import') }}">{{ t('Clerk Bulk Import Students') }}</a>
+              {% if urls.students_import %}<a class="list-group-item list-group-item-action" href="{{ urls.students_import }}">{{ t('Clerk Bulk Import Students') }}</a>{% endif %}
             {% endif %}
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.reports_hub') }}">{{ t('Reports') }}</a>
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.documents_index') }}">{{ t('Documents') }}</a>
+            {% if urls.reports %}<a class="list-group-item list-group-item-action" href="{{ urls.reports }}">{{ t('Reports') }}</a>{% endif %}
+            {% if urls.documents %}<a class="list-group-item list-group-item-action" href="{{ urls.documents }}">{{ t('Documents') }}</a>{% endif %}
           </div>
         </div>
       </div>
     </div>
-    <div class="col-md-6">
-      <div class="card">
-        <div class="card-header">{{ t('Helpful Links') }}</div>
-        <div class="card-body">
-          <ul class="list-unstyled mb-0 soft-hint">
-            <li>{{ t('Use dependent filters for cleaner attendance reporting.') }}</li>
-            <li>{{ t('Programs and divisions drive enrollment and assignments.') }}</li>
-          </ul>
-        </div>
+  </div>
+
+  <div class="card mt-3 border-danger">
+    <div class="card-header text-danger">Danger Zone</div>
+    <div class="card-body">
+      <div class="row g-2">
+        {% if urls.student_lifecycle %}
+          <div class="col-12 col-md-4"><a class="btn btn-outline-danger w-100" href="{{ urls.student_lifecycle }}">Student Cleanup</a></div>
+        {% endif %}
+        {% if urls.staff_lifecycle %}
+          <div class="col-12 col-md-4"><a class="btn btn-outline-danger w-100" href="{{ urls.staff_lifecycle }}">Staff Cleanup</a></div>
+        {% endif %}
+        {% if urls.super_students_purge %}
+          <div class="col-12 col-md-4"><a class="btn btn-danger w-100" href="{{ urls.super_students_purge }}">Student Purge (Super Admin)</a></div>
+        {% endif %}
       </div>
+      <div class="small text-muted mt-2">These actions can delete or archive data. Always download backup ZIP before proceeding.</div>
     </div>
   </div>
 
@@ -59,10 +109,10 @@
         <div class="card-body">
           <div class="row g-2">
             <div class="col-12"><div class="small text-muted soft-hint">{{ t('Advanced links for power users.') }}</div></div>
-            <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.offer_electives') }}">{{ t('Offer Electives') }}</a></div>
-            <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.subjects_list') }}">{{ t('Assign Staff') }}</a></div>
-            <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.enroll_core') }}">{{ t('Core Enrollment') }}</a></div>
-            <div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('main.semester_coordinators') }}">{{ t('Semester Coordinators') }}</a></div>
+            {% if urls.offer_electives %}<div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ urls.offer_electives }}">{{ t('Offer Electives') }}</a></div>{% endif %}
+            {% if urls.assign_staff %}<div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ urls.assign_staff }}">{{ t('Assign Staff') }}</a></div>{% endif %}
+            {% if urls.core_enrollment %}<div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ urls.core_enrollment }}">{{ t('Core Enrollment') }}</a></div>{% endif %}
+            {% if urls.semester_coordinators %}<div class="col-md-4"><a class="btn btn-sm btn-outline-primary w-100" href="{{ urls.semester_coordinators }}">{{ t('Semester Coordinators') }}</a></div>{% endif %}
           </div>
         </div>
       </div>

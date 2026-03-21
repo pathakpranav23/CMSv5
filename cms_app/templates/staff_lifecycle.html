@@ -1,0 +1,108 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container-fluid">
+  <div class="section-header d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0 title">Staff Lifecycle</h2>
+    <div class="actions">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.module_admin') }}">Admin Module</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.faculty_list') }}">Staff</a>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header">Scope</div>
+        <div class="card-body">
+          <form method="get" action="">
+            <div class="row g-3">
+              {% if role == 'admin' %}
+              <div class="col-md-6">
+                <label class="form-label">Program</label>
+                <select name="program_id" class="form-select">
+                  <option value="">All Programs</option>
+                  {% for p in programs %}
+                    <option value="{{ p.program_id }}" {% if (selected.program_id or '') == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              {% endif %}
+              <div class="col-md-6 d-flex align-items-end">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="includeInactive" name="include_inactive" value="1" {% if selected.include_inactive %}checked{% endif %}>
+                  <label class="form-check-label" for="includeInactive">Include inactive staff</label>
+                </div>
+              </div>
+              <div class="col-12">
+                <div class="small text-muted">Preview staff in scope: <span class="fw-semibold">{{ preview_count }}</span></div>
+              </div>
+              <div class="col-12">
+                <button class="btn btn-primary">Apply Scope</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card mt-3">
+        <div class="card-header">Backup</div>
+        <div class="card-body">
+          <form method="post" action="">
+            <input type="hidden" name="action" value="backup">
+            <input type="hidden" name="program_id" value="{{ selected.program_id or '' }}">
+            <input type="hidden" name="include_inactive" value="{{ '1' if selected.include_inactive else '' }}">
+            <button class="btn btn-outline-primary">Download Backup ZIP</button>
+          </form>
+          <div class="small text-muted mt-2">Backup approval expires after 30 minutes.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header">Actions</div>
+        <div class="card-body">
+          <div class="alert alert-warning">Download Backup ZIP first. This affects staff profiles and linked accounts.</div>
+
+          <form method="post" action="" class="mb-3">
+            <input type="hidden" name="action" value="archive">
+            <input type="hidden" name="program_id" value="{{ selected.program_id or '' }}">
+            <input type="hidden" name="include_inactive" value="{{ '1' if selected.include_inactive else '' }}">
+            <div class="mb-2 fw-semibold">Archive Staff</div>
+            <div class="row g-2">
+              <div class="col-md-8">
+                <input class="form-control" name="confirm" placeholder="Type ARCHIVE to confirm">
+              </div>
+              <div class="col-md-4">
+                <button class="btn btn-warning w-100">Archive</button>
+              </div>
+              <div class="col-12">
+                <input class="form-control" name="note" placeholder="Optional note (reason)">
+              </div>
+            </div>
+          </form>
+
+          <form method="post" action="">
+            <input type="hidden" name="action" value="restore">
+            <input type="hidden" name="program_id" value="{{ selected.program_id or '' }}">
+            <input type="hidden" name="include_inactive" value="{{ '1' if selected.include_inactive else '' }}">
+            <div class="mb-2 fw-semibold">Restore Staff</div>
+            <div class="row g-2">
+              <div class="col-md-8">
+                <input class="form-control" name="confirm" placeholder="Type RESTORE to confirm">
+              </div>
+              <div class="col-md-4">
+                <button class="btn btn-outline-success w-100">Restore</button>
+              </div>
+              <div class="col-12">
+                <input class="form-control" name="note" placeholder="Optional note (reason)">
+              </div>
+            </div>
+            <div class="small text-muted mt-2">Restore also reactivates current academic year assignments.</div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

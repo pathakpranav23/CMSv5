@@ -70,6 +70,17 @@
       </div>
       <div class="col-12 col-md-auto">
         <div class="input-group input-group-sm">
+          <span class="input-group-text">Status</span>
+          {% set st = (selected_status or 'active') %}
+          <select id="status" name="status" class="form-select" onchange="this.form.submit()">
+            <option value="active" {{ 'selected' if st == 'active' else '' }}>Active</option>
+            <option value="inactive" {{ 'selected' if st == 'inactive' else '' }}>Archived</option>
+            <option value="all" {{ 'selected' if st == 'all' else '' }}>All</option>
+          </select>
+        </div>
+      </div>
+      <div class="col-12 col-md-auto">
+        <div class="input-group input-group-sm">
           <span class="input-group-text">{{ t('Sort By') }}</span>
           <select id="sort_by" name="sort_by" class="form-select" onchange="this.form.submit()">
             <option value="roll_no" {{ 'selected' if sort_by == 'roll_no' else '' }}>Roll No</option>

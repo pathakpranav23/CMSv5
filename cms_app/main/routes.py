@@ -3351,6 +3351,42 @@ def dashboard():
                 })
             return data
 
+        def _category_gender_for_program(program_id: int):
+            try:
+                rows = db.session.execute(
+                    select(Student.category, Student.gender).filter_by(program_id_fk=program_id)
+                ).all()
+            except Exception:
+                rows = []
+            counts = {}
+            for cat_raw, g_raw in rows:
+                cat = (cat_raw or "Category Missing").strip() or "Category Missing"
+                g = (g_raw or "").strip().lower()
+                if cat not in counts:
+                    counts[cat] = {"male": 0, "female": 0, "other": 0}
+                if g in ("male", "m"):
+                    counts[cat]["male"] += 1
+                elif g in ("female", "f"):
+                    counts[cat]["female"] += 1
+                elif g:
+                    counts[cat]["other"] += 1
+            items = sorted(counts.items(), key=lambda kv: (kv[0] == "Category Missing", str(kv[0]).lower()))
+            labels = []
+            male = []
+            female = []
+            other = []
+            total = []
+            for cat, vals in items:
+                m = int(vals.get("male", 0) or 0)
+                f = int(vals.get("female", 0) or 0)
+                o = int(vals.get("other", 0) or 0)
+                labels.append(cat)
+                male.append(m)
+                female.append(f)
+                other.append(o)
+                total.append(m + f + o)
+            return {"labels": labels, "male": male, "female": female, "other": other, "total": total}
+
         # Principal/Clerk scoped helpers
         def _students_by_semester(program_id: int, selected_semester: int = None):
             try:
@@ -3714,7 +3750,7 @@ def dashboard():
             except Exception:
                 chart_subject_id = None
             if role_lower == 'principal':
-                charts["subject_results"] = _subject_results_for_program(pid_scope, chart_semester, chart_subject_id) if pid_scope else {"labels": ["Sem 1: English","Sem 1: Maths"], "data": [7.8,6.9]}
+                charts["category_gender_for_program"] = _category_gender_for_program(pid_scope) if pid_scope else {"labels": [], "male": [], "female": [], "other": [], "total": []}
                 charts["attendance_heatmap"] = _attendance_heatmap(pid_scope) if pid_scope else {}
             elif role_lower == "faculty":
                 try:
@@ -4983,6 +5019,9 @@ def account_settings():
     """Self-service account settings for the current user: change password with 2FA (non-student) and edit profile."""
     from datetime import datetime, timedelta
     import secrets
+    import os
+    import time
+    from werkzeug.utils import secure_filename
 
     errors = []
     role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -4992,6 +5031,24 @@ def account_settings():
         linked_faculty = db.session.execute(select(Faculty).filter_by(user_id_fk=current_user.user_id)).scalars().first()
     except Exception:
         linked_faculty = None
+    if not linked_faculty and role in ("admin", "principal", "faculty", "clerk"):
+        try:
+            full_name = (getattr(current_user, "username", "") or "").strip() or (role.capitalize())
+            linked_faculty = Faculty(
+                user_id_fk=getattr(current_user, "user_id", None),
+                program_id_fk=getattr(current_user, "program_id_fk", None),
+                full_name=full_name,
+                email=getattr(current_user, "email", None),
+                mobile=getattr(current_user, "mobile", None),
+                designation=role.capitalize(),
+                trust_id_fk=getattr(current_user, "trust_id_fk", None),
+                is_active=True,
+            )
+            db.session.add(linked_faculty)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            linked_faculty = None
 
     if request.method == "POST":
         action = (request.form.get("action") or "").strip().lower()
@@ -5173,6 +5230,8 @@ def account_settings():
                     else:
                          try:
                              # consistent naming: faculty_{id}_{timestamp}.ext
+                             if not getattr(linked_faculty, "faculty_id", None):
+                                 db.session.flush()
                              new_filename = f"faculty_{linked_faculty.faculty_id}_{int(time.time())}{ext}"
                              upload_dir = os.path.join(current_app.root_path, "static", "uploads", "faculty")
                              os.makedirs(upload_dir, exist_ok=True)
@@ -5198,6 +5257,11 @@ def account_settings():
                         linked_faculty.full_name = full_name
                         linked_faculty.email = email
                         linked_faculty.mobile = mobile
+                        try:
+                            current_user.email = email
+                            current_user.mobile = mobile
+                        except Exception:
+                            pass
                         # photo_url is already updated on the object if changed
                         db.session.commit()
                         flash("Profile updated successfully.", "success")
@@ -6160,6 +6224,7 @@ def students():
     requested_medium_raw = request.args.get("medium")
     selected_medium = (requested_medium_raw or "all").strip().lower()
     selected_division_id = (request.args.get("division_id") or "all").strip()
+    selected_status = (request.args.get("status") or "active").strip().lower()
     sort_by = (request.args.get("sort_by") or "roll_no").strip()
     limit_raw = (request.args.get("limit") or "20").strip()
     page_raw = (request.args.get("page") or "1").strip()
@@ -6224,6 +6289,12 @@ def students():
             query = query.filter(Student.enrollment_no == "__none__")
     if selected_program_id:
         query = query.filter(Student.program_id_fk == selected_program_id)
+    if selected_status not in ("active", "inactive", "all"):
+        selected_status = "active"
+    if selected_status == "active":
+        query = query.filter(Student.is_active == True)
+    elif selected_status == "inactive":
+        query = query.filter(Student.is_active == False)
     if selected_semester not in ("all", ""):
         try:
             sem_int = int(selected_semester)
@@ -6313,6 +6384,7 @@ def students():
         selected_semester=selected_semester,
         selected_medium=selected_medium,
         selected_division_id=selected_division_id,
+        selected_status=selected_status,
         sort_by=sort_by,
         division_list=division_list,
         selected_limit=selected_limit,
@@ -6335,6 +6407,7 @@ def api_students_search():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
+    include_inactive = (request.args.get("include_inactive") or "").strip().lower() in ("1", "true", "yes")
     query = select(Student)
     # Enforce program scoping for clerk/principal; admin can search globally
     role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -6374,6 +6447,8 @@ def api_students_search():
         medium_val = medium_map.get(medium_raw)
         if medium_val:
             query = query.filter(Student.medium_tag == medium_val)
+    if not include_inactive:
+        query = query.filter(Student.is_active == True)
     if q:
         query = query.filter(
             or_(
@@ -6403,6 +6478,47 @@ def api_students_search():
         for s in rows
     ]
     return api_success({"items": data}, {"limit": 10})
+
+
+@main_bp.route("/api/command-palette/actions", methods=["GET"])
+@login_required
+def api_command_palette_actions():
+    from werkzeug.routing import BuildError
+
+    def _safe_url(ep, **kwargs):
+        try:
+            return url_for(ep, **kwargs)
+        except BuildError:
+            return None
+        except Exception:
+            return None
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    is_super = bool(getattr(current_user, "is_super_admin", False))
+
+    actions = []
+    actions.append({"id": "dashboard", "label": "Dashboard", "hint": "Home", "url": _safe_url("main.dashboard"), "tags": ["home"]})
+    actions.append({"id": "admin_module", "label": "Admin Module", "hint": "Tools and workflows", "url": _safe_url("main.module_admin"), "tags": ["admin", "tools"]})
+    actions.append({"id": "logbook", "label": "LogBook", "hint": "All logs in one place", "url": _safe_url("main.admin_logbook"), "tags": ["logs", "audit"]})
+    actions.append({"id": "student_lifecycle", "label": "Student Lifecycle", "hint": "Archive, alumni, restore, recycle bin", "url": _safe_url("main.student_lifecycle"), "tags": ["students", "archive", "alumni"]})
+    actions.append({"id": "staff_lifecycle", "label": "Staff Lifecycle", "hint": "Archive/restore staff", "url": _safe_url("main.staff_lifecycle"), "tags": ["staff", "archive"]})
+    actions.append({"id": "semester_promotion", "label": "Semester Promotion", "hint": "Promote students between semesters", "url": _safe_url("main.students_semester_promotion"), "tags": ["students", "promotion"]})
+    actions.append({"id": "workflow_new_ay", "label": "New Academic Year Setup", "hint": "Guided yearly rollover", "url": _safe_url("main.admin_workflow_new_academic_year"), "tags": ["workflow", "setup"]})
+    actions.append({"id": "students_list", "label": "Students", "hint": "Search and manage students", "url": _safe_url("main.students"), "tags": ["students", "search"]})
+    actions.append({"id": "staff_list", "label": "Staff", "hint": "Search staff and accounts", "url": _safe_url("main.faculty_list"), "tags": ["staff", "users"]})
+    actions.append({"id": "reports", "label": "Reports", "hint": "Exports and analytics", "url": _safe_url("main.reports_hub"), "tags": ["reports", "export"]})
+    actions.append({"id": "documents", "label": "Documents", "hint": "Manuals and PDFs", "url": _safe_url("main.documents_index"), "tags": ["docs"]})
+    actions.append({"id": "students_import", "label": "Bulk Import Students", "hint": "Upload Excel", "url": _safe_url("main.students_import"), "tags": ["import", "students"]})
+    actions.append({"id": "import_logs", "label": "Import Logs", "hint": "Review bulk imports", "url": _safe_url("main.admin_import_logs"), "tags": ["import", "logs"]})
+
+    if is_super:
+        actions.append({"id": "super_student_purge", "label": "Student Purge (Super Admin)", "hint": "Danger Zone", "url": _safe_url("super_admin.students_purge"), "tags": ["danger", "purge"]})
+
+    allowed = []
+    for a in actions:
+        if a.get("url"):
+            allowed.append(a)
+    return api_success({"items": allowed}, {"role": role, "count": len(allowed)})
 
 
 @main_bp.route("/students/new", methods=["GET", "POST"])
@@ -8631,17 +8747,33 @@ def enroll_core():
 @role_required("admin", "principal", "clerk")
 @csrf_required
 def students_semester_promotion():
+    user_role = (getattr(current_user, "role", "") or "").strip().lower()
+    programs = []
+    selected_program = None
     try:
-        program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
+        principal_program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
+    except Exception:
+        principal_program_id = None
+    program_id_raw = (request.values.get("program_id") or "").strip()
+    try:
+        program_id = int(program_id_raw) if program_id_raw else None
     except Exception:
         program_id = None
-    if not program_id:
-        try:
-            flash("Your account is not mapped to a program. Ask admin to map it from Users.", "warning")
-        except Exception:
-            pass
-        return redirect(url_for("main.dashboard"))
-    selected_program = db.session.get(Program, program_id)
+
+    if user_role == "admin":
+        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+        if program_id:
+            selected_program = db.session.get(Program, program_id)
+    else:
+        program_id = principal_program_id
+        if program_id:
+            selected_program = db.session.get(Program, program_id)
+        else:
+            try:
+                flash("Your account is not mapped to a program. Ask admin to map it from Users.", "warning")
+            except Exception:
+                pass
+            return redirect(url_for("main.dashboard"))
     max_semester = 8
     from_sem_raw = (request.values.get("from_semester") or "").strip()
     action = (request.form.get("action") or "").strip().lower() if request.method == "POST" else ""
@@ -8689,6 +8821,8 @@ def students_semester_promotion():
     return render_template(
         "students_semester_promotion.html",
         program=selected_program,
+        programs=programs,
+        selected_program_id=(selected_program.program_id if selected_program else (program_id or "")),
         from_semester=from_semester,
         to_semester=to_semester,
         max_semester=max_semester,
@@ -9382,7 +9516,9 @@ def attendance_mark():
         ).scalars().all()
         student_ids = [r.student_id_fk for r in enr_rows]
         if student_ids:
-            students = db.session.execute(select(Student).filter(Student.enrollment_no.in_(student_ids))).scalars().all()
+            students = db.session.execute(
+                select(Student).filter(Student.enrollment_no.in_(student_ids)).filter(Student.is_active == True)
+            ).scalars().all()
             for stu in students:
                 # If a division is selected, include only students currently in that division
                 if selected_division_id and stu.division_id_fk != selected_division_id:
@@ -9398,7 +9534,9 @@ def attendance_mark():
                 })
     elif selected_division_id:
         # Fallback: all students in division
-        stu_rows = db.session.execute(select(Student).filter_by(division_id_fk=selected_division_id)).scalars().all()
+        stu_rows = db.session.execute(
+            select(Student).filter_by(division_id_fk=selected_division_id).filter(Student.is_active == True)
+        ).scalars().all()
         roster = [{
             "enrollment_no": s.enrollment_no, 
             "name": f"{s.surname or ''} {s.student_name or ''} {s.father_name or ''}".strip(),
@@ -9421,6 +9559,72 @@ def attendance_mark():
         
         roster.sort(key=sort_key)
 
+    current_status_by_student = {}
+    last_status_by_student = {}
+    try:
+        if roster and selected_subject_id:
+            from sqlalchemy import or_, and_
+            student_ids = [r.get("enrollment_no") for r in roster if r.get("enrollment_no")]
+            div_ids = sorted({r.get("division_id") for r in roster if r.get("division_id")})
+            cutoff_period = selected_period if selected_period else 9999
+
+            if student_ids:
+                current_q = select(Attendance).filter(
+                    Attendance.student_id_fk.in_(student_ids),
+                    Attendance.subject_id_fk == selected_subject_id,
+                    Attendance.date_marked == selected_date,
+                )
+                if selected_period:
+                    current_q = current_q.filter(Attendance.period_no == selected_period)
+                if div_ids:
+                    current_q = current_q.filter(Attendance.division_id_fk.in_(div_ids))
+                current_rows = db.session.execute(current_q.order_by(Attendance.attendance_id.asc())).scalars().all()
+                per_student = {}
+                for att in current_rows:
+                    per_student.setdefault(att.student_id_fk, []).append(att)
+                for sid, items in per_student.items():
+                    keep = items[0]
+                    current_status_by_student[sid] = (keep.status or "").upper() or "P"
+
+                last_q = select(Attendance).filter(
+                    Attendance.student_id_fk.in_(student_ids),
+                    Attendance.subject_id_fk == selected_subject_id,
+                    or_(
+                        Attendance.date_marked < selected_date,
+                        and_(Attendance.date_marked == selected_date, Attendance.period_no < cutoff_period),
+                    ),
+                )
+                if div_ids:
+                    last_q = last_q.filter(Attendance.division_id_fk.in_(div_ids))
+                last_rows = db.session.execute(
+                    last_q.order_by(
+                        Attendance.student_id_fk.asc(),
+                        Attendance.date_marked.desc(),
+                        Attendance.period_no.desc(),
+                        Attendance.attendance_id.desc(),
+                    )
+                ).scalars().all()
+                for att in last_rows:
+                    if att.student_id_fk in last_status_by_student:
+                        continue
+                    last_status_by_student[att.student_id_fk] = {
+                        "status": (att.status or "").upper() or "P",
+                        "date": (att.date_marked.strftime("%Y-%m-%d") if att.date_marked else ""),
+                        "period_no": att.period_no or "",
+                    }
+    except Exception:
+        current_status_by_student = {}
+        last_status_by_student = {}
+
+    if roster:
+        for r in roster:
+            sid = r.get("enrollment_no")
+            last_info = last_status_by_student.get(sid)
+            r["last_status"] = (last_info.get("status") if last_info else "")
+            r["last_date"] = (last_info.get("date") if last_info else "")
+            r["last_period_no"] = (last_info.get("period_no") if last_info else "")
+            r["current_status"] = current_status_by_student.get(sid) or r.get("last_status") or "P"
+
     errors = []
     if request.method == "POST":
         if not (selected_subject_id and selected_period):
@@ -9436,23 +9640,61 @@ def attendance_mark():
                 if key.startswith("status_"):
                     enr = key.split("_", 1)[1]
                     statuses[enr] = (val or "P").upper()
+            student_ids = [row["enrollment_no"] for row in roster if row.get("enrollment_no")]
+            existing = {}
+            if student_ids:
+                existing_rows = db.session.execute(
+                    select(Attendance)
+                    .filter(
+                        Attendance.subject_id_fk == selected_subject_id,
+                        Attendance.date_marked == today,
+                        Attendance.period_no == selected_period,
+                        Attendance.student_id_fk.in_(student_ids),
+                    )
+                    .order_by(Attendance.attendance_id.asc())
+                ).scalars().all()
+                grouped = {}
+                for att in existing_rows:
+                    grouped.setdefault(att.student_id_fk, []).append(att)
+                for sid, items in grouped.items():
+                    keep = items[0]
+                    existing[sid] = keep
+                    for extra in items[1:]:
+                        db.session.delete(extra)
+
             created = 0
+            updated = 0
+            present_count = 0
+            total_count = 0
             for row in roster:
-                st = statuses.get(row["enrollment_no"], "P")
-                att = Attendance(
-                    student_id_fk=row["enrollment_no"],
-                    subject_id_fk=selected_subject_id,
-                    division_id_fk=(division.division_id if division else row["division_id"]),
-                    date_marked=today,
-                    status=st,
-                    semester=semester_val,
-                    period_no=selected_period,
-                )
-                db.session.add(att)
-                created += 1
+                sid = row["enrollment_no"]
+                st = statuses.get(sid, row.get("current_status") or "P")
+                st = (st or "P").upper()
+                total_count += 1
+                if st in ("P", "L"):
+                    present_count += 1
+                att = existing.get(sid)
+                div_id = (division.division_id if division else row["division_id"])
+                if att:
+                    att.status = st
+                    att.division_id_fk = div_id
+                    att.semester = semester_val
+                    updated += 1
+                else:
+                    att = Attendance(
+                        student_id_fk=sid,
+                        subject_id_fk=selected_subject_id,
+                        division_id_fk=div_id,
+                        date_marked=today,
+                        status=st,
+                        semester=semester_val,
+                        period_no=selected_period,
+                    )
+                    db.session.add(att)
+                    created += 1
             try:
                 db.session.commit()
-                flash(f"Attendance saved for {created} student(s).", "success")
+                flash(f"Attendance saved. Present {present_count}/{total_count}. ({created} added, {updated} updated)", "success")
                 return redirect(url_for("main.attendance_mark", subject_id=selected_subject_id, division_id=(division.division_id if division else ""), academic_year=selected_year, period_no=selected_period, date=today.strftime("%Y-%m-%d")))
             except Exception:
                 db.session.rollback()
@@ -10625,7 +10867,161 @@ def module_faculty():
 @role_required("admin", "principal")
 def module_admin():
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    return render_template("module_admin.html", role=role)
+    from werkzeug.routing import BuildError
+    from ..models import Division, Faculty, FeePayment, Student, StudentPurgeRequest, User
+    urls = {}
+    endpoints = {
+        "attendance_report": "main.attendance_report_admin",
+        "manage_accounts": "main.users_list",
+        "student_lifecycle": "main.student_lifecycle",
+        "staff_lifecycle": "main.staff_lifecycle",
+        "semester_promotion": "main.students_semester_promotion",
+        "programs": "main.programs_list",
+        "program_import": "main.admin_program_import",
+        "import_logs": "main.admin_import_logs",
+        "logbook": "main.admin_logbook",
+        "workflow_new_ay": "main.admin_workflow_new_academic_year",
+        "system_status": "main.admin_system_status",
+        "students_import": "main.students_import",
+        "reports": "main.reports_hub",
+        "documents": "main.documents_index",
+        "offer_electives": "main.offer_electives",
+        "assign_staff": "main.subjects_list",
+        "core_enrollment": "main.enroll_core",
+        "semester_coordinators": "main.semester_coordinators",
+    }
+    for k, ep in endpoints.items():
+        try:
+            urls[k] = url_for(ep)
+        except BuildError:
+            urls[k] = None
+
+    try:
+        urls["super_students_purge"] = url_for("super_admin.students_purge") if current_user.is_super_admin else None
+    except Exception:
+        urls["super_students_purge"] = None
+
+    health = {}
+    try:
+        health["pending_fee_verifications"] = (
+            db.session.scalar(
+                select(func.count())
+                .select_from(FeePayment)
+                .filter(func.lower(FeePayment.status) == "submitted")
+                .filter(FeePayment.verified_by_user_id.is_(None))
+            )
+            or 0
+        )
+    except Exception:
+        health["pending_fee_verifications"] = 0
+    try:
+        health["students_missing_division"] = (
+            db.session.scalar(
+                select(func.count())
+                .select_from(Student)
+                .filter(Student.is_active == True)
+                .filter(Student.division_id_fk.is_(None))
+            )
+            or 0
+        )
+    except Exception:
+        health["students_missing_division"] = 0
+    try:
+        health["students_division_mismatch"] = (
+            db.session.scalar(
+                select(func.count())
+                .select_from(Student)
+                .join(Division, Student.division_id_fk == Division.division_id)
+                .filter(Student.is_active == True)
+                .filter(Division.semester.isnot(None))
+                .filter(Student.current_semester.isnot(None))
+                .filter(Division.semester != Student.current_semester)
+            )
+            or 0
+        )
+    except Exception:
+        health["students_division_mismatch"] = 0
+    try:
+        sub = select(Student.user_id_fk).filter(Student.user_id_fk.isnot(None)).subquery()
+        health["orphan_student_users"] = (
+            db.session.scalar(
+                select(func.count())
+                .select_from(User)
+                .filter(func.lower(User.role) == "student")
+                .filter(~User.user_id.in_(select(sub.c.user_id_fk)))
+            )
+            or 0
+        )
+    except Exception:
+        health["orphan_student_users"] = 0
+    try:
+        health["faculty_missing_user"] = (
+            db.session.scalar(
+                select(func.count())
+                .select_from(Faculty)
+                .filter(Faculty.is_active == True)
+                .filter(Faculty.user_id_fk.is_(None))
+            )
+            or 0
+        )
+    except Exception:
+        health["faculty_missing_user"] = 0
+    try:
+        health["scheduled_student_purges"] = (
+            db.session.scalar(
+                select(func.count()).select_from(StudentPurgeRequest).filter(StudentPurgeRequest.status == "scheduled")
+            )
+            or 0
+        )
+    except Exception:
+        health["scheduled_student_purges"] = 0
+
+    top_actions = []
+    if role == "admin":
+        top_actions = [
+            {"label": "Student Lifecycle", "url": urls.get("student_lifecycle"), "hint": "Archive, alumni, restore, recycle bin."},
+            {"label": "Staff Lifecycle", "url": urls.get("staff_lifecycle"), "hint": "Archive/restore staff and assignments."},
+            {"label": "Semester Promotion", "url": urls.get("semester_promotion"), "hint": "Promote students to next semester."},
+            {"label": "LogBook", "url": urls.get("logbook"), "hint": "Unified audit for imports/updates/actions."},
+            {"label": "New Academic Year Setup", "url": urls.get("workflow_new_ay"), "hint": "Step-by-step annual setup wizard."},
+        ]
+    else:
+        top_actions = [
+            {"label": "Student Lifecycle", "url": urls.get("student_lifecycle"), "hint": "Archive, alumni, restore, recycle bin."},
+            {"label": "Staff Lifecycle", "url": urls.get("staff_lifecycle"), "hint": "Archive/restore staff and assignments."},
+            {"label": "Semester Promotion", "url": urls.get("semester_promotion"), "hint": "Promote students to next semester."},
+            {"label": "LogBook", "url": urls.get("logbook"), "hint": "Unified audit for important actions."},
+            {"label": "Reports", "url": urls.get("reports"), "hint": "Operational and compliance reports."},
+        ]
+
+    return render_template("module_admin.html", role=role, urls=urls, health=health, top_actions=top_actions)
+
+
+@main_bp.route("/admin/workflows/new-academic-year")
+@login_required
+@role_required("admin", "principal")
+def admin_workflow_new_academic_year():
+    from werkzeug.routing import BuildError
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    urls = {}
+    endpoints = {
+        "semester_promotion": "main.students_semester_promotion",
+        "programs": "main.programs_list",
+        "assign_staff": "main.subjects_list",
+        "timetable": "timetable.manage",
+        "fees": "fees.dashboard",
+        "import_logs": "main.admin_import_logs",
+        "logbook": "main.admin_logbook",
+        "student_lifecycle": "main.student_lifecycle",
+        "staff_lifecycle": "main.staff_lifecycle",
+    }
+    for k, ep in endpoints.items():
+        try:
+            urls[k] = url_for(ep)
+        except BuildError:
+            urls[k] = None
+    return render_template("workflow_new_academic_year.html", role=role, urls=urls)
 
 # Programs management (Admin-only)
 @main_bp.route("/programs")
@@ -11134,14 +11530,40 @@ def students_import_template():
     # Provide a minimal CSV template for convenience
     import io
     sample = io.StringIO()
-    sample.write("EnrollmentNo,Surname,StudentName,FatherName,DateOfBirth,Mobile,Gender,Medium\n")
-    sample.write("2021BBA001,Doe,John,Richard,2003-01-15,9876543210,M,English\n")
+    sample.write("Enrollment No,Surname,Student Name,Father Name,Division,Semester,Mobile,DOB,Gender,Medium\n")
+    sample.write("2021BBA001,Doe,John,Richard,A,3,9876543210,2003-01-15,Male,English\n")
     data = sample.getvalue().encode("utf-8")
     return Response(
         data,
         headers={
             "Content-Type": "text/csv",
             "Content-Disposition": "attachment; filename=students_import_template.csv",
+        },
+    )
+
+
+@main_bp.route("/clerk/students/import/template.xlsx", methods=["GET"])
+@login_required
+@role_required("admin", "principal", "clerk")
+def students_import_template_xlsx():
+    import io
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Students"
+    ws.append(["Enrollment No", "Surname", "Student Name", "Father Name", "Division", "Semester", "Mobile", "DOB", "Gender", "Medium"])
+    ws.append(["2021BBA001", "Doe", "John", "Richard", "A", 3, "9876543210", "2003-01-15", "Male", "English"])
+    ws.append(["2021BBA002", "Patel", "Abhay", "Rajesh", "A", 3, "9988776655", "2003-02-20", "Male", "English"])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    data = buf.getvalue()
+    return Response(
+        data,
+        headers={
+            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "Content-Disposition": "attachment; filename=students_import_template.xlsx",
         },
     )
 
@@ -13243,6 +13665,144 @@ def admin_import_logs():
     rows = db.session.execute(q.limit(500)).scalars().all()
     return render_template("import_logs.html", rows=rows, programs=programs, users=users, filters={"kind": kind, "program_id": pid, "semester": sem, "dry_run": dry_run_raw})
 
+
+@main_bp.route("/admin/logbook")
+@login_required
+@role_required("admin", "principal")
+def admin_logbook():
+    import json
+    from ..models import DataAuditLog, ImportLog, PasswordChangeLog, SubjectMaterialLog, User, Program
+
+    kind = (request.args.get("kind") or "all").strip().lower()
+    user_id_raw = (request.args.get("user_id") or "").strip()
+    program_id_raw = (request.args.get("program_id") or "").strip()
+    limit_raw = (request.args.get("limit") or "200").strip()
+
+    try:
+        user_id = int(user_id_raw) if user_id_raw else None
+    except Exception:
+        user_id = None
+    try:
+        program_id = int(program_id_raw) if program_id_raw else None
+    except Exception:
+        program_id = None
+    try:
+        limit = max(50, min(1000, int(limit_raw)))
+    except Exception:
+        limit = 200
+
+    users = {u.user_id: u for u in db.session.execute(select(User)).scalars().all()}
+    programs = {p.program_id: p for p in db.session.execute(select(Program)).scalars().all()}
+
+    entries = []
+
+    def _user_view(uid):
+        u = users.get(uid)
+        if not u:
+            return {"id": uid, "email": None, "username": None}
+        return {"id": u.user_id, "email": getattr(u, "email", None), "username": getattr(u, "username", None)}
+
+    if kind in ("all", "import"):
+        q = select(ImportLog).order_by(ImportLog.created_at.desc())
+        if program_id:
+            q = q.filter(ImportLog.program_id_fk == program_id)
+        if user_id:
+            q = q.filter(ImportLog.user_id_fk == user_id)
+        rows = db.session.execute(q.limit(limit)).scalars().all()
+        for r in rows:
+            entries.append(
+                {
+                    "at": r.created_at,
+                    "type": "import",
+                    "action": f"import_{r.kind}",
+                    "program": (programs.get(r.program_id_fk).program_name if r.program_id_fk in programs else None),
+                    "semester": r.semester,
+                    "user": _user_view(r.user_id_fk),
+                    "summary": {
+                        "created": r.created_count,
+                        "updated": r.updated_count,
+                        "skipped": r.skipped_count,
+                        "errors": r.errors_count,
+                        "dry_run": bool(r.dry_run),
+                    },
+                }
+            )
+
+    if kind in ("all", "audit"):
+        q = select(DataAuditLog).order_by(DataAuditLog.created_at.desc())
+        if program_id:
+            q = q.filter(DataAuditLog.program_id_fk == program_id)
+        if user_id:
+            q = q.filter(DataAuditLog.actor_user_id_fk == user_id)
+        rows = db.session.execute(q.limit(limit)).scalars().all()
+        for r in rows:
+            try:
+                counts = json.loads(r.counts_json or "{}")
+            except Exception:
+                counts = {}
+            entries.append(
+                {
+                    "at": r.created_at,
+                    "type": "audit",
+                    "action": r.action,
+                    "program": (programs.get(r.program_id_fk).program_name if r.program_id_fk in programs else None),
+                    "semester": r.semester,
+                    "user": _user_view(r.actor_user_id_fk),
+                    "summary": counts,
+                }
+            )
+
+    if kind in ("all", "materials"):
+        q = select(SubjectMaterialLog).order_by(SubjectMaterialLog.at.desc())
+        if user_id:
+            q = q.filter(SubjectMaterialLog.actor_user_id_fk == user_id)
+        rows = db.session.execute(q.limit(limit)).scalars().all()
+        for r in rows:
+            entries.append(
+                {
+                    "at": r.at,
+                    "type": "materials",
+                    "action": r.action,
+                    "program": None,
+                    "semester": None,
+                    "user": _user_view(r.actor_user_id_fk),
+                    "summary": {"material_id": r.material_id_fk},
+                }
+            )
+
+    if kind in ("all", "passwords"):
+        q = select(PasswordChangeLog).order_by(PasswordChangeLog.changed_at.desc())
+        if user_id:
+            q = q.filter(
+                or_(PasswordChangeLog.user_id_fk == user_id, PasswordChangeLog.changed_by_user_id_fk == user_id)
+            )
+        rows = db.session.execute(q.limit(limit)).scalars().all()
+        for r in rows:
+            entries.append(
+                {
+                    "at": r.changed_at,
+                    "type": "passwords",
+                    "action": "password_change",
+                    "program": None,
+                    "semester": None,
+                    "user": _user_view(r.changed_by_user_id_fk),
+                    "summary": {"target_user_id": r.user_id_fk, "method": r.method, "note": r.note},
+                }
+            )
+
+    entries.sort(key=lambda e: (e.get("at") is None, e.get("at")), reverse=True)
+    entries = entries[:limit]
+
+    program_list = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    user_list = db.session.execute(select(User).order_by(User.username.asc())).scalars().all()
+    return render_template(
+        "logbook.html",
+        entries=entries,
+        programs=program_list,
+        users=user_list,
+        filters={"kind": kind, "program_id": program_id, "user_id": user_id, "limit": limit},
+    )
+
 @main_bp.route("/admin/system-status")
 @login_required
 @role_required("admin")
@@ -13273,6 +13833,983 @@ def admin_system_status():
     except Exception:
         storage_ok = False
     return render_template("system_status.html", status={"db": db_ok, "cache": cache_ok, "email": email_ok, "storage": storage_ok})
+
+
+@main_bp.route("/admin/student-lifecycle", methods=["GET", "POST"])
+@login_required
+@role_required("admin", "principal")
+def student_lifecycle():
+    import io
+    import csv
+    import json
+    import time
+    import zipfile
+    from datetime import datetime, timedelta
+    from flask import Response
+    from sqlalchemy.exc import OperationalError
+    from ..models import (
+        Alumni,
+        Attendance,
+        DataAuditLog,
+        ExamMark,
+        FeePayment,
+        FeesRecord,
+        Grade,
+        Institute,
+        Notification,
+        Program,
+        Student,
+        StudentCreditLog,
+        StudentSemesterResult,
+        StudentSubjectEnrollment,
+        StudentPurgeRequest,
+        Trust,
+    )
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    trust_id = getattr(current_user, "trust_id_fk", None)
+
+    program_id_raw = (request.values.get("program_id") or "").strip()
+    semester_raw = (request.values.get("semester") or "").strip().lower()
+    include_inactive = (request.values.get("include_inactive") or "").strip().lower() in ("1", "true", "yes", "on")
+
+    program_id = None
+    if role == "principal":
+        try:
+            program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
+        except Exception:
+            program_id = None
+    else:
+        try:
+            program_id = int(program_id_raw) if program_id_raw else None
+        except Exception:
+            program_id = None
+    if role == "principal" and not program_id:
+        abort(403)
+
+    semester = None
+    if semester_raw and semester_raw not in ("all", ""):
+        try:
+            semester = int(semester_raw)
+        except Exception:
+            semester = None
+
+    def _scope_students_query():
+        q = select(Student)
+        if trust_id:
+            q = q.filter(Student.trust_id_fk == trust_id)
+        if program_id:
+            q = q.filter(Student.program_id_fk == program_id)
+        if semester is not None:
+            q = q.filter(Student.current_semester == semester)
+        if not include_inactive:
+            q = q.filter(Student.is_active == True)
+        return q
+
+    def _get_target_enrollments():
+        q = _scope_students_query().with_only_columns(Student.enrollment_no).order_by(Student.enrollment_no.asc())
+        return [enr for (enr,) in db.session.execute(q).all()]
+
+    def _selection_key():
+        return json.dumps(
+            {
+                "trust_id": trust_id,
+                "program_id": program_id,
+                "semester": semester_raw or "all",
+                "include_inactive": include_inactive,
+            },
+            sort_keys=True,
+        )
+
+    def _write_csv_from_query(zf, filename, model, q):
+        cols = [c.name for c in model.__table__.columns]
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(cols)
+        rows = db.session.execute(q).scalars().all()
+        for obj in rows:
+            w.writerow([getattr(obj, c, "") for c in cols])
+        zf.writestr(filename, buf.getvalue().encode("utf-8"))
+
+    def _backup_zip(enrollments):
+        mem = io.BytesIO()
+        with zipfile.ZipFile(mem, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            _write_csv_from_query(
+                zf,
+                "students.csv",
+                Student,
+                select(Student).filter(Student.enrollment_no.in_(enrollments)).order_by(Student.enrollment_no.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "student_subject_enrollments.csv",
+                StudentSubjectEnrollment,
+                select(StudentSubjectEnrollment).filter(StudentSubjectEnrollment.student_id_fk.in_(enrollments)).order_by(StudentSubjectEnrollment.enrollment_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "attendance.csv",
+                Attendance,
+                select(Attendance).filter(Attendance.student_id_fk.in_(enrollments)).order_by(Attendance.date_marked.asc(), Attendance.period_no.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "fees_records.csv",
+                FeesRecord,
+                select(FeesRecord).filter(FeesRecord.student_id_fk.in_(enrollments)).order_by(FeesRecord.fee_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "fee_payments.csv",
+                FeePayment,
+                select(FeePayment).filter(FeePayment.enrollment_no.in_(enrollments)).order_by(FeePayment.payment_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "exam_marks.csv",
+                ExamMark,
+                select(ExamMark).filter(ExamMark.student_id_fk.in_(enrollments)).order_by(ExamMark.exam_mark_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "student_semester_results.csv",
+                StudentSemesterResult,
+                select(StudentSemesterResult).filter(StudentSemesterResult.student_id_fk.in_(enrollments)).order_by(StudentSemesterResult.result_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "grades.csv",
+                Grade,
+                select(Grade).filter(Grade.student_id_fk.in_(enrollments)).order_by(Grade.grade_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "student_credit_log.csv",
+                StudentCreditLog,
+                select(StudentCreditLog).filter(StudentCreditLog.student_id_fk.in_(enrollments)).order_by(StudentCreditLog.log_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "notifications.csv",
+                Notification,
+                select(Notification).filter(Notification.student_id_fk.in_(enrollments)).order_by(Notification.notification_id.asc()),
+            )
+            _write_csv_from_query(
+                zf,
+                "alumni.csv",
+                Alumni,
+                select(Alumni).filter(Alumni.enrollment_no.in_(enrollments)).order_by(Alumni.alumni_id.asc()),
+            )
+        mem.seek(0)
+        return mem.getvalue()
+
+    def _require_backup():
+        sel = _selection_key()
+        ok_at = session.get("lifecycle_backup_at")
+        ok_sel = session.get("lifecycle_backup_sel")
+        try:
+            ok_at = float(ok_at) if ok_at else None
+        except Exception:
+            ok_at = None
+        if not ok_at or not ok_sel or ok_sel != sel:
+            return False
+        if (time.time() - ok_at) > (30 * 60):
+            return False
+        return True
+
+    def _audit(action, counts, selection_extra=None):
+        try:
+            selection = json.loads(_selection_key())
+        except Exception:
+            selection = {}
+        if selection_extra:
+            try:
+                selection.update(selection_extra)
+            except Exception:
+                pass
+        entry = DataAuditLog(
+            action=action,
+            actor_user_id_fk=getattr(current_user, "user_id", None),
+            actor_role=(getattr(current_user, "role", None) or ""),
+            trust_id_fk=trust_id,
+            program_id_fk=program_id,
+            semester=(semester if semester is not None else None),
+            selection_json=json.dumps(selection, ensure_ascii=False),
+            counts_json=json.dumps(counts or {}, ensure_ascii=False),
+        )
+        db.session.add(entry)
+
+    def _commit_with_retry(max_attempts=5):
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                db.session.commit()
+                return True
+            except OperationalError as e:
+                msg = str(e).lower()
+                db.session.rollback()
+                if "database is locked" in msg and attempt < max_attempts:
+                    time.sleep(0.25 * attempt)
+                    continue
+                raise
+
+    programs = []
+    if role == "admin":
+        q = select(Program).order_by(Program.program_name.asc())
+        if trust_id:
+            q = q.join(Institute).filter(Institute.trust_id_fk == trust_id)
+        programs = db.session.execute(q).scalars().all()
+
+    try:
+        sem_rows = db.session.execute(_scope_students_query().with_only_columns(func.distinct(Student.current_semester))).all()
+        semester_options = sorted([int(r[0]) for r in sem_rows if r and r[0]])
+    except Exception:
+        semester_options = [1, 2, 3, 4, 5, 6]
+
+    preview_count = 0
+    try:
+        preview_count = db.session.scalar(select(func.count()).select_from(_scope_students_query().subquery())) or 0
+    except Exception:
+        preview_count = 0
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip().lower()
+        confirm = (request.form.get("confirm") or "").strip()
+        note = (request.form.get("note") or "").strip()
+        request_id_raw = (request.form.get("request_id") or "").strip()
+
+        enrollments = []
+        if action not in ("cancel_purge", "purge_scheduled"):
+            enrollments = _get_target_enrollments()
+            if not enrollments:
+                flash("No students found for the selected scope.", "warning")
+                return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
+
+        if action == "backup":
+            content = _backup_zip(enrollments)
+            session["lifecycle_backup_at"] = time.time()
+            session["lifecycle_backup_sel"] = _selection_key()
+            _audit("backup", {"students": len(enrollments)})
+            db.session.commit()
+            fname = f"student_backup_{int(time.time())}.zip"
+            return Response(content, headers={"Content-Type": "application/zip", "Content-Disposition": f"attachment; filename={fname}"})
+
+        if action == "restore":
+            if confirm != "RESTORE":
+                flash("Type RESTORE to confirm.", "danger")
+                return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
+            current_ay = current_academic_year()
+            try:
+                st_q = select(Student).filter(Student.enrollment_no.in_(enrollments))
+                students = db.session.execute(st_q).scalars().all()
+                for s in students:
+                    s.is_active = True
+
+                alumni_removed = Alumni.query.filter(Alumni.enrollment_no.in_(enrollments)).delete(synchronize_session=False)
+
+                upd = StudentSubjectEnrollment.__table__.update().where(StudentSubjectEnrollment.student_id_fk.in_(enrollments))
+                upd = upd.where(StudentSubjectEnrollment.academic_year == current_ay)
+                if semester is not None:
+                    upd = upd.where(StudentSubjectEnrollment.semester == semester)
+                result = db.session.execute(upd.values(is_active=True))
+                enrollments_reactivated = int(getattr(result, "rowcount", 0) or 0)
+
+                _audit(
+                    "restore",
+                    {"students": len(enrollments), "enrollments_reactivated": enrollments_reactivated, "alumni_removed": alumni_removed},
+                    {"note": note},
+                )
+                db.session.commit()
+                flash(
+                    f"Restored {len(enrollments)} student(s). Reactivated {enrollments_reactivated} enrollment(s) for AY {current_ay}.",
+                    "success",
+                )
+            except Exception:
+                db.session.rollback()
+                flash("Failed to restore students.", "danger")
+            return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+
+        if action == "cancel_purge":
+            if confirm != "CANCEL":
+                flash("Type CANCEL to confirm.", "danger")
+                return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
+            try:
+                rid = int(request_id_raw)
+            except Exception:
+                rid = None
+            if not rid:
+                flash("Invalid purge request.", "danger")
+                return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+            try:
+                q = select(StudentPurgeRequest).filter_by(request_id=rid, scope="lifecycle")
+                if trust_id:
+                    q = q.filter(StudentPurgeRequest.trust_id_fk == trust_id)
+                if role == "principal" and program_id:
+                    q = q.filter(StudentPurgeRequest.program_id_fk == program_id)
+                req = db.session.execute(q).scalars().first()
+                if not req or (req.status or "") != "scheduled":
+                    flash("Purge request not found or not scheduled.", "danger")
+                    return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+                try:
+                    enrs = json.loads(req.enrollments_json or "[]")
+                    n = len(enrs) if isinstance(enrs, list) else None
+                except Exception:
+                    n = None
+                req.status = "canceled"
+                req.executed_at = datetime.utcnow()
+                _audit("cancel_purge", {"students": n, "request_id": rid}, {"note": note})
+                db.session.commit()
+                flash("Scheduled purge canceled. Students remain archived.", "success")
+            except Exception:
+                db.session.rollback()
+                flash("Failed to cancel purge.", "danger")
+            return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+
+        if action == "purge_scheduled":
+            if confirm != "PURGE":
+                flash("Type PURGE to confirm.", "danger")
+                return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
+            try:
+                rid = int(request_id_raw)
+            except Exception:
+                rid = None
+            if not rid:
+                flash("Invalid purge request.", "danger")
+                return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+            try:
+                q = select(StudentPurgeRequest).filter_by(request_id=rid, scope="lifecycle")
+                if trust_id:
+                    q = q.filter(StudentPurgeRequest.trust_id_fk == trust_id)
+                if role == "principal" and program_id:
+                    q = q.filter(StudentPurgeRequest.program_id_fk == program_id)
+                req = db.session.execute(q).scalars().first()
+                if not req or (req.status or "") != "scheduled":
+                    flash("Purge request not found or not scheduled.", "danger")
+                    return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+                now = datetime.utcnow()
+                if req.purge_after and now < req.purge_after:
+                    flash("Purge is not due yet. Cancel the schedule or wait until due.", "warning")
+                    return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+                try:
+                    enrs = json.loads(req.enrollments_json or "[]")
+                    enrollments_to_purge = [x for x in enrs if x]
+                except Exception:
+                    enrollments_to_purge = []
+                if not enrollments_to_purge:
+                    flash("No enrollments found in purge request.", "danger")
+                    return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+
+                def _chunks(items, size=500):
+                    for i in range(0, len(items), size):
+                        yield items[i : i + size]
+
+                counts = {"students": len(enrollments_to_purge), "request_id": rid}
+                deleted = {
+                    "attendance": 0,
+                    "enrollments": 0,
+                    "fees_records": 0,
+                    "fee_payments": 0,
+                    "exam_marks": 0,
+                    "semester_results": 0,
+                    "grades": 0,
+                    "credit_log": 0,
+                    "notifications": 0,
+                    "alumni": 0,
+                    "students": 0,
+                }
+                for chunk in _chunks(enrollments_to_purge):
+                    deleted["attendance"] += Attendance.query.filter(Attendance.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["enrollments"] += StudentSubjectEnrollment.query.filter(StudentSubjectEnrollment.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["fees_records"] += FeesRecord.query.filter(FeesRecord.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["fee_payments"] += FeePayment.query.filter(FeePayment.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                    deleted["exam_marks"] += ExamMark.query.filter(ExamMark.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["semester_results"] += StudentSemesterResult.query.filter(StudentSemesterResult.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["grades"] += Grade.query.filter(Grade.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["credit_log"] += StudentCreditLog.query.filter(StudentCreditLog.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["notifications"] += Notification.query.filter(Notification.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["alumni"] += Alumni.query.filter(Alumni.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                    deleted["students"] += Student.query.filter(Student.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                counts.update(deleted)
+                req.status = "purged"
+                req.executed_at = now
+                _audit("purge_scheduled", counts, {"note": note})
+                db.session.commit()
+                flash(f"Purged {counts.get('students', 0)} student(s) from recycle bin.", "warning")
+            except Exception:
+                db.session.rollback()
+                flash("Failed to purge scheduled request.", "danger")
+            return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+
+        if not _require_backup():
+            flash("Download backup ZIP first (valid for 30 minutes) before making changes.", "danger")
+            return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
+
+        if action == "schedule_purge":
+            if confirm != "SCHEDULE":
+                flash("Type SCHEDULE to confirm.", "danger")
+                return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
+            try:
+                st_q = select(Student).filter(Student.enrollment_no.in_(enrollments))
+                students = db.session.execute(st_q).scalars().all()
+                for s in students:
+                    s.is_active = False
+                db.session.execute(
+                    StudentSubjectEnrollment.__table__.update()
+                    .where(StudentSubjectEnrollment.student_id_fk.in_(enrollments))
+                    .values(is_active=False)
+                )
+                purge_after = datetime.utcnow() + timedelta(days=7)
+                req = StudentPurgeRequest(
+                    scope="lifecycle",
+                    status="scheduled",
+                    trust_id_fk=trust_id,
+                    program_id_fk=program_id,
+                    semester=(semester if semester is not None else None),
+                    selection_json=_selection_key(),
+                    enrollments_json=json.dumps(enrollments, ensure_ascii=False),
+                    note=note or None,
+                    created_by_user_id_fk=getattr(current_user, "user_id", None),
+                    purge_after=purge_after,
+                )
+                db.session.add(req)
+                _audit("schedule_purge", {"students": len(enrollments), "purge_after": purge_after.isoformat()}, {"note": note})
+                db.session.commit()
+                flash(f"Scheduled purge for {len(enrollments)} student(s). Purge after {purge_after.strftime('%Y-%m-%d %H:%M UTC')}.", "warning")
+            except Exception:
+                db.session.rollback()
+                flash("Failed to schedule purge.", "danger")
+            return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+
+        if action == "archive":
+            if confirm != "ARCHIVE":
+                flash("Type ARCHIVE to confirm.", "danger")
+                return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
+            st_q = select(Student).filter(Student.enrollment_no.in_(enrollments))
+            students = db.session.execute(st_q).scalars().all()
+            for s in students:
+                s.is_active = False
+            db.session.execute(
+                StudentSubjectEnrollment.__table__.update()
+                .where(StudentSubjectEnrollment.student_id_fk.in_(enrollments))
+                .values(is_active=False)
+            )
+            _audit("archive", {"students": len(enrollments)}, {"note": note})
+            try:
+                db.session.commit()
+                flash(f"Archived {len(enrollments)} student(s).", "success")
+            except Exception:
+                db.session.rollback()
+                flash("Failed to archive students.", "danger")
+            return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all")))
+
+        if action == "mark_alumni":
+            if confirm != "ALUMNI":
+                flash("Type ALUMNI to confirm.", "danger")
+                return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
+            import uuid
+
+            attempt = 0
+            max_attempts = 5
+            while True:
+                attempt += 1
+                try:
+                    trust_ids = {tid for (tid,) in db.session.execute(select(Trust.trust_id)).all()}
+                    today = datetime.utcnow().date()
+
+                    students = db.session.execute(select(Student).filter(Student.enrollment_no.in_(enrollments))).scalars().all()
+                    existing_rows = db.session.execute(select(Alumni).filter(Alumni.enrollment_no.in_(enrollments))).scalars().all()
+                    existing_by_enr = {a.enrollment_no: a for a in existing_rows if a and a.enrollment_no}
+
+                    upserts = 0
+                    for s in students:
+                        s.is_active = False
+                        tval = getattr(s, "trust_id_fk", None)
+                        if tval not in trust_ids:
+                            tval = None
+                        row = existing_by_enr.get(s.enrollment_no)
+                        if row:
+                            row.alumni_since = row.alumni_since or today
+                            row.note = note or row.note
+                            row.program_id_fk = s.program_id_fk
+                            row.last_semester = s.current_semester
+                            row.trust_id_fk = tval
+                        else:
+                            db.session.add(
+                                Alumni(
+                                    enrollment_no=s.enrollment_no,
+                                    program_id_fk=s.program_id_fk,
+                                    last_semester=s.current_semester,
+                                    trust_id_fk=tval,
+                                    alumni_since=today,
+                                    note=note or None,
+                                )
+                            )
+                        upserts += 1
+
+                    db.session.execute(
+                        StudentSubjectEnrollment.__table__.update()
+                        .where(StudentSubjectEnrollment.student_id_fk.in_(enrollments))
+                        .values(is_active=False)
+                    )
+                    _audit("mark_alumni", {"students": len(enrollments), "alumni_rows": upserts}, {"note": note})
+
+                    _commit_with_retry()
+                    flash(f"Marked {len(enrollments)} student(s) as alumni.", "success")
+                    break
+                except OperationalError as e:
+                    msg = str(e).lower()
+                    db.session.rollback()
+                    if "database is locked" in msg and attempt < max_attempts:
+                        time.sleep(0.35 * attempt)
+                        continue
+                    err_id = uuid.uuid4().hex[:12]
+                    try:
+                        current_app.logger.exception("Mark alumni failed (ref=%s)", err_id)
+                    except Exception:
+                        pass
+                    if current_app.debug or current_app.config.get("TESTING"):
+                        flash(f"Failed to mark alumni (ref {err_id}): {type(e).__name__}: {e}", "danger")
+                    else:
+                        flash(f"Failed to mark alumni (ref {err_id}).", "danger")
+                    break
+                except Exception as e:
+                    db.session.rollback()
+                    err_id = uuid.uuid4().hex[:12]
+                    try:
+                        current_app.logger.exception("Mark alumni failed (ref=%s)", err_id)
+                    except Exception:
+                        pass
+                    if current_app.debug or current_app.config.get("TESTING"):
+                        flash(f"Failed to mark alumni (ref {err_id}): {type(e).__name__}: {e}", "danger")
+                    else:
+                        flash(f"Failed to mark alumni (ref {err_id}).", "danger")
+                    break
+            return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all")))
+
+        if action == "hard_delete":
+            if confirm != "DELETE":
+                flash("Type DELETE to confirm.", "danger")
+                return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
+
+            def _chunks(items, size=500):
+                for i in range(0, len(items), size):
+                    yield items[i : i + size]
+
+            counts = {"students": len(enrollments)}
+            try:
+                deleted = {
+                    "attendance": 0,
+                    "enrollments": 0,
+                    "fees_records": 0,
+                    "fee_payments": 0,
+                    "exam_marks": 0,
+                    "semester_results": 0,
+                    "grades": 0,
+                    "credit_log": 0,
+                    "notifications": 0,
+                    "alumni": 0,
+                    "students": 0,
+                }
+                for chunk in _chunks(enrollments):
+                    deleted["attendance"] += Attendance.query.filter(Attendance.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["enrollments"] += StudentSubjectEnrollment.query.filter(StudentSubjectEnrollment.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["fees_records"] += FeesRecord.query.filter(FeesRecord.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["fee_payments"] += FeePayment.query.filter(FeePayment.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                    deleted["exam_marks"] += ExamMark.query.filter(ExamMark.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["semester_results"] += StudentSemesterResult.query.filter(StudentSemesterResult.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["grades"] += Grade.query.filter(Grade.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["credit_log"] += StudentCreditLog.query.filter(StudentCreditLog.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["notifications"] += Notification.query.filter(Notification.student_id_fk.in_(chunk)).delete(synchronize_session=False)
+                    deleted["alumni"] += Alumni.query.filter(Alumni.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                    deleted["students"] += Student.query.filter(Student.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                counts.update(deleted)
+                _audit("hard_delete", counts, {"note": note})
+                db.session.commit()
+                flash(f"Hard-deleted {counts.get('students', 0)} student(s).", "warning")
+            except Exception:
+                db.session.rollback()
+                flash("Failed to hard delete students.", "danger")
+            return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive="1"))
+
+        flash("Unknown action.", "danger")
+        return redirect(url_for("main.student_lifecycle"))
+
+    logs = []
+    try:
+        ql = select(DataAuditLog).order_by(DataAuditLog.created_at.desc())
+        if trust_id:
+            ql = ql.filter(DataAuditLog.trust_id_fk == trust_id)
+        if role == "principal" and program_id:
+            ql = ql.filter(DataAuditLog.program_id_fk == program_id)
+        logs = db.session.execute(ql.limit(50)).scalars().all()
+    except Exception:
+        logs = []
+
+    logs_view = []
+    for r in logs:
+        students_n = None
+        try:
+            cj = json.loads(r.counts_json or "{}")
+            students_n = cj.get("students")
+        except Exception:
+            students_n = None
+        logs_view.append(
+            {
+                "created_at": getattr(r, "created_at", None),
+                "action": getattr(r, "action", ""),
+                "actor_user_id_fk": getattr(r, "actor_user_id_fk", None),
+                "students": students_n,
+            }
+        )
+
+    purge_requests = []
+    try:
+        qp = select(StudentPurgeRequest).filter_by(scope="lifecycle").order_by(StudentPurgeRequest.created_at.desc())
+        if trust_id:
+            qp = qp.filter(StudentPurgeRequest.trust_id_fk == trust_id)
+        if role == "principal" and program_id:
+            qp = qp.filter(StudentPurgeRequest.program_id_fk == program_id)
+        rows = db.session.execute(qp.limit(25)).scalars().all()
+        for r in rows:
+            try:
+                enrs = json.loads(r.enrollments_json or "[]")
+                n = len(enrs) if isinstance(enrs, list) else None
+            except Exception:
+                n = None
+            purge_requests.append(
+                {
+                    "request_id": getattr(r, "request_id", None),
+                    "status": getattr(r, "status", ""),
+                    "created_at": getattr(r, "created_at", None),
+                    "purge_after": getattr(r, "purge_after", None),
+                    "students": n,
+                }
+            )
+    except Exception:
+        purge_requests = []
+
+    return render_template(
+        "student_lifecycle.html",
+        role=role,
+        programs=programs,
+        selected={"program_id": program_id, "semester": (semester_raw or "all"), "include_inactive": include_inactive},
+        semester_options=semester_options,
+        preview_count=preview_count,
+        logs=logs_view,
+        purge_requests=purge_requests,
+    )
+
+
+@main_bp.route("/admin/alumni/export.csv", methods=["GET"])
+@login_required
+@role_required("admin", "principal")
+def alumni_export_csv():
+    import csv
+    import io
+    from flask import Response
+    from ..models import Alumni, Institute, Program, Student
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    trust_id = getattr(current_user, "trust_id_fk", None)
+    program_id_raw = (request.args.get("program_id") or "").strip()
+    semester_raw = (request.args.get("semester") or "").strip()
+
+    program_id = None
+    if role == "principal":
+        try:
+            program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
+        except Exception:
+            program_id = None
+    else:
+        try:
+            program_id = int(program_id_raw) if program_id_raw else None
+        except Exception:
+            program_id = None
+
+    semester = None
+    if semester_raw and semester_raw.lower() not in ("all", ""):
+        try:
+            semester = int(semester_raw)
+        except Exception:
+            semester = None
+
+    q = (
+        select(Alumni, Student, Program.program_name)
+        .join(Student, Alumni.enrollment_no == Student.enrollment_no)
+        .join(Program, Student.program_id_fk == Program.program_id)
+    )
+    if trust_id:
+        q = q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == trust_id)
+    if program_id:
+        q = q.filter(Student.program_id_fk == program_id)
+    if semester is not None:
+        q = q.filter(Alumni.last_semester == semester)
+    q = q.order_by(Program.program_name.asc(), Alumni.last_semester.asc(), Alumni.enrollment_no.asc())
+    rows = db.session.execute(q).all()
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["enrollment_no", "name", "program", "last_semester", "alumni_since", "mobile", "email", "gender", "category", "medium"])
+    for al, st, prog_name in rows:
+        name = f"{(getattr(st, 'surname', '') or '').strip()} {(getattr(st, 'student_name', '') or '').strip()}".strip()
+        w.writerow(
+            [
+                getattr(al, "enrollment_no", "") or "",
+                name,
+                prog_name or "",
+                getattr(al, "last_semester", "") or "",
+                getattr(al, "alumni_since", "") or "",
+                getattr(st, "mobile", "") or "",
+                getattr(st, "email", "") or "",
+                getattr(st, "gender", "") or "",
+                getattr(st, "category", "") or "",
+                getattr(st, "medium_tag", "") or "",
+            ]
+        )
+    data = buf.getvalue().encode("utf-8")
+    return Response(data, headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=alumni.csv"})
+
+
+@main_bp.route("/admin/staff-lifecycle", methods=["GET", "POST"])
+@login_required
+@role_required("admin", "principal")
+def staff_lifecycle():
+    import io
+    import csv
+    import json
+    import time
+    import zipfile
+    from flask import Response
+    from sqlalchemy.exc import OperationalError
+    from ..models import CourseAssignment, DataAuditLog, Faculty, Institute, Program, User
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    trust_id = getattr(current_user, "trust_id_fk", None)
+    program_id_raw = (request.values.get("program_id") or "").strip()
+    include_inactive = (request.values.get("include_inactive") or "").strip().lower() in ("1", "true", "yes", "on")
+
+    program_id = None
+    if role == "principal":
+        try:
+            program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
+        except Exception:
+            program_id = None
+        if not program_id:
+            abort(403)
+    else:
+        try:
+            program_id = int(program_id_raw) if program_id_raw else None
+        except Exception:
+            program_id = None
+
+    programs = []
+    if role == "admin":
+        q = select(Program).order_by(Program.program_name.asc())
+        if trust_id:
+            q = q.join(Institute).filter(Institute.trust_id_fk == trust_id)
+        programs = db.session.execute(q).scalars().all()
+
+    def _scope_faculty_query():
+        q = select(Faculty)
+        if trust_id:
+            q = q.filter(Faculty.trust_id_fk == trust_id)
+        if program_id:
+            q = q.filter(Faculty.program_id_fk == program_id)
+        if not include_inactive:
+            q = q.filter(Faculty.is_active == True)
+        return q
+
+    def _get_target_faculty_ids():
+        q = _scope_faculty_query().with_only_columns(Faculty.faculty_id).order_by(Faculty.faculty_id.asc())
+        return [fid for (fid,) in db.session.execute(q).all()]
+
+    def _get_target_user_ids(faculty_ids):
+        if not faculty_ids:
+            return []
+        q = select(Faculty.user_id_fk).filter(Faculty.faculty_id.in_(faculty_ids))
+        ids = [uid for (uid,) in db.session.execute(q).all() if uid]
+        return sorted(set(ids))
+
+    def _selection_key():
+        return json.dumps(
+            {"trust_id": trust_id, "program_id": program_id, "include_inactive": include_inactive},
+            sort_keys=True,
+        )
+
+    def _audit(action, counts, selection_extra=None):
+        try:
+            selection = json.loads(_selection_key())
+        except Exception:
+            selection = {}
+        if selection_extra:
+            try:
+                selection.update(selection_extra)
+            except Exception:
+                pass
+        entry = DataAuditLog(
+            action=action,
+            actor_user_id_fk=getattr(current_user, "user_id", None),
+            actor_role=(getattr(current_user, "role", None) or ""),
+            trust_id_fk=trust_id,
+            program_id_fk=program_id,
+            semester=None,
+            selection_json=json.dumps(selection, ensure_ascii=False),
+            counts_json=json.dumps(counts or {}, ensure_ascii=False),
+        )
+        db.session.add(entry)
+
+    def _commit_with_retry(max_attempts=5):
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                db.session.commit()
+                return True
+            except OperationalError as e:
+                msg = str(e).lower()
+                db.session.rollback()
+                if "database is locked" in msg and attempt < max_attempts:
+                    time.sleep(0.25 * attempt)
+                    continue
+                raise
+
+    def _write_csv_from_query(zf, filename, model, q):
+        cols = [c.name for c in model.__table__.columns]
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(cols)
+        rows = db.session.execute(q).scalars().all()
+        for obj in rows:
+            w.writerow([getattr(obj, c, "") for c in cols])
+        zf.writestr(filename, buf.getvalue().encode("utf-8"))
+
+    def _backup_zip(faculty_ids, user_ids):
+        mem = io.BytesIO()
+        with zipfile.ZipFile(mem, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            _write_csv_from_query(
+                zf,
+                "faculty.csv",
+                Faculty,
+                select(Faculty).filter(Faculty.faculty_id.in_(faculty_ids)).order_by(Faculty.faculty_id.asc()),
+            )
+            if user_ids:
+                _write_csv_from_query(
+                    zf,
+                    "users.csv",
+                    User,
+                    select(User).filter(User.user_id.in_(user_ids)).order_by(User.user_id.asc()),
+                )
+                _write_csv_from_query(
+                    zf,
+                    "course_assignments.csv",
+                    CourseAssignment,
+                    select(CourseAssignment).filter(CourseAssignment.faculty_id_fk.in_(user_ids)).order_by(CourseAssignment.assignment_id.asc()),
+                )
+        mem.seek(0)
+        return mem.getvalue()
+
+    def _require_backup():
+        sel = _selection_key()
+        ok_at = session.get("staff_backup_at")
+        ok_sel = session.get("staff_backup_sel")
+        try:
+            ok_at = float(ok_at) if ok_at else None
+        except Exception:
+            ok_at = None
+        if not ok_at or not ok_sel or ok_sel != sel:
+            return False
+        if (time.time() - ok_at) > (30 * 60):
+            return False
+        return True
+
+    preview_count = 0
+    try:
+        preview_count = db.session.scalar(select(func.count()).select_from(_scope_faculty_query().subquery())) or 0
+    except Exception:
+        preview_count = 0
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip().lower()
+        confirm = (request.form.get("confirm") or "").strip()
+        note = (request.form.get("note") or "").strip()
+
+        faculty_ids = _get_target_faculty_ids()
+        user_ids = _get_target_user_ids(faculty_ids)
+        if not faculty_ids:
+            flash("No staff found for the selected scope.", "warning")
+            return redirect(url_for("main.staff_lifecycle", program_id=(program_id or ""), include_inactive=("1" if include_inactive else "")))
+
+        if action == "backup":
+            content = _backup_zip(faculty_ids, user_ids)
+            session["staff_backup_at"] = time.time()
+            session["staff_backup_sel"] = _selection_key()
+            _audit("staff_backup", {"faculty": len(faculty_ids), "users": len(user_ids)})
+            db.session.commit()
+            fname = f"staff_backup_{int(time.time())}.zip"
+            return Response(content, headers={"Content-Type": "application/zip", "Content-Disposition": f"attachment; filename={fname}"})
+
+        if not _require_backup():
+            flash("Download backup ZIP first (valid for 30 minutes) before making changes.", "danger")
+            return redirect(url_for("main.staff_lifecycle", program_id=(program_id or ""), include_inactive=("1" if include_inactive else "")))
+
+        if action == "archive":
+            if confirm != "ARCHIVE":
+                flash("Type ARCHIVE to confirm.", "danger")
+                return redirect(url_for("main.staff_lifecycle", program_id=(program_id or ""), include_inactive=("1" if include_inactive else "")))
+            try:
+                db.session.execute(
+                    Faculty.__table__.update().where(Faculty.faculty_id.in_(faculty_ids)).values(is_active=False)
+                )
+                if user_ids:
+                    db.session.execute(User.__table__.update().where(User.user_id.in_(user_ids)).values(is_active=False))
+                    db.session.execute(
+                        CourseAssignment.__table__.update().where(CourseAssignment.faculty_id_fk.in_(user_ids)).values(is_active=False)
+                    )
+                _audit("staff_archive", {"faculty": len(faculty_ids), "users": len(user_ids)}, {"note": note})
+                _commit_with_retry()
+                flash(f"Archived {len(faculty_ids)} staff member(s).", "success")
+            except Exception:
+                db.session.rollback()
+                flash("Failed to archive staff.", "danger")
+            return redirect(url_for("main.staff_lifecycle", program_id=(program_id or ""), include_inactive="1"))
+
+        if action == "restore":
+            if confirm != "RESTORE":
+                flash("Type RESTORE to confirm.", "danger")
+                return redirect(url_for("main.staff_lifecycle", program_id=(program_id or ""), include_inactive=("1" if include_inactive else "")))
+            try:
+                db.session.execute(
+                    Faculty.__table__.update().where(Faculty.faculty_id.in_(faculty_ids)).values(is_active=True)
+                )
+                if user_ids:
+                    db.session.execute(User.__table__.update().where(User.user_id.in_(user_ids)).values(is_active=True))
+                    current_ay = current_academic_year()
+                    db.session.execute(
+                        CourseAssignment.__table__.update()
+                        .where(CourseAssignment.faculty_id_fk.in_(user_ids))
+                        .where(CourseAssignment.academic_year == current_ay)
+                        .values(is_active=True)
+                    )
+                _audit("staff_restore", {"faculty": len(faculty_ids), "users": len(user_ids)}, {"note": note})
+                _commit_with_retry()
+                flash(f"Restored {len(faculty_ids)} staff member(s).", "success")
+            except Exception:
+                db.session.rollback()
+                flash("Failed to restore staff.", "danger")
+            return redirect(url_for("main.staff_lifecycle", program_id=(program_id or ""), include_inactive="1"))
+
+        flash("Unknown action.", "danger")
+        return redirect(url_for("main.staff_lifecycle"))
+
+    return render_template(
+        "staff_lifecycle.html",
+        role=role,
+        programs=programs,
+        selected={"program_id": program_id, "include_inactive": include_inactive},
+        preview_count=preview_count,
+    )
+
 @main_bp.route("/api/reports/enrollment-summary", methods=["GET"])
 @login_required
 @cache.cached(timeout=180, query_string=True)

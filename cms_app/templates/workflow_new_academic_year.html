@@ -1,0 +1,87 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container-fluid">
+  <div class="section-header d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0 title">New Academic Year Setup</h2>
+    <div class="actions">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.module_admin') }}">Admin Module</a>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="small text-muted">A guided checklist for the yearly rollover. Use it as a workflow; each step opens the correct tool.</div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header">Steps</div>
+        <div class="card-body">
+          <div class="list-group">
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold">1) Promote students to next semester</div>
+                <div class="small text-muted">Moves Sem N → Sem N+1 and reassigns divisions if target divisions exist.</div>
+              </div>
+              {% if urls.semester_promotion %}<a class="btn btn-sm btn-primary" href="{{ urls.semester_promotion }}">Open</a>{% endif %}
+            </div>
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold">2) Create / verify divisions for the new semester</div>
+                <div class="small text-muted">Ensure each program + semester has correct division codes and capacities.</div>
+              </div>
+              {% if urls.programs %}<a class="btn btn-sm btn-outline-primary" href="{{ urls.programs }}">Open</a>{% endif %}
+            </div>
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold">3) Assign staff and validate subject mappings</div>
+                <div class="small text-muted">Confirm who teaches what and fix missing mappings before timetable/attendance.</div>
+              </div>
+              {% if urls.assign_staff %}<a class="btn btn-sm btn-outline-primary" href="{{ urls.assign_staff }}">Open</a>{% endif %}
+            </div>
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold">4) Publish timetable</div>
+                <div class="small text-muted">Ensure lectures map correctly to divisions and subjects.</div>
+              </div>
+              {% if urls.timetable %}<a class="btn btn-sm btn-outline-primary" href="{{ urls.timetable }}">Open</a>{% endif %}
+            </div>
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold">5) Fees snapshot / setup</div>
+                <div class="small text-muted">Verify fee plans and receipts workflow for the new year.</div>
+              </div>
+              {% if urls.fees %}<a class="btn btn-sm btn-outline-primary" href="{{ urls.fees }}">Open</a>{% endif %}
+            </div>
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold">6) Review Health + cleanup</div>
+                <div class="small text-muted">Fix missing divisions, orphan accounts, and scheduled purges before go-live.</div>
+              </div>
+              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.module_admin') }}">Back</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card">
+        <div class="card-header">Recommended</div>
+        <div class="card-body">
+          <div class="small text-muted mb-2">Run these once after rollover:</div>
+          <div class="d-grid gap-2">
+            {% if urls.import_logs %}<a class="btn btn-outline-secondary" href="{{ urls.import_logs }}">Review Import Logs</a>{% endif %}
+            {% if urls.logbook %}<a class="btn btn-outline-secondary" href="{{ urls.logbook }}">Review LogBook</a>{% endif %}
+            {% if (current_user.role|lower) in ['admin','principal'] %}
+              {% if urls.student_lifecycle %}<a class="btn btn-outline-secondary" href="{{ urls.student_lifecycle }}">Student Lifecycle</a>{% endif %}
+              {% if urls.staff_lifecycle %}<a class="btn btn-outline-secondary" href="{{ urls.staff_lifecycle }}">Staff Lifecycle</a>{% endif %}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

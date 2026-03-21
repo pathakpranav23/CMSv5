@@ -610,6 +610,47 @@ class ImportLog(db.Model):
     created_at = db.Column(db.DateTime, default=utc_now)
     extra_json = db.Column(db.Text)
 
+class Alumni(db.Model):
+    __tablename__ = "alumni"
+    alumni_id = db.Column(db.Integer, primary_key=True)
+    enrollment_no = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"), nullable=False, unique=True)
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))
+    last_semester = db.Column(db.Integer)
+    trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"))
+    alumni_since = db.Column(db.Date)
+    note = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utc_now)
+
+
+class DataAuditLog(db.Model):
+    __tablename__ = "data_audit_log"
+    audit_id = db.Column(db.Integer, primary_key=True)
+    action = db.Column(db.String(32), nullable=False)
+    actor_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    actor_role = db.Column(db.String(32))
+    trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"))
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))
+    semester = db.Column(db.Integer)
+    selection_json = db.Column(db.Text)
+    counts_json = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utc_now)
+
+class StudentPurgeRequest(db.Model):
+    __tablename__ = "student_purge_requests"
+    request_id = db.Column(db.Integer, primary_key=True)
+    scope = db.Column(db.String(16), default="lifecycle")
+    status = db.Column(db.String(16), default="scheduled")  # scheduled | canceled | purged
+    trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"))
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))
+    semester = db.Column(db.Integer)
+    selection_json = db.Column(db.Text)
+    enrollments_json = db.Column(db.Text)
+    note = db.Column(db.Text)
+    created_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    created_at = db.Column(db.DateTime, default=utc_now)
+    purge_after = db.Column(db.DateTime)
+    executed_at = db.Column(db.DateTime)
+
 
 # ==========================================
 # SUPER ADMIN / SYSTEM MODELS
