@@ -81,3 +81,58 @@ def test_reports_hub_caching(client, app):
     # Second access (cached)
     resp2 = client.get("/reports")
     assert resp2.status_code == 200
+
+def test_auto_release_subject_assignments_when_semester_has_no_students(client, app):
+    from cms_app.models import Trust, Institute, Program, Division, SubjectType, Subject, Faculty, CourseAssignment
+    from cms_app.main.routes import current_academic_year
+
+    with app.app_context():
+        t = Trust(trust_name="T1", trust_code="T1", is_active=True)
+        db.session.add(t)
+        db.session.flush()
+        inst = Institute(trust_id_fk=t.trust_id, institute_name="I1", institute_code="I1")
+        db.session.add(inst)
+        db.session.flush()
+        p1 = Program(institute_id_fk=inst.institute_id, program_name="P1")
+        p2 = Program(institute_id_fk=inst.institute_id, program_name="P2")
+        db.session.add_all([p1, p2])
+        db.session.flush()
+
+        stype = SubjectType(type_name="Core", type_code="CORE")
+        db.session.add(stype)
+        db.session.flush()
+
+        d1 = Division(program_id_fk=p1.program_id, semester=3, division_code="A", capacity=60)
+        d2 = Division(program_id_fk=p2.program_id, semester=3, division_code="A", capacity=60)
+        db.session.add_all([d1, d2])
+        db.session.flush()
+
+        s1 = Subject(program_id_fk=p1.program_id, subject_type_id_fk=stype.type_id, subject_name="S1", semester=3, is_active=True)
+        s2 = Subject(program_id_fk=p2.program_id, subject_type_id_fk=stype.type_id, subject_name="S2", semester=3, is_active=True)
+        db.session.add_all([s1, s2])
+        db.session.flush()
+
+        u = User(username="fac_release", password_hash=generate_password_hash("secret"), role="faculty", trust_id_fk=t.trust_id)
+        db.session.add(u)
+        db.session.flush()
+        f = Faculty(user_id_fk=u.user_id, program_id_fk=p1.program_id, full_name="F1", trust_id_fk=t.trust_id, is_active=True)
+        db.session.add(f)
+        db.session.flush()
+
+        ay = current_academic_year()
+        ca1 = CourseAssignment(faculty_id_fk=u.user_id, subject_id_fk=s1.subject_id, division_id_fk=d1.division_id, academic_year=ay, role="primary", is_active=True)
+        ca2 = CourseAssignment(faculty_id_fk=u.user_id, subject_id_fk=s2.subject_id, division_id_fk=d2.division_id, academic_year=ay, role="primary", is_active=True)
+        db.session.add_all([ca1, ca2])
+        db.session.commit()
+        ca1_id = ca1.assignment_id
+        ca2_id = ca2.assignment_id
+
+    client.post("/login", data={"username": "fac_release", "password": "secret"}, follow_redirects=True)
+    resp = client.get("/faculty/dashboard")
+    assert resp.status_code == 200
+
+    with app.app_context():
+        a1 = db.session.get(CourseAssignment, ca1_id)
+        a2 = db.session.get(CourseAssignment, ca2_id)
+        assert a1.is_active is False
+        assert a2.is_active is False

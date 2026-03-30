@@ -1,0 +1,17 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-5" style="max-width:720px;">
+  <div class="card shadow-sm border-warning">
+    <div class="card-body">
+      <h3 class="mb-2 text-warning">Subscription Ended</h3>
+      <p class="text-muted mb-3">Your subscription tenure has ended. Access is blocked until renewal.</p>
+      <div class="mb-3">
+        <div><span class="fw-semibold">Trust:</span> {{ trust.trust_name }}</div>
+        {% if end_at %}<div><span class="fw-semibold">End Date:</span> {{ end_at }}</div>{% endif %}
+        {% if grace_days and grace_days > 0 %}<div class="text-muted small mt-1">Grace period: {{ grace_days }} day(s).</div>{% endif %}
+      </div>
+      <div class="alert alert-info mb-0">Please contact Super Admin to renew your subscription.</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

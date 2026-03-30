@@ -22,6 +22,18 @@
   {% endif %}
 
   <form method="post">
+    {% if institutes %}
+      <input type="hidden" name="trust_id" value="{{ trust_id or '' }}">
+      <div class="mb-3">
+        <label class="form-label">Institute</label>
+        <select class="form-select" name="institute_id_fk" required>
+          <option value="">Select institute</option>
+          {% for i in institutes %}
+            <option value="{{ i.institute_id }}" {% if form and (form.institute_id_fk|string) == (i.institute_id|string) %}selected{% endif %}>{{ i.institute_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    {% endif %}
     <div class="mb-3">
       <label class="form-label">Program Name</label>
       <input type="text" name="program_name" class="form-control" value="{{ (form.program_name if form else '')|default('') }}" required>

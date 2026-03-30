@@ -1,0 +1,56 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h2 class="mb-0">Flagged PASS/FAIL Flips</h2>
+      <div class="text-muted small">{{ scheme.name }} · Sem {{ scheme.semester }} · {{ scheme.academic_year }}</div>
+    </div>
+    <div class="actions">
+      <a href="{{ url_for('exams.dashboard') }}" class="btn btn-outline-secondary btn-sm">Back</a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>When</th>
+            <th>Student</th>
+            <th>Subject</th>
+            <th>Old → New</th>
+            <th>Unlock Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if items %}
+            {% for it in items %}
+              <tr>
+                <td class="small text-muted">{{ it.log.created_at.strftime('%d %b %Y, %I:%M %p') if it.log.created_at else '' }}</td>
+                <td class="fw-semibold">{{ it.sel.student_id or '' }}</td>
+                <td class="small">{{ it.sel.subject_id or '' }}</td>
+                <td>
+                  <span class="badge {% if it.cnt.old_pass %}bg-success{% else %}bg-danger{% endif %}">
+                    {{ 'PASS' if it.cnt.old_pass else 'FAIL' }}
+                  </span>
+                  <span class="mx-1">→</span>
+                  <span class="badge {% if it.cnt.new_pass %}bg-success{% else %}bg-danger{% endif %}">
+                    {{ 'PASS' if it.cnt.new_pass else 'FAIL' }}
+                  </span>
+                  <div class="small text-muted mt-1">Total: {{ it.cnt.old_total }} → {{ it.cnt.new_total }}</div>
+                </td>
+                <td class="small">{{ it.cnt.unlock_reason or '' }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="5" class="text-center text-muted py-4">No flips flagged.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

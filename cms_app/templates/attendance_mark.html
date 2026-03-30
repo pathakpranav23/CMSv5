@@ -206,14 +206,17 @@
                       <td>
                         <div class="fw-bold text-break">{{ r.last_name or '' }} {{ r.first_name or '' }} {{ r.father_name or '' }}</div>
                         <div class="small text-muted font-monospace">{{ r.enrollment_no }}</div>
+                        {% if r.last_status %}
+                          <div class="small text-muted">Last: {{ r.last_status }}{% if r.last_date %} ({{ r.last_date }}{% if r.last_period_no %} L{{ r.last_period_no }}{% endif %}){% endif %}</div>
+                        {% endif %}
                       </td>
                       <td class="text-center">
                         <div class="btn-group btn-group-sm" role="group">
-                          <input type="radio" class="btn-check" name="status_{{ r.enrollment_no }}" id="p_{{ r.enrollment_no }}" value="P" checked>
+                          <input type="radio" class="btn-check" name="status_{{ r.enrollment_no }}" id="p_{{ r.enrollment_no }}" value="P" {% if (r.current_status or 'P') == 'P' %}checked{% endif %}>
                           <label class="btn btn-outline-success" for="p_{{ r.enrollment_no }}">P</label>
-                          <input type="radio" class="btn-check" name="status_{{ r.enrollment_no }}" id="a_{{ r.enrollment_no }}" value="A">
+                          <input type="radio" class="btn-check" name="status_{{ r.enrollment_no }}" id="a_{{ r.enrollment_no }}" value="A" {% if (r.current_status or 'P') == 'A' %}checked{% endif %}>
                           <label class="btn btn-outline-danger" for="a_{{ r.enrollment_no }}">A</label>
-                          <input type="radio" class="btn-check" name="status_{{ r.enrollment_no }}" id="l_{{ r.enrollment_no }}" value="L">
+                          <input type="radio" class="btn-check" name="status_{{ r.enrollment_no }}" id="l_{{ r.enrollment_no }}" value="L" {% if (r.current_status or 'P') == 'L' %}checked{% endif %}>
                           <label class="btn btn-outline-warning" for="l_{{ r.enrollment_no }}">L</label>
                         </div>
                       </td>

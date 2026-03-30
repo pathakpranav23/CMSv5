@@ -7,11 +7,14 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>The Group of Parekh Colleges CMS</title>
+  <title>{% block title %}{% endblock %}{% if self.title()|trim %} · {% endif %}CloudEMS</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
-  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png', v=1) }}" />
-  <link rel="apple-touch-icon" href="{{ url_for('static', filename='logo.png') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='CODEP.png', v=1) }}" />
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='CODEP.png', v=1) }}">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=2) }}">
   <script>
@@ -36,19 +39,36 @@
   <link rel="preload" href="{{ url_for('static', filename='fonts/NotoSansGujarati-SemiBold.woff2') }}" as="font" type="font/woff2" crossorigin>
   {% endif %}
 </head>
-<body class="role-{{ (current_user.role|lower) if (current_user.is_authenticated) else 'guest' }} {% if program_slug %}program-{{ program_slug }}{% endif %} {{ page_class|default('') }} {% block page_class %}{% endblock %} {% if not info_hints_enabled %}hints-off{% endif %} {% if (lang_code or 'en') == 'gu' %}lang-gu{% endif %}"
-      data-theme="{{ theme|default('lightblue') }}">
+<body class="role-{{ (current_user.role|lower) if (current_user.is_authenticated) else 'guest' }} {% if current_user.is_authenticated and current_user.is_super_admin and not ctx_active_trust %}su-global{% endif %} {% if program_slug %}program-{{ program_slug }}{% endif %} {{ page_class|default('') }} {% block page_class %}{% endblock %} {% if not info_hints_enabled %}hints-off{% endif %} {% if (lang_code or 'en') == 'gu' %}lang-gu{% endif %}"
+      data-theme="{{ theme|default('aurora') }}">
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <a class="d-flex align-items-center gap-2 text-decoration-none" href="{{ url_for('main.index') }}" title="Shri Balvant Parekh Education Trust">
-          <img src="{{ url_for('static', filename='logo.png', v=1) }}" alt="Parekh Colleges Logo" />
-          <span class="fw-semibold" style="color: var(--nav-fg)">SBPET</span>
+        <a class="d-flex align-items-center gap-2 text-decoration-none" href="{{ url_for('main.index') }}" title="CodeP-CloudEMS">
+          <img src="{{ url_for('static', filename='CODEP.png', v=1) }}" alt="CodeP Logo" />
+          <span class="fw-semibold" style="color: var(--nav-fg)">CodeP-CloudEMS</span>
           {% if program_name %}
             <span class="program-badge" title="Program">{{ program_name }}</span>
           {% endif %}
         </a>
       </div>
+      {% if current_user.is_authenticated %}
+      <div class="sidebar-user">
+        <a class="sidebar-user-link" href="{{ url_for('main.account_settings') }}">
+          <div class="sidebar-avatar">
+            {% if ctx_user_photo_url %}
+              <img src="{{ ctx_user_photo_url }}" alt="Profile photo" />
+            {% else %}
+              <span>{{ (ctx_user_display_name or 'U')[:1]|upper }}</span>
+            {% endif %}
+          </div>
+          <div class="sidebar-user-meta">
+            <div class="sidebar-user-name">{{ ctx_user_display_name }}</div>
+            <div class="sidebar-user-role">{{ (current_user.role or 'user')|capitalize }}</div>
+          </div>
+        </a>
+      </div>
+      {% endif %}
       <ul class="nav d-block">
         {% if current_user.is_authenticated %}
           
@@ -59,7 +79,7 @@
             <li><a href="{{ url_for('main.module_announcements') }}"><span class="module-icon"><i class="bi bi-megaphone text-primary"></i></span><span class="label">{{ t('Announcements') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.module_attendance') }}"><span class="module-icon"><i class="bi bi-calendar-check text-primary"></i></span><span class="label">{{ t('Attendance') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.materials_hub') }}"><span class="module-icon"><i class="bi bi-folder2 text-primary"></i></span><span class="label">{{ t('Materials') }}</span></a><br class="nav-break"></li>
-            {% if (current_user.role|lower) in ['admin','principal','clerk','faculty'] %}
+            {% if (current_user.role|lower) in ['admin','principal','clerk','faculty'] or current_user.is_super_admin %}
               <li><a href="{{ url_for('exams.dashboard') }}"><span class="module-icon"><i class="bi bi-mortarboard text-primary"></i></span><span class="label">{{ t('Exams') }}</span></a><br class="nav-break"></li>
             {% endif %}
             <li>
@@ -107,10 +127,11 @@
           {% endif %}
 
           <!-- Group 4: Super Admin (Purple Theme) -->
-          {% if current_user.is_super_admin and not ctx_active_trust %}
+          {% if current_user.is_super_admin %}
           <div class="nav-group mt-2 pt-2 border-top border-secondary border-opacity-50">
             <div class="small fw-bold text-uppercase px-3 mb-1" style="font-size: 0.75rem; letter-spacing: 0.5px; color: #d63384; opacity: 1;">SUPER ADMIN</div>
             <li><a href="{{ url_for('super_admin.dashboard') }}"><span class="module-icon"><i class="bi bi-lightning-charge-fill" style="color: #d63384;"></i></span><span class="label">Control Tower</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('super_admin.tenants') }}"><span class="module-icon"><i class="bi bi-buildings" style="color: #d63384;"></i></span><span class="label">Manage Tenants</span></a><br class="nav-break"></li>
           </div>
           {% endif %}
 
@@ -123,6 +144,16 @@
         <ul class="nav">
           {% if current_user.is_authenticated %}
             <li><a href="{{ url_for('main.account_settings') }}"><span class="module-icon"><i class="bi bi-person-circle"></i></span><span class="label">{{ t('My Profile') }}</span></a><br class="nav-break"></li>
+            <li>
+              <a href="{{ url_for('main.inbox') }}">
+                <span class="module-icon"><i class="bi bi-bell"></i></span>
+                <span class="label">{{ t('Inbox') }}</span>
+                {% if inbox_unread_count and inbox_unread_count > 0 %}
+                  <span class="badge rounded-pill bg-danger ms-2">{{ inbox_unread_count }}</span>
+                {% endif %}
+              </a>
+              <br class="nav-break">
+            </li>
             <li><a href="{{ url_for('main.logout') }}"><span class="module-icon"><i class="bi bi-box-arrow-right"></i></span><span class="label">{{ t('Logout') }}</span></a><br class="nav-break"></li>
           {% else %}
             <li><a href="{{ url_for('main.login') }}"><span class="module-icon"><i class="bi bi-box-arrow-in-right"></i></span><span class="label">{{ t('Login') }}</span></a><br class="nav-break"></li>
@@ -141,24 +172,21 @@
     <div class="app-main">
       <!-- Mobile topbar with sidebar toggle -->
       <div class="mobile-topbar d-lg-none d-flex align-items-center justify-content-between px-3 py-2" style="background: var(--nav-bg); color: var(--nav-fg);">
-        <button class="btn btn-outline-light btn-sm" id="sidebarToggle"><i class="bi bi-list"></i> Menu</button>
-        <span class="fw-bold">Parekh Colleges</span>
-  <div class="d-flex align-items-center gap-2">
-    <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.dashboard') }}" title="Dashboard"><i class="bi bi-house"></i></a>
-    <button class="btn btn-outline-light btn-sm" type="button" data-action="open-command-palette" title="Command Palette"><i class="bi bi-search"></i></button>
-    <button class="btn btn-outline-light btn-sm" onclick="history.back()" title="Back"><i class="bi bi-arrow-left"></i></button>
-    <span class="small fw-semibold" style="color: var(--nav-fg);">
-      {% if current_user.is_authenticated %}
-        Hello {{ (current_user.role|capitalize) }}({{ current_user.username }})
-      {% else %}
-        Hello Guest
-      {% endif %}
-    </span>
-    <div class="btn-group">
-      <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.set_lang', code='en') }}">EN</a>
-      <a class="btn btn-outline-light btn-sm" href="{{ url_for('main.set_lang', code='gu') }}">GU</a>
-    </div>
-  </div>
+        <div class="mobile-topbar-row d-flex align-items-center justify-content-between w-100">
+          <button class="coin-btn" id="sidebarToggle" aria-label="Menu" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Menu"><i class="bi bi-list"></i></button>
+          <span class="fw-bold brand-title">CodeP-CloudEMS</span>
+          <div class="d-flex align-items-center gap-2">
+            <a class="coin-btn topbar-btn--dash" href="{{ url_for('main.dashboard') }}" aria-label="Dashboard" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Dashboard"><i class="bi bi-house"></i></a>
+            <button class="coin-btn topbar-btn--cmd" type="button" data-action="open-command-palette" aria-label="Command Palette" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Command Palette"><i class="bi bi-search"></i></button>
+          </div>
+        </div>
+        <div class="mobile-topbar-sub small fw-semibold greet" style="color: var(--nav-fg);">
+          {% if current_user.is_authenticated %}
+            Hello {{ (current_user.role|capitalize) }}({{ current_user.username }})
+          {% else %}
+            Hello Guest
+          {% endif %}
+        </div>
 </div>
 
       {% if breadcrumb_items and breadcrumb_items|length > 0 %}
@@ -180,15 +208,15 @@
       <!-- Enhanced Navigation Bar for all pages -->
       <nav class="enhanced-nav d-none d-lg-flex align-items-center justify-content-between px-3 py-2 border-bottom">
         <div class="nav-breadcrumb">
-          <a href="{{ url_for('main.dashboard') }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-house"></i> {{ t('Dashboard') }}</a>
+          <a href="{{ url_for('main.dashboard') }}" class="coin-btn" aria-label="Dashboard" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Dashboard"><i class="bi bi-house"></i></a>
           
           {% if current_user.is_super_admin %}
           <div class="dropdown d-inline-block ms-2">
-            <button class="btn btn-sm {% if ctx_active_trust %}btn-warning fw-bold text-dark{% else %}btn-outline-secondary{% endif %} dropdown-toggle" type="button" id="trustContextDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+            <button class="coin-btn dropdown-toggle" type="button" id="trustContextDropdown" data-bs-toggle="dropdown" aria-expanded="false" title="{{ ctx_active_trust.trust_name if ctx_active_trust else 'Global View' }}" aria-label="Workspace">
               {% if ctx_active_trust %}
-                <i class="bi bi-shield-lock-fill"></i> {{ ctx_active_trust.trust_name }}
+                <i class="bi bi-shield-lock-fill"></i>
               {% else %}
-                <i class="bi bi-globe"></i> Global View
+                <i class="bi bi-globe"></i>
               {% endif %}
             </button>
             <ul class="dropdown-menu shadow" aria-labelledby="trustContextDropdown">
@@ -229,12 +257,17 @@
               Hello Guest
             {% endif %}
           </span>
-          <button class="btn btn-sm btn-outline-secondary" type="button" data-action="open-command-palette" title="Command Palette (Ctrl+K)"><i class="bi bi-search"></i></button>
-          <button class="btn btn-sm btn-outline-secondary" id="scrollToTop" title="Scroll to Top"><i class="bi bi-arrow-up"></i></button>
-          <button class="btn btn-sm btn-outline-secondary" id="scrollToBottom" title="Scroll to Bottom"><i class="bi bi-arrow-down"></i></button>
-          <div class="btn-group">
-            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.set_lang', code='en') }}">EN</a>
-            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.set_lang', code='gu') }}">GU</a>
+          <button class="coin-btn" type="button" data-action="open-command-palette" aria-label="Command Palette" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Command Palette (Ctrl+K)"><i class="bi bi-search"></i></button>
+          <button class="coin-btn" id="scrollToTop" aria-label="Scroll to Top" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Scroll to Top"><i class="bi bi-arrow-up"></i></button>
+          <button class="coin-btn" id="scrollToBottom" aria-label="Scroll to Bottom" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Scroll to Bottom"><i class="bi bi-arrow-down"></i></button>
+          <div class="dropdown">
+            <button class="coin-btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Language" title="Language">
+              <i class="bi bi-translate"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end shadow">
+              <li><a class="dropdown-item" href="{{ url_for('main.set_lang', code='en') }}">English</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('main.set_lang', code='gu') }}">Gujarati</a></li>
+            </ul>
           </div>
         </div>
       </nav>
@@ -277,15 +310,13 @@
               <img src="{{ url_for('static', filename='CODEP-LOGO-6.png') }}" alt="CODEP Company Logo" class="footer-logo" />
             </div>
             <div class="col-12 col-md-6">
-              <div class="footer-sponsor d-flex flex-column align-items-center">
-                <div class="small fw-semibold">Supported By PIL</div>
-                <img src="{{ url_for('static', filename='Pidilite-logo.jpg') }}" alt="Pidilite Logo" class="footer-logo" />
-              </div>
-            </div>
-            <div class="col-12 col-md-3">
               <div class="footer-brand">
-                <div class="small fw-semibold">The Group of Parekh Colleges - Mahuva</div>
-                <div class="small">Managed by Shri Balvant Parekh Education Trust (SBPET) <span class="opacity-50 ms-2" style="font-size: 0.7em;">v4.1</span></div>
+                <div class="small fw-semibold">CodeP-CloudEMS</div>
+                {% if ctx_active_trust %}
+                  <div class="small text-muted">Workspace: {{ ctx_active_trust.trust_name }}{% if ctx_active_institute %} • {{ ctx_active_institute.institute_name }}{% endif %}</div>
+                {% else %}
+                  <div class="small text-muted">Workspace: Global View</div>
+                {% endif %}
               </div>
             </div>
           </div>

@@ -1,9 +1,17 @@
 // Service Worker for Parekh Colleges CMS
-const CACHE_NAME = 'cms-cache-v5';
+const CACHE_NAME = 'cms-cache-v34';
 const URLS_TO_CACHE = [
   '/',
   '/static/style.css',
-  '/static/logo.png',
+  '/static/CODEP.png?v=1',
+  '/static/marble_veins.svg',
+  '/static/feature_hero.svg?v=1',
+  '/static/feature_academics.svg?v=1',
+  '/static/feature_attendance.svg?v=1',
+  '/static/feature_fees.svg?v=1',
+  '/static/feature_exams.svg?v=1',
+  '/static/feature_people.svg?v=1',
+  '/static/feature_security.svg?v=1',
   '/static/offline.html',
   '/static/js/session_manager.js?v=1',
   '/static/js/command_palette.js?v=2',

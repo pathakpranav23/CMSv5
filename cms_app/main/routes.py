@@ -3,8 +3,9 @@ from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
 import os
 import csv
-from sqlalchemy import or_, select, and_, cast, Integer
-from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings
+from sqlalchemy import or_, select, and_, cast, Integer, false, update
+from sqlalchemy.orm import selectinload
+from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
 from ..api_utils import api_success, api_error
@@ -49,6 +50,17 @@ def role_required(*roles):
             return func(*args, **kwargs)
         return wrapper
     return decorator
+
+
+def _effective_trust_id():
+    if not getattr(current_user, "is_authenticated", False):
+        return None
+    if getattr(current_user, "is_super_admin", False):
+        try:
+            return int(session.get("active_trust_id") or 0) or None
+        except Exception:
+            return None
+    return getattr(current_user, "trust_id_fk", None)
 
 # Subject Materials: helpers and listing route
 ALLOWED_MATERIAL_EXTS = {"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "png", "jpg", "jpeg"}
@@ -145,7 +157,7 @@ def fees_bank_details():
         "fees_bank_details.html",
         programs=programs,
         details_map=details_map,
-        can_edit=(role in ("admin", "principal")),
+        can_edit=(role in ("admin",)),
     )
 
 @main_bp.route("/fees/bank-details/edit", methods=["GET", "POST"])
@@ -153,7 +165,7 @@ def fees_bank_details():
 @csrf_required
 def fees_bank_details_edit():
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    if role not in ("admin", "principal"):
+    if role not in ("admin",):
         try:
             flash("You are not authorized to edit Program Bank Details.", "danger")
         except Exception:
@@ -289,6 +301,85 @@ def current_academic_year():
     end_year_short = str((start_year + 1))[-2:]
     return f"{start_year}-{end_year_short}"
 
+def _auto_release_empty_semester_course_assignments(trust_id):
+    try:
+        tid = int(trust_id or 0) or None
+    except Exception:
+        tid = None
+    if not tid:
+        return 0
+    try:
+        if not current_app.config.get("TESTING", False):
+            key = f"auto_release_empty_semester_ca_{tid}"
+            last = cache.get(key)
+            if last:
+                try:
+                    if (time.time() - float(last)) < 600:
+                        return 0
+                except Exception:
+                    pass
+            cache.set(key, time.time(), timeout=3600)
+    except Exception:
+        pass
+
+    ay = current_academic_year()
+    non_empty = set()
+    try:
+        rows = db.session.execute(
+            select(Student.program_id_fk, Student.current_semester, func.count(Student.enrollment_no))
+            .where(Student.trust_id_fk == tid)
+            .where(Student.is_active.is_(True))
+            .where(Student.current_semester.isnot(None))
+            .group_by(Student.program_id_fk, Student.current_semester)
+        ).all()
+        for pid, sem, cnt in rows:
+            if pid and sem and (cnt or 0) > 0:
+                non_empty.add((int(pid), int(sem)))
+    except Exception:
+        non_empty = set()
+
+    try:
+        ass_rows = db.session.execute(
+            select(CourseAssignment.assignment_id, Subject.program_id_fk, Subject.semester)
+            .select_from(CourseAssignment)
+            .join(Subject, Subject.subject_id == CourseAssignment.subject_id_fk)
+            .join(Program, Program.program_id == Subject.program_id_fk)
+            .join(Institute, Program.institute_id_fk == Institute.institute_id)
+            .where(CourseAssignment.is_active.is_(True))
+            .where(Institute.trust_id_fk == tid)
+            .where(Subject.semester.isnot(None))
+            .where(or_(CourseAssignment.academic_year == ay, CourseAssignment.academic_year.is_(None)))
+        ).all()
+    except Exception:
+        return 0
+
+    ids = []
+    for assignment_id, pid, sem in ass_rows:
+        try:
+            pair = (int(pid or 0), int(sem or 0))
+        except Exception:
+            pair = None
+        if pair and pair[0] and pair[1] and pair not in non_empty:
+            ids.append(assignment_id)
+
+    if not ids:
+        return 0
+
+    try:
+        db.session.execute(
+            update(CourseAssignment)
+            .where(CourseAssignment.assignment_id.in_(ids))
+            .values(is_active=False)
+        )
+        db.session.commit()
+        return len(ids)
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return 0
+
 def academic_year_options():
     now = datetime.now()
     start_year = now.year if now.month >= 6 else (now.year - 1)
@@ -374,7 +465,23 @@ def _user_is_student_enrolled(subject_id: int, academic_year: str) -> bool:
 def _program_dropdown_context(q_program_raw: str = None, *, include_admin_all: bool = True, default_program_name: str = None, exclude_names: list = None, warn_unmapped: bool = True, fallback_to_first: bool = True, prefer_user_program_default: bool = True):
     role = (getattr(current_user, "role", "") or "").strip().lower()
     # Base list: all programs ordered by name
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+
     program_q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            program_q = program_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            program_q = program_q.where(false())
     program_list = db.session.execute(program_q).scalars().all()
     # Optional exclusions by display name
     try:
@@ -452,7 +559,8 @@ def _program_dropdown_context(q_program_raw: str = None, *, include_admin_all: b
             except Exception:
                 selected_program_id = None
         # For admin, do NOT fallback to first program if none is selected
-        if (selected_program_id is None) and program_list and (role not in ("admin",)) and fallback_to_first:
+        allow_admin_fallback = bool(effective_trust_id)
+        if (selected_program_id is None) and program_list and ((role not in ("admin",)) or allow_admin_fallback) and fallback_to_first:
             try:
                 selected_program_id = program_list[0].program_id
             except Exception:
@@ -2448,7 +2556,7 @@ def keep_alive():
 
 @main_bp.context_processor
 def inject_trust_context():
-    from ..models import Trust
+    from ..models import Trust, Institute
     if not current_user.is_authenticated:
         return {}
     
@@ -2459,15 +2567,147 @@ def inject_trust_context():
     active_trust_id = session.get("active_trust_id")
     active_trust_obj = None
     if active_trust_id:
+        try:
+            active_trust_id = int(active_trust_id)
+        except Exception:
+            active_trust_id = None
+    if active_trust_id:
         active_trust_obj = db.session.get(Trust, active_trust_id)
+
+    active_institute_obj = None
+    if active_trust_obj:
+        active_inst_id = session.get("active_institute_id")
+        if active_inst_id:
+            try:
+                active_inst_id = int(active_inst_id)
+            except Exception:
+                active_inst_id = None
+        if active_inst_id:
+            active_institute_obj = db.session.get(Institute, active_inst_id)
+            if active_institute_obj and active_institute_obj.trust_id_fk != active_trust_obj.trust_id:
+                active_institute_obj = None
+        if not active_institute_obj:
+            active_institute_obj = db.session.execute(
+                select(Institute).filter_by(trust_id_fk=active_trust_obj.trust_id).order_by(Institute.institute_id.asc())
+            ).scalars().first()
+            if active_institute_obj:
+                session["active_institute_id"] = active_institute_obj.institute_id
         
     # Get all trusts for the dropdown
     all_trusts = db.session.execute(select(Trust).order_by(Trust.trust_name)).scalars().all()
     
     return {
         "ctx_active_trust": active_trust_obj,
+        "ctx_active_institute": active_institute_obj,
         "ctx_all_trusts": all_trusts
     }
+
+
+@main_bp.context_processor
+def inject_inbox_badge():
+    if not current_user.is_authenticated:
+        return {}
+
+    user_id = getattr(current_user, "user_id", None)
+    if not user_id:
+        return {"inbox_unread_count": 0}
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    now = datetime.now()
+
+    effective_trust_id = None
+    if getattr(current_user, "is_super_admin", False):
+        try:
+            effective_trust_id = int(session.get("active_trust_id") or 0) or None
+        except Exception:
+            effective_trust_id = None
+    if effective_trust_id is None:
+        effective_trust_id = getattr(current_user, "trust_id_fk", None)
+
+    system_unread = 0
+    try:
+        sm_q = select(SystemMessage.message_id).where(SystemMessage.is_active.is_(True))
+        if role:
+            sm_q = sm_q.where(or_(SystemMessage.target_role == "all", SystemMessage.target_role == role))
+        if effective_trust_id:
+            sm_q = sm_q.where(or_(SystemMessage.target_trust_id == None, SystemMessage.target_trust_id == effective_trust_id))
+        sm_q = sm_q.where(or_(SystemMessage.start_date == None, SystemMessage.start_date <= now))
+        sm_q = sm_q.where(or_(SystemMessage.end_date == None, SystemMessage.end_date >= now))
+        msg_ids = db.session.execute(sm_q.limit(80)).scalars().all()
+        read_ids = set(db.session.execute(select(SystemMessageRead.message_id_fk).filter_by(user_id_fk=user_id)).scalars().all())
+        system_unread = sum(1 for mid in msg_ids if mid not in read_ids)
+    except Exception:
+        system_unread = 0
+
+    ann_unread = 0
+    try:
+        ann_q = (
+            select(Announcement)
+            .options(selectinload(Announcement.audiences), selectinload(Announcement.recipients))
+            .filter(Announcement.is_active == True)
+        )
+        if effective_trust_id:
+            ann_q = ann_q.filter(Announcement.trust_id_fk == effective_trust_id)
+        else:
+            ann_q = ann_q.filter(Announcement.trust_id_fk == None)
+        ann_q = ann_q.filter(or_(Announcement.start_at == None, Announcement.start_at <= (now + timedelta(hours=12))))
+        ann_q = ann_q.filter(or_(Announcement.end_at == None, Announcement.end_at >= (now - timedelta(hours=12))))
+        if role not in ("admin", "clerk"):
+            pid = getattr(current_user, "program_id_fk", None)
+            if pid:
+                ann_q = ann_q.filter(or_(Announcement.program_id_fk == None, Announcement.program_id_fk == pid))
+            else:
+                ann_q = ann_q.filter(Announcement.program_id_fk == None)
+        rows = db.session.execute(ann_q.order_by(Announcement.created_at.desc()).limit(120)).scalars().all()
+
+        dismissed = set(db.session.execute(select(AnnouncementDismissal.announcement_id_fk).filter_by(user_id_fk=user_id)).scalars().all())
+
+        st = None
+        if role == "student":
+            try:
+                st = db.session.execute(select(Student).filter_by(user_id_fk=user_id)).scalars().first()
+            except Exception:
+                st = None
+
+        for a in rows:
+            include = False
+            recips = []
+            try:
+                recips = [r.student_id_fk for r in (a.recipients or [])]
+            except Exception:
+                recips = []
+            if recips:
+                if role in ("principal", "clerk"):
+                    include = True
+                elif role == "student" and st and st.enrollment_no in recips:
+                    include = True
+            else:
+                try:
+                    aud = [au.role for au in (a.audiences or [])]
+                except Exception:
+                    aud = []
+                include = (not aud) or (role in aud)
+
+            if include and (a.announcement_id not in dismissed):
+                ann_unread += 1
+    except Exception:
+        ann_unread = 0
+
+    notif_unread = 0
+    if role == "student":
+        try:
+            st = db.session.execute(select(Student).filter_by(user_id_fk=user_id)).scalars().first()
+        except Exception:
+            st = None
+        if st:
+            try:
+                notif_unread = db.session.scalar(
+                    select(func.count()).select_from(Notification).where(Notification.student_id_fk == st.enrollment_no, Notification.is_read == False)
+                ) or 0
+            except Exception:
+                notif_unread = 0
+
+    return {"inbox_unread_count": int(ann_unread + system_unread + notif_unread)}
 
 @main_bp.route("/set-trust-context/<int:trust_id>")
 @login_required
@@ -2479,16 +2719,24 @@ def set_trust_context(trust_id):
     if trust_id == 0:
         # 0 means Global View
         session.pop("active_trust_id", None)
+        session.pop("active_institute_id", None)
+        session.pop("wizard_institute_id", None)
         flash("Switched to Global View", "info")
         return redirect(url_for("main.super_admin_dashboard"))
         
-    from ..models import Trust
+    from ..models import Trust, Institute
     trust = db.session.get(Trust, trust_id)
     if not trust:
         flash("Trust not found", "danger")
         return redirect(url_for("main.super_admin_dashboard"))
         
     session["active_trust_id"] = trust_id
+    session.pop("wizard_institute_id", None)
+    inst = db.session.execute(select(Institute).filter_by(trust_id_fk=trust_id).order_by(Institute.institute_id.asc())).scalars().first()
+    if inst:
+        session["active_institute_id"] = inst.institute_id
+    else:
+        session.pop("active_institute_id", None)
     flash(f"Switched context to {trust.trust_name}", "success")
     return redirect(url_for("main.dashboard"))
 
@@ -2539,6 +2787,12 @@ def dashboard():
             pass
     elif not is_super:
         effective_trust_id = getattr(current_user, "trust_id_fk", None)
+
+    try:
+        if effective_trust_id and role in ("admin", "principal", "clerk"):
+            _auto_release_empty_semester_course_assignments(effective_trust_id)
+    except Exception:
+        pass
 
     # Resolve selected program
     selected_program = None
@@ -3441,7 +3695,14 @@ def dashboard():
 
         def _gender_by_semester(program_id: int, selected_semester: int = None):
             try:
-                st_rows = db.session.execute(select(Student.current_semester, Student.gender).filter_by(program_id_fk=program_id)).all()
+                q = (
+                    select(Student.current_semester, Student.gender)
+                    .where(Student.program_id_fk == program_id)
+                    .where(Student.is_active.is_(True))
+                )
+                if effective_trust_id:
+                    q = q.where(Student.trust_id_fk == effective_trust_id)
+                st_rows = db.session.execute(q).all()
             except Exception:
                 st_rows = []
             male = {}
@@ -4058,8 +4319,39 @@ def announcements_list():
     program_id_raw = (request.args.get("program_id") or "").strip()
     severity = (request.args.get("severity") or "").strip().lower()
     only_active = (request.args.get("active") or "true").strip().lower() == "true"
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    prog_q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            prog_q = prog_q.where(false())
+    programs = db.session.execute(prog_q).scalars().all()
     q = select(Announcement)
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    if effective_trust_id:
+        q = q.filter(Announcement.trust_id_fk == effective_trust_id)
+    else:
+        q = q.filter(Announcement.trust_id_fk == None)
+    if effective_trust_id:
+        q = q.filter(Announcement.trust_id_fk == effective_trust_id)
     # Principal/Faculty: manage only their own announcements
     try:
         _role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -4112,7 +4404,23 @@ def notification_dismiss(notification_id):
 @role_required("admin", "clerk", "principal", "faculty")
 @csrf_required
 def announcement_new():
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    prog_q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            prog_q = prog_q.where(false())
+    programs = db.session.execute(prog_q).scalars().all()
     # Student picker options (scoped for Principal/Faculty)
     students_for_picker = []
     try:
@@ -4122,6 +4430,8 @@ def announcement_new():
             pid = getattr(current_user, "program_id_fk", None)
             if pid:
                 st_q = st_q.filter_by(program_id_fk=pid)
+        if effective_trust_id:
+            st_q = st_q.filter(Student.trust_id_fk == effective_trust_id)
         st_rows = db.session.execute(st_q.order_by(Student.student_name.asc()).limit(500)).scalars().all()
         for s in st_rows:
             name = (f"{(s.student_name or '').strip()} {(s.surname or '').strip()}".strip() or s.enrollment_no)
@@ -4226,6 +4536,7 @@ def announcement_new():
             message=message,
             severity=severity,
             is_active=is_active,
+            trust_id_fk=effective_trust_id,
             program_id_fk=program_id_fk,
             start_at=start_at,
             end_at=end_at,
@@ -4626,6 +4937,7 @@ def announcement_deactivate(announcement_id: int):
 
 @main_bp.route("/announcements/<int:announcement_id>/dismiss", methods=["POST"])
 @login_required
+@csrf_required
 def announcement_dismiss(announcement_id: int):
     # Per-user dismissal of dashboard banner
     a = db.session.get(Announcement, announcement_id)
@@ -4643,7 +4955,11 @@ def announcement_dismiss(announcement_id: int):
     except Exception:
         db.session.rollback()
         flash("Failed to dismiss announcement.", "danger")
-    return redirect(url_for("main.dashboard"))
+    try:
+        ref = request.referrer
+    except Exception:
+        ref = None
+    return redirect(ref or url_for("main.dashboard"))
 
 
 @main_bp.route("/notice-board")
@@ -4657,6 +4973,19 @@ def notice_board():
 
     # Build base query: active and within time window
     ann_q = select(Announcement).filter(Announcement.is_active == True)
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    if effective_trust_id:
+        ann_q = ann_q.filter(Announcement.trust_id_fk == effective_trust_id)
+    else:
+        ann_q = ann_q.filter(Announcement.trust_id_fk == None)
     ann_q = ann_q.filter(or_(Announcement.start_at == None, Announcement.start_at <= (now + timedelta(hours=12))))
     ann_q = ann_q.filter(or_(Announcement.end_at == None, Announcement.end_at >= (now - timedelta(hours=12))))
 
@@ -4904,6 +5233,291 @@ def notice_archive():
         pass
     return render_template("notice_archive.html", announcements=announcements, pagination=pagination, selected_from=from_raw, selected_to=to_raw)
 
+@main_bp.route("/inbox")
+@login_required
+def inbox():
+    now = datetime.now()
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    tab = (request.args.get("tab") or "unread").strip().lower()
+    kind = (request.args.get("kind") or "all").strip().lower()
+    show_all = (tab == "all")
+    user_id = getattr(current_user, "user_id", None)
+
+    def _effective_trust_id():
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                return int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                return None
+        return getattr(current_user, "trust_id_fk", None)
+
+    effective_trust_id = _effective_trust_id()
+
+    sm_q = select(SystemMessage).where(SystemMessage.is_active.is_(True))
+    if role:
+        sm_q = sm_q.where(or_(SystemMessage.target_role == "all", SystemMessage.target_role == role))
+    if effective_trust_id:
+        sm_q = sm_q.where(or_(SystemMessage.target_trust_id == None, SystemMessage.target_trust_id == effective_trust_id))
+    sm_q = sm_q.where(or_(SystemMessage.start_date == None, SystemMessage.start_date <= now))
+    sm_q = sm_q.where(or_(SystemMessage.end_date == None, SystemMessage.end_date >= now))
+    system_rows = db.session.execute(sm_q.order_by(SystemMessage.start_date.desc()).limit(50)).scalars().all()
+    read_ids = set()
+    if user_id:
+        try:
+            read_ids = set(db.session.execute(select(SystemMessageRead.message_id_fk).filter_by(user_id_fk=user_id)).scalars().all())
+        except Exception:
+            read_ids = set()
+    system_messages = []
+    for m in system_rows:
+        is_read = (m.message_id in read_ids)
+        if show_all or (not is_read):
+            setattr(m, "_is_read", is_read)
+            system_messages.append(m)
+    system_unread_count = sum(1 for m in system_rows if m.message_id not in read_ids)
+
+    ann_q = select(Announcement).filter(Announcement.is_active == True)
+    if effective_trust_id:
+        ann_q = ann_q.filter(Announcement.trust_id_fk == effective_trust_id)
+    else:
+        ann_q = ann_q.filter(Announcement.trust_id_fk == None)
+    ann_q = ann_q.filter(or_(Announcement.start_at == None, Announcement.start_at <= (now + timedelta(hours=12))))
+    ann_q = ann_q.filter(or_(Announcement.end_at == None, Announcement.end_at >= (now - timedelta(hours=12))))
+    if role not in ("admin", "clerk"):
+        pid = getattr(current_user, "program_id_fk", None)
+        if pid:
+            ann_q = ann_q.filter(or_(Announcement.program_id_fk == None, Announcement.program_id_fk == pid))
+        else:
+            ann_q = ann_q.filter(Announcement.program_id_fk == None)
+    latest_rows = db.session.execute(ann_q.order_by(Announcement.created_at.desc()).limit(80)).scalars().all()
+
+    dismissed_ids = set()
+    if user_id:
+        try:
+            dismissed_ids = set(db.session.execute(select(AnnouncementDismissal.announcement_id_fk).filter_by(user_id_fk=user_id)).scalars().all())
+        except Exception:
+            dismissed_ids = set()
+
+    creator_ids = {a.created_by for a in latest_rows if getattr(a, "created_by", None)}
+    users = db.session.execute(select(User).filter(User.user_id.in_(list(creator_ids)))).scalars().all() if creator_ids else []
+    users_map = {u.user_id: (u.username or f"User #{u.user_id}") for u in users}
+
+    announcements = []
+    total_in_scope = 0
+    unread_in_scope = 0
+    for a in latest_rows:
+        include = False
+        recips = []
+        try:
+            recips = [r.student_id_fk for r in (a.recipients or [])]
+        except Exception:
+            recips = []
+        if recips:
+            if role in ("principal", "clerk"):
+                include = True
+            elif role == "student" and current_user.is_authenticated:
+                try:
+                    st = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
+                    if st and st.enrollment_no in recips:
+                        include = True
+                except Exception:
+                    include = False
+        else:
+            try:
+                aud = [au.role for au in (a.audiences or [])]
+            except Exception:
+                aud = []
+            include = (not aud) or (role in aud)
+
+        if include:
+            total_in_scope += 1
+            is_read = (a.announcement_id in dismissed_ids)
+            if not is_read:
+                unread_in_scope += 1
+            if show_all or (not is_read):
+                setattr(a, "_creator_name", users_map.get(getattr(a, "created_by", None)))
+                setattr(a, "_is_read", is_read)
+                announcements.append(a)
+
+    notif_rows = []
+    notif_unread = 0
+    if role == "student":
+        try:
+            st = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
+        except Exception:
+            st = None
+        if st:
+            notif_rows = db.session.execute(select(Notification).filter_by(student_id_fk=st.enrollment_no).order_by(Notification.created_at.desc()).limit(30)).scalars().all()
+            notif_unread = sum(1 for n in notif_rows if not getattr(n, "is_read", False))
+            if not show_all:
+                notif_rows = [n for n in notif_rows if not getattr(n, "is_read", False)]
+
+    return render_template(
+        "inbox.html",
+        announcements=announcements if kind in ("all", "announcements") else [],
+        system_messages=system_messages if kind in ("all", "system") else [],
+        student_notifications=notif_rows if kind in ("all", "notifications") else [],
+        show_student_tab=(role == "student"),
+        tab=tab,
+        kind=kind,
+        unread_counts={
+            "announcements": unread_in_scope,
+            "system": system_unread_count,
+            "notifications": notif_unread,
+            "total": (unread_in_scope + system_unread_count + notif_unread),
+        },
+        totals={
+            "announcements": total_in_scope,
+            "system": len(system_rows),
+            "notifications": len(notif_rows) if role == "student" else 0,
+        },
+    )
+
+
+@main_bp.route("/inbox/announcements/<int:announcement_id>/read", methods=["POST"])
+@login_required
+@csrf_required
+def inbox_announcement_read(announcement_id: int):
+    user_id = getattr(current_user, "user_id", None)
+    if not user_id:
+        return redirect(url_for("main.inbox"))
+    existing = db.session.execute(select(AnnouncementDismissal).filter_by(announcement_id_fk=announcement_id, user_id_fk=user_id)).scalars().first()
+    if not existing:
+        db.session.add(AnnouncementDismissal(announcement_id_fk=announcement_id, user_id_fk=user_id))
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    try:
+        ref = request.referrer
+    except Exception:
+        ref = None
+    return redirect(ref or url_for("main.inbox"))
+
+
+@main_bp.route("/inbox/announcements/<int:announcement_id>/unread", methods=["POST"])
+@login_required
+@csrf_required
+def inbox_announcement_unread(announcement_id: int):
+    user_id = getattr(current_user, "user_id", None)
+    if user_id:
+        try:
+            row = db.session.execute(select(AnnouncementDismissal).filter_by(announcement_id_fk=announcement_id, user_id_fk=user_id)).scalars().first()
+            if row:
+                db.session.delete(row)
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+    try:
+        ref = request.referrer
+    except Exception:
+        ref = None
+    return redirect(ref or url_for("main.inbox", tab="all"))
+
+
+@main_bp.route("/inbox/system/<int:message_id>/read", methods=["POST"])
+@login_required
+@csrf_required
+def inbox_system_read(message_id: int):
+    user_id = getattr(current_user, "user_id", None)
+    if user_id:
+        row = db.session.execute(select(SystemMessageRead).filter_by(message_id_fk=message_id, user_id_fk=user_id)).scalars().first()
+        if not row:
+            db.session.add(SystemMessageRead(message_id_fk=message_id, user_id_fk=user_id))
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    try:
+        ref = request.referrer
+    except Exception:
+        ref = None
+    return redirect(ref or url_for("main.inbox"))
+
+
+@main_bp.route("/inbox/system/<int:message_id>/unread", methods=["POST"])
+@login_required
+@csrf_required
+def inbox_system_unread(message_id: int):
+    user_id = getattr(current_user, "user_id", None)
+    if user_id:
+        try:
+            row = db.session.execute(select(SystemMessageRead).filter_by(message_id_fk=message_id, user_id_fk=user_id)).scalars().first()
+            if row:
+                db.session.delete(row)
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+    try:
+        ref = request.referrer
+    except Exception:
+        ref = None
+    return redirect(ref or url_for("main.inbox", tab="all"))
+
+
+@main_bp.route("/inbox/mark-all-read", methods=["POST"])
+@login_required
+@csrf_required
+def inbox_mark_all_read():
+    now = datetime.now()
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    user_id = getattr(current_user, "user_id", None)
+    if not user_id:
+        return redirect(url_for("main.inbox"))
+
+    try:
+        effective_trust_id = getattr(current_user, "trust_id_fk", None)
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+    except Exception:
+        effective_trust_id = getattr(current_user, "trust_id_fk", None)
+
+    try:
+        sm_q = select(SystemMessage.message_id).where(SystemMessage.is_active.is_(True))
+        if role:
+            sm_q = sm_q.where(or_(SystemMessage.target_role == "all", SystemMessage.target_role == role))
+        if effective_trust_id:
+            sm_q = sm_q.where(or_(SystemMessage.target_trust_id == None, SystemMessage.target_trust_id == effective_trust_id))
+        sm_q = sm_q.where(or_(SystemMessage.start_date == None, SystemMessage.start_date <= now))
+        sm_q = sm_q.where(or_(SystemMessage.end_date == None, SystemMessage.end_date >= now))
+        msg_ids = db.session.execute(sm_q).scalars().all()
+        existing = set(db.session.execute(select(SystemMessageRead.message_id_fk).filter_by(user_id_fk=user_id)).scalars().all())
+        for mid in msg_ids:
+            if mid not in existing:
+                db.session.add(SystemMessageRead(message_id_fk=mid, user_id_fk=user_id))
+    except Exception:
+        pass
+
+    try:
+        ann_q = select(Announcement.announcement_id).filter(Announcement.is_active == True)
+        if effective_trust_id:
+            ann_q = ann_q.filter(Announcement.trust_id_fk == effective_trust_id)
+        else:
+            ann_q = ann_q.filter(Announcement.trust_id_fk == None)
+        ann_q = ann_q.filter(or_(Announcement.start_at == None, Announcement.start_at <= (now + timedelta(hours=12))))
+        ann_q = ann_q.filter(or_(Announcement.end_at == None, Announcement.end_at >= (now - timedelta(hours=12))))
+        if role not in ("admin", "clerk"):
+            pid = getattr(current_user, "program_id_fk", None)
+            if pid:
+                ann_q = ann_q.filter(or_(Announcement.program_id_fk == None, Announcement.program_id_fk == pid))
+            else:
+                ann_q = ann_q.filter(Announcement.program_id_fk == None)
+        ann_ids = db.session.execute(ann_q.order_by(Announcement.created_at.desc()).limit(120)).scalars().all()
+        existing = set(db.session.execute(select(AnnouncementDismissal.announcement_id_fk).filter_by(user_id_fk=user_id)).scalars().all())
+        for aid in ann_ids:
+            if aid not in existing:
+                db.session.add(AnnouncementDismissal(announcement_id_fk=aid, user_id_fk=user_id))
+    except Exception:
+        pass
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    return redirect(url_for("main.inbox"))
 
 @main_bp.route("/forgot-password", methods=["GET", "POST"])
 @limiter.limit("3 per minute", methods=["POST"])
@@ -5083,13 +5697,6 @@ def account_settings():
                         db.session.rollback()
                         errors.append("Failed to update password. Please try again.")
                 else:
-                    # Non-student: initiate 2FA via email code
-                    code = "".join(secrets.choice("0123456789") for _ in range(6))
-                    session["twofa_code"] = code
-                    session["twofa_expires"] = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
-                    session["twofa_pw_hash"] = generate_password_hash(new_pw)
-                    session["twofa_user_id"] = getattr(current_user, "user_id", None)
-
                     # Resolve destination email
                     email_to = None
                     try:
@@ -5102,20 +5709,39 @@ def account_settings():
                         email_to = linked_faculty.email
 
                     if email_to:
-                        subj = "PCMS Password Change Verification Code"
+                        code = "".join(secrets.choice("0123456789") for _ in range(6))
+                        subj = "CloudEMS Password Change Verification Code"
                         text = f"Your verification code is: {code}. It expires in 10 minutes."
                         html = f"<p>Your verification code is:</p><h3>{code}</h3><p>It expires in 10 minutes.</p>"
                         sent = send_email(subj, email_to, text, html)
                         if sent:
+                            session["twofa_code"] = code
+                            session["twofa_expires"] = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+                            session["twofa_pw_hash"] = generate_password_hash(new_pw)
+                            session["twofa_user_id"] = getattr(current_user, "user_id", None)
                             flash("A verification code has been emailed to you.", "info")
-                        else:
-                            flash("Could not send email. Showing dev verification code below.", "warning")
-                            flash(f"Dev 2FA code: {code}", "secondary")
-                    else:
-                        flash("No email found; showing dev verification code below.", "warning")
-                        flash(f"Dev 2FA code: {code}", "secondary")
+                            return render_template("account_settings.html", errors=[], twofa_pending=True, profile=linked_faculty)
 
-                    return render_template("account_settings.html", errors=[], twofa_pending=True, profile=linked_faculty)
+                    try:
+                        current_user.password_hash = generate_password_hash(new_pw)
+                        try:
+                            role_lower = (getattr(current_user, "role", "") or "").strip().lower()
+                            if role_lower != "student":
+                                log = PasswordChangeLog(
+                                    user_id_fk=getattr(current_user, "user_id", None),
+                                    changed_by_user_id_fk=getattr(current_user, "user_id", None),
+                                    method="self",
+                                    note="Email verification unavailable"
+                                )
+                                db.session.add(log)
+                        except Exception:
+                            pass
+                        db.session.commit()
+                        flash("Password updated successfully.", "success")
+                        return redirect(url_for("main.account_settings"))
+                    except Exception:
+                        db.session.rollback()
+                        errors.append("Failed to update password. Please try again.")
 
         elif action == "verify_twofa":
             input_code = (request.form.get("twofa_code") or "").strip()
@@ -6241,6 +6867,15 @@ def students():
     _ctx = _program_dropdown_context(program_id_raw, include_admin_all=True, prefer_user_program_default=False)
     role = _ctx.get("role")
     selected_program_id = _ctx.get("selected_program_id")
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     if selected_program_id and (requested_medium_raw is None):
         try:
             base_dir = os.path.dirname(current_app.root_path)
@@ -6260,6 +6895,8 @@ def students():
             pass
 
     query = select(Student)
+    if effective_trust_id:
+        query = query.filter(Student.trust_id_fk == effective_trust_id)
     if role == "faculty":
         try:
             assigns = db.session.execute(
@@ -6370,8 +7007,17 @@ def students():
         .limit(selected_limit)
     ).scalars().all()
     # Fetch mapping helpers
-    program_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
-    division_map = {d.division_id: (d.semester, d.division_code) for d in db.session.execute(select(Division)).scalars().all()}
+    prog_q = select(Program)
+    div_q = select(Division)
+    try:
+        from ..models import Institute
+        if effective_trust_id:
+            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            div_q = div_q.join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+    except Exception:
+        pass
+    program_map = {p.program_id: p.program_name for p in db.session.execute(prog_q).scalars().all()}
+    division_map = {d.division_id: (d.semester, d.division_code) for d in db.session.execute(div_q).scalars().all()}
     
     # Build program list for dropdown via helper
     program_list = _ctx.get("program_list", [])
@@ -6401,7 +7047,7 @@ def students():
 # JSON search endpoint: search students by name or enrollment
 @main_bp.route("/api/students/search", methods=["GET"])
 @login_required
-@cache.cached(timeout=120, query_string=True)
+@cache.cached(timeout=120, key_prefix=lambda: f"api_students_search_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def api_students_search():
     q = (request.args.get("q") or "").strip()
     program_id_raw = (request.args.get("program_id") or "").strip()
@@ -6411,6 +7057,17 @@ def api_students_search():
     query = select(Student)
     # Enforce program scoping for clerk/principal; admin can search globally
     role = (getattr(current_user, "role", "") or "").strip().lower()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    if effective_trust_id:
+        query = query.filter(Student.trust_id_fk == effective_trust_id)
     pid_scope = None
     try:
         pid_scope = int(getattr(current_user, "program_id_fk", None) or 0) or None
@@ -6466,7 +7123,14 @@ def api_students_search():
         rows = db.session.execute(query.order_by(Student.surname.asc(), Student.student_name.asc(), Student.enrollment_no.asc()).limit(10)).scalars().all()
     else:
         rows = db.session.execute(query.order_by(Student.enrollment_no.asc()).limit(10)).scalars().all()
-    program_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
+    prog_q = select(Program)
+    try:
+        from ..models import Institute
+        if effective_trust_id:
+            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+    except Exception:
+        pass
+    program_map = {p.program_id: p.program_name for p in db.session.execute(prog_q).scalars().all()}
     data = [
         {
             "enrollment_no": s.enrollment_no,
@@ -7555,21 +8219,13 @@ def students_unlink_user(enrollment_no):
 @main_bp.route("/subjects")
 @login_required
 def subjects_list():
-    # Programs for filter
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
-    # Determine selected program
     program_id_raw = request.args.get("program_id")
     sem_raw = request.args.get("semester")
     medium_raw = (request.args.get("medium") or "").strip()
-    # Default program: BCA if exists, else first
-    selected_program = None
-    if program_id_raw:
-        try:
-            selected_program = db.session.get(Program, int(program_id_raw))
-        except Exception:
-            selected_program = None
-    if not selected_program:
-        selected_program = db.session.execute(select(Program).filter_by(program_name="BCA")).scalars().first() or (programs[0] if programs else None)
+    ctx = _program_dropdown_context(program_id_raw, include_admin_all=True, default_program_name=None, exclude_names=None, warn_unmapped=False, fallback_to_first=True, prefer_user_program_default=True)
+    programs = ctx.get("program_list", [])
+    selected_program_id = ctx.get("selected_program_id")
+    selected_program = db.session.get(Program, selected_program_id) if selected_program_id else None
     semester = None
     try:
         semester = int(sem_raw) if sem_raw else 1
@@ -7680,7 +8336,22 @@ def subjects_export_csv():
         m = medium_raw.capitalize()
         if m in {"English", "Gujarati"}:
             selected_medium = m
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     q = select(Subject)
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            q = q.join(Program, Subject.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
     if program_id:
         q = q.filter(Subject.program_id_fk == program_id)
     if semester:
@@ -8748,6 +9419,10 @@ def enroll_core():
 @csrf_required
 def students_semester_promotion():
     user_role = (getattr(current_user, "role", "") or "").strip().lower()
+    effective_trust_id = _effective_trust_id()
+    if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+        flash("Select a tenant workspace first (Global View → choose Trust).", "warning")
+        return redirect(url_for("super_admin.dashboard"))
     programs = []
     selected_program = None
     try:
@@ -8761,9 +9436,23 @@ def students_semester_promotion():
         program_id = None
 
     if user_role == "admin":
-        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+        q = select(Program).order_by(Program.program_name.asc())
+        if effective_trust_id:
+            try:
+                q = q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            except Exception:
+                q = q.where(false())
+        programs = db.session.execute(q).scalars().all()
         if program_id:
-            selected_program = db.session.get(Program, program_id)
+            try:
+                selected_program = db.session.execute(
+                    select(Program)
+                    .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                    .filter(Program.program_id == program_id)
+                    .filter(Institute.trust_id_fk == effective_trust_id)
+                ).scalars().first() if effective_trust_id else db.session.get(Program, program_id)
+            except Exception:
+                selected_program = None
     else:
         program_id = principal_program_id
         if program_id:
@@ -8792,6 +9481,8 @@ def students_semester_promotion():
             Student.program_id_fk == selected_program.program_id,
             Student.current_semester == from_semester,
         )
+        if effective_trust_id:
+            base_query = base_query.filter(Student.trust_id_fk == effective_trust_id)
         total_eligible = db.session.scalar(
             select(func.count()).select_from(base_query.subquery())
         ) or 0
@@ -8945,15 +9636,25 @@ def users_list():
     if effective_trust_id:
         query = query.filter(User.trust_id_fk == effective_trust_id)
 
-    if q_role:
-        query = query.filter(User.role == q_role)
+    role_norm = (q_role or "").strip().lower()
+    if role_norm:
+        query = query.where(func.lower(User.role) == role_norm)
     if q_username:
         query = query.filter(User.username.ilike(f"%{q_username}%"))
     # Program filter via reusable helper
-    _ctx = _program_dropdown_context(q_program_raw, include_admin_all=True, prefer_user_program_default=False)
-    selected_program_id = _ctx.get("selected_program_id")
+    principal_pid = None
+    if current_role == "principal":
+        try:
+            principal_pid = int(getattr(current_user, "program_id_fk", None) or 0) or None
+        except Exception:
+            principal_pid = None
+    _ctx = _program_dropdown_context((str(principal_pid) if principal_pid else q_program_raw), include_admin_all=(current_role == "admin"), prefer_user_program_default=False, fallback_to_first=False)
+    selected_program_id = principal_pid or _ctx.get("selected_program_id")
     if selected_program_id:
-        query = query.filter(User.program_id_fk == selected_program_id)
+        if role_norm == "faculty":
+            query = query.join(Faculty, Faculty.user_id_fk == User.user_id).where(Faculty.program_id_fk == selected_program_id)
+        else:
+            query = query.where(User.program_id_fk == selected_program_id)
     users = db.session.execute(query.order_by(User.role.asc(), User.username.asc())).scalars().all()
     program_list = _ctx.get("program_list", [])
     # Re-filter program list by trust if needed (though _program_dropdown_context might handle it, explicitly filtering here is safer for the dropdown)
@@ -9360,6 +10061,15 @@ def attendance_mark():
 
     # Determine role and program scope (for principal/admin fallback)
     role = (getattr(current_user, "role", "") or "").strip().lower()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     selected_program_id = None
     
     # Read selection
@@ -9387,14 +10097,45 @@ def attendance_mark():
         ).scalars().all()
 
     # Build selection options scoped to assignments
-    subj_map = {s.subject_id: s for s in db.session.execute(select(Subject)).scalars().all()}
-    div_map = {d.division_id: d for d in db.session.execute(select(Division)).scalars().all()}
+    subj_q_all = select(Subject)
+    div_q_all = select(Division)
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            subj_q_all = subj_q_all.join(Program, Subject.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            div_q_all = div_q_all.join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
+    subj_map = {s.subject_id: s for s in db.session.execute(subj_q_all).scalars().all()}
+    div_map = {d.division_id: d for d in db.session.execute(div_q_all).scalars().all()}
     options = []
     
     # Pre-fetch programs for admin selector
     programs = []
     if role in ["admin", "principal"]:
-        programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+        prog_q = select(Program).order_by(Program.program_name)
+        if effective_trust_id:
+            try:
+                from ..models import Institute
+                prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            except Exception:
+                pass
+        programs = db.session.execute(prog_q).scalars().all()
+
+    if effective_trust_id and selected_program_id:
+        try:
+            from ..models import Institute
+            ok = db.session.execute(
+                select(func.count())
+                .select_from(Program)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Program.program_id == selected_program_id)
+                .filter(Institute.trust_id_fk == effective_trust_id)
+            ).scalar() or 0
+            if ok <= 0:
+                selected_program_id = None
+        except Exception:
+            pass
 
     for a in assignments:
         s = subj_map.get(a.subject_id_fk)
@@ -9415,8 +10156,14 @@ def attendance_mark():
     # Fallback: for principal/admin ONLY (faculty sees only assignments)
     if role in ["principal", "admin"]:
         subj_q = select(Subject)
+        if effective_trust_id:
+            try:
+                from ..models import Institute
+                subj_q = subj_q.join(Program, Subject.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            except Exception:
+                pass
         if selected_program_id:
-            subj_q = subj_q.filter_by(program_id_fk=selected_program_id)
+            subj_q = subj_q.where(Subject.program_id_fk == selected_program_id)
         subjects_all = db.session.execute(subj_q.order_by(Subject.semester.asc(), Subject.subject_name.asc())).scalars().all()
         existing_subject_ids = {opt.get("subject_id") for opt in options if opt.get("subject_id")}
         for s in subjects_all:
@@ -9451,8 +10198,14 @@ def attendance_mark():
         needs_program_divisions = (role in ["principal", "admin"])
         if needs_program_divisions:
             div_q = select(Division)
+            if effective_trust_id:
+                try:
+                    from ..models import Institute
+                    div_q = div_q.join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+                except Exception:
+                    pass
             if selected_program_id:
-                div_q = div_q.filter_by(program_id_fk=selected_program_id)
+                div_q = div_q.where(Division.program_id_fk == selected_program_id)
             divs_all = db.session.execute(div_q.order_by(Division.semester.asc(), Division.division_code.asc())).scalars().all()
             existing_div_ids = {opt.get("division_id") for opt in options if opt.get("division_id")}
             program_divisions = [d for d in divs_all if (d.division_id and d.division_id not in existing_div_ids)]
@@ -10869,6 +11622,10 @@ def module_admin():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     from werkzeug.routing import BuildError
     from ..models import Division, Faculty, FeePayment, Student, StudentPurgeRequest, User
+    effective_trust_id = _effective_trust_id()
+    if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+        flash("Select a tenant workspace first (Global View → choose Trust).", "warning")
+        return redirect(url_for("super_admin.dashboard"))
     urls = {}
     endpoints = {
         "attendance_report": "main.attendance_report_admin",
@@ -10903,76 +11660,62 @@ def module_admin():
 
     health = {}
     try:
-        health["pending_fee_verifications"] = (
-            db.session.scalar(
-                select(func.count())
-                .select_from(FeePayment)
-                .filter(func.lower(FeePayment.status) == "submitted")
-                .filter(FeePayment.verified_by_user_id.is_(None))
-            )
-            or 0
+        q = (
+            select(func.count())
+            .select_from(FeePayment)
+            .filter(func.lower(FeePayment.status) == "submitted")
+            .filter(FeePayment.verified_by_user_id.is_(None))
         )
+        if effective_trust_id:
+            q = q.filter(FeePayment.trust_id_fk == effective_trust_id)
+        health["pending_fee_verifications"] = db.session.scalar(q) or 0
     except Exception:
         health["pending_fee_verifications"] = 0
     try:
-        health["students_missing_division"] = (
-            db.session.scalar(
-                select(func.count())
-                .select_from(Student)
-                .filter(Student.is_active == True)
-                .filter(Student.division_id_fk.is_(None))
-            )
-            or 0
-        )
+        q = select(func.count()).select_from(Student).filter(Student.is_active == True).filter(Student.division_id_fk.is_(None))
+        if effective_trust_id:
+            q = q.filter(Student.trust_id_fk == effective_trust_id)
+        health["students_missing_division"] = db.session.scalar(q) or 0
     except Exception:
         health["students_missing_division"] = 0
     try:
-        health["students_division_mismatch"] = (
-            db.session.scalar(
-                select(func.count())
-                .select_from(Student)
-                .join(Division, Student.division_id_fk == Division.division_id)
-                .filter(Student.is_active == True)
-                .filter(Division.semester.isnot(None))
-                .filter(Student.current_semester.isnot(None))
-                .filter(Division.semester != Student.current_semester)
-            )
-            or 0
+        q = (
+            select(func.count())
+            .select_from(Student)
+            .join(Division, Student.division_id_fk == Division.division_id)
+            .filter(Student.is_active == True)
+            .filter(Division.semester.isnot(None))
+            .filter(Student.current_semester.isnot(None))
+            .filter(Division.semester != Student.current_semester)
         )
+        if effective_trust_id:
+            q = q.filter(Student.trust_id_fk == effective_trust_id)
+        health["students_division_mismatch"] = db.session.scalar(q) or 0
     except Exception:
         health["students_division_mismatch"] = 0
     try:
-        sub = select(Student.user_id_fk).filter(Student.user_id_fk.isnot(None)).subquery()
-        health["orphan_student_users"] = (
-            db.session.scalar(
-                select(func.count())
-                .select_from(User)
-                .filter(func.lower(User.role) == "student")
-                .filter(~User.user_id.in_(select(sub.c.user_id_fk)))
-            )
-            or 0
-        )
+        sub = select(Student.user_id_fk).filter(Student.user_id_fk.isnot(None))
+        if effective_trust_id:
+            sub = sub.filter(Student.trust_id_fk == effective_trust_id)
+        sub = sub.subquery()
+        q = select(func.count()).select_from(User).filter(func.lower(User.role) == "student").filter(~User.user_id.in_(select(sub.c.user_id_fk)))
+        if effective_trust_id:
+            q = q.filter(User.trust_id_fk == effective_trust_id)
+        health["orphan_student_users"] = db.session.scalar(q) or 0
     except Exception:
         health["orphan_student_users"] = 0
     try:
-        health["faculty_missing_user"] = (
-            db.session.scalar(
-                select(func.count())
-                .select_from(Faculty)
-                .filter(Faculty.is_active == True)
-                .filter(Faculty.user_id_fk.is_(None))
-            )
-            or 0
-        )
+        q = select(func.count()).select_from(Faculty).filter(Faculty.is_active == True).filter(Faculty.user_id_fk.is_(None))
+        if effective_trust_id:
+            q = q.filter(Faculty.trust_id_fk == effective_trust_id)
+        health["faculty_missing_user"] = db.session.scalar(q) or 0
     except Exception:
         health["faculty_missing_user"] = 0
     try:
-        health["scheduled_student_purges"] = (
-            db.session.scalar(
-                select(func.count()).select_from(StudentPurgeRequest).filter(StudentPurgeRequest.status == "scheduled")
-            )
-            or 0
-        )
+        q = select(func.count()).select_from(StudentPurgeRequest).filter(StudentPurgeRequest.status == "scheduled")
+        if effective_trust_id:
+            q = q.filter(StudentPurgeRequest.trust_id_fk == effective_trust_id)
+        health["scheduled_student_purges"] = db.session.scalar(q) or 0
     except Exception:
         health["scheduled_student_purges"] = 0
 
@@ -11029,7 +11772,29 @@ def admin_workflow_new_academic_year():
 @role_required("admin", "principal")
 def programs_list():
     from ..models import Program, Division, Subject, Student, Faculty
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    trust_id_raw = (request.args.get("trust_id") or "").strip()
+    try:
+        trust_id = int(trust_id_raw) if trust_id_raw else None
+    except Exception:
+        trust_id = None
+    if getattr(current_user, "is_super_admin", False):
+        if not trust_id:
+            try:
+                trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                trust_id = None
+    else:
+        trust_id = getattr(current_user, "trust_id_fk", None)
+
+    q = select(Program).order_by(Program.program_name.asc())
+    try:
+        from ..models import Institute
+        q = q.join(Institute, Program.institute_id_fk == Institute.institute_id)
+        if trust_id:
+            q = q.filter(Institute.trust_id_fk == trust_id)
+    except Exception:
+        pass
+    programs = db.session.execute(q).scalars().all()
     rows = []
     for p in programs:
         try:
@@ -11052,11 +11817,37 @@ def programs_list():
 @login_required
 @role_required("admin")
 def program_new():
-    from ..models import Program
+    from ..models import Program, Institute
+    if not getattr(current_user, "is_super_admin", False):
+        abort(403)
+    trust_id_raw = (request.values.get("trust_id") or "").strip()
+    try:
+        trust_id = int(trust_id_raw) if trust_id_raw else None
+    except Exception:
+        trust_id = None
+    if not trust_id:
+        try:
+            trust_id = int(session.get("active_trust_id") or 0) or None
+        except Exception:
+            trust_id = None
+    inst_id_raw = (request.values.get("institute_id_fk") or "").strip()
+    try:
+        institute_id_fk = int(inst_id_raw) if inst_id_raw else None
+    except Exception:
+        institute_id_fk = None
+    institutes = []
+    if trust_id:
+        institutes = db.session.execute(select(Institute).filter_by(trust_id_fk=trust_id).order_by(Institute.institute_name.asc())).scalars().all()
     if request.method == "POST":
         name = (request.form.get("program_name") or "").strip()
         duration_raw = (request.form.get("program_duration_years") or "").strip()
         errors = []
+        if not institute_id_fk:
+            errors.append("Institute is required.")
+        else:
+            inst = db.session.get(Institute, institute_id_fk)
+            if not inst or (trust_id and inst.trust_id_fk != trust_id):
+                errors.append("Invalid institute selection.")
         if not name:
             errors.append("Program name is required.")
         # Unique name check
@@ -11073,9 +11864,9 @@ def program_new():
         except Exception:
             duration = 3
         if errors:
-            return render_template("program_new.html", errors=errors, form={"program_name": name, "program_duration_years": duration_raw})
+            return render_template("program_new.html", errors=errors, institutes=institutes, trust_id=trust_id, form={"program_name": name, "program_duration_years": duration_raw, "institute_id_fk": inst_id_raw})
         try:
-            p = Program(program_name=name, program_duration_years=duration)
+            p = Program(program_name=name, program_duration_years=duration, institute_id_fk=institute_id_fk)
             db.session.add(p)
             db.session.commit()
             try:
@@ -11085,22 +11876,26 @@ def program_new():
             except Exception:
                 pass
             flash("Program created.", "success")
-            return redirect(url_for("main.programs_list"))
+            return redirect(url_for("main.programs_list", trust_id=(trust_id or "")))
         except Exception:
             db.session.rollback()
             flash("Failed to create program.", "danger")
-            return render_template("program_new.html", errors=["Database error. Please try again."], form={"program_name": name, "program_duration_years": duration_raw})
+            return render_template("program_new.html", errors=["Database error. Please try again."], institutes=institutes, trust_id=trust_id, form={"program_name": name, "program_duration_years": duration_raw, "institute_id_fk": inst_id_raw})
     # GET
-    return render_template("program_new.html")
+    return render_template("program_new.html", institutes=institutes, trust_id=trust_id)
 
 @main_bp.route("/programs/<int:program_id>/edit", methods=["GET", "POST"])
 @login_required
 @role_required("admin")
 def program_edit(program_id: int):
-    from ..models import Program
+    from ..models import Program, Institute
+    if not getattr(current_user, "is_super_admin", False):
+        abort(403)
     p = db.session.get(Program, program_id)
     if not p:
         abort(404)
+    inst = db.session.get(Institute, p.institute_id_fk) if p.institute_id_fk else None
+    trust_id = getattr(inst, "trust_id_fk", None)
     if request.method == "POST":
         name = (request.form.get("program_name") or "").strip()
         duration_raw = (request.form.get("program_duration_years") or "").strip()
@@ -11133,7 +11928,7 @@ def program_edit(program_id: int):
             except Exception:
                 pass
             flash("Program updated.", "success")
-            return redirect(url_for("main.programs_list"))
+            return redirect(url_for("main.programs_list", trust_id=(trust_id or "")))
         except Exception:
             db.session.rollback()
             flash("Failed to update program.", "danger")
@@ -11146,6 +11941,8 @@ def program_edit(program_id: int):
 @role_required("admin")
 def program_delete(program_id: int):
     from ..models import Program, Division, Subject, Student, Faculty, FeeStructure, Announcement
+    if not getattr(current_user, "is_super_admin", False):
+        abort(403)
     # Optional: planning model
     try:
         from ..models import ProgramDivisionPlan
@@ -11154,6 +11951,12 @@ def program_delete(program_id: int):
     p = db.session.get(Program, program_id)
     if not p:
         abort(404)
+    try:
+        from ..models import Institute
+        inst = db.session.get(Institute, p.institute_id_fk) if p.institute_id_fk else None
+        trust_id = getattr(inst, "trust_id_fk", None)
+    except Exception:
+        trust_id = None
     # Enforce dependency checks
     try:
         deps = {
@@ -11174,7 +11977,7 @@ def program_delete(program_id: int):
             if v:
                 msgs.append(f"{k}={v}")
         flash(f"Cannot delete program; dependent records exist — {', '.join(msgs)}.", "danger")
-        return redirect(url_for("main.programs_list"))
+        return redirect(url_for("main.programs_list", trust_id=(trust_id or "")))
     try:
         db.session.delete(p)
         db.session.commit()
@@ -11188,7 +11991,7 @@ def program_delete(program_id: int):
     except Exception:
         db.session.rollback()
         flash("Failed to delete program.", "danger")
-    return redirect(url_for("main.programs_list"))
+    return redirect(url_for("main.programs_list", trust_id=(trust_id or "")))
 
 # Clerk bulk student import
 @main_bp.route("/clerk/students/import", methods=["GET", "POST"])
@@ -11197,8 +12000,31 @@ def program_delete(program_id: int):
 @limiter.limit("10 per minute")
 def students_import():
     from ..models import Program
-    # Programs for selection
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    effective_trust_id = _effective_trust_id()
+    if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+        flash("Select a tenant workspace first (Global View → choose Trust).", "warning")
+        return redirect(url_for("super_admin.dashboard"))
+
+    programs = []
+    if role in ("principal", "clerk"):
+        try:
+            pid_scope = int(getattr(current_user, "program_id_fk", None) or 0) or None
+        except Exception:
+            pid_scope = None
+        if pid_scope:
+            p = db.session.get(Program, pid_scope)
+            if p:
+                programs = [p]
+    else:
+        q = select(Program).order_by(Program.program_name.asc())
+        if effective_trust_id:
+            try:
+                from ..models import Institute
+                q = q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            except Exception:
+                q = q.where(false())
+        programs = db.session.execute(q).scalars().all()
     # Optional sample preview of result UI without uploading
     preview_flag = (request.args.get("preview") or "").strip().lower()
     if preview_flag == "sample":
@@ -11227,8 +12053,22 @@ def students_import():
         # Parse inputs
         selected_program = None
         try:
-            if program_id_raw:
-                selected_program = db.session.get(Program, int(program_id_raw))
+            selected_program_id = None
+            if role in ("principal", "clerk"):
+                selected_program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
+            else:
+                selected_program_id = int(program_id_raw) if program_id_raw else None
+            if selected_program_id:
+                if effective_trust_id:
+                    from ..models import Institute
+                    selected_program = db.session.execute(
+                        select(Program)
+                        .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                        .filter(Program.program_id == selected_program_id)
+                        .filter(Institute.trust_id_fk == effective_trust_id)
+                    ).scalars().first()
+                else:
+                    selected_program = db.session.get(Program, selected_program_id)
         except Exception:
             selected_program = None
         try:
@@ -11259,8 +12099,13 @@ def students_import():
         # Perform import
         try:
             from scripts.import_students import import_excel
-            prog_name = selected_program.program_name
-            report = import_excel(save_path, program_name=prog_name, semester_hint=semester_hint, dry_run=dry_run_flag)
+            report = import_excel(
+                save_path,
+                program_id=(selected_program.program_id if selected_program else None),
+                trust_id=effective_trust_id,
+                semester_hint=semester_hint,
+                dry_run=dry_run_flag,
+            )
             try:
                 report["dry_run"] = dry_run_flag
             except Exception:
@@ -11807,7 +12652,7 @@ def module_fees():
 
 @main_bp.route("/fees")
 @login_required
-@role_required("clerk", "admin")
+@role_required("clerk", "admin", "principal")
 def fees_list():
     try:
         if current_app.config.get("FEES_DISABLED", False):
@@ -12063,7 +12908,7 @@ def fees_export():
 # Fee Structure view (program-wise)
 @main_bp.route("/fees/structure", methods=["GET"])
 @login_required
-@role_required("clerk", "admin")
+@role_required("clerk", "admin", "principal")
 def fees_structure_view():
     try:
         if current_app.config.get("FEES_DISABLED", False):
@@ -12242,6 +13087,16 @@ def fees_heads():
         return redirect(url_for("main.dashboard"))
     from ..models import FeeStructure, Program
 
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+
     # Build program list with role-based scoping
     role = (getattr(current_user, "role", "") or "").strip().lower()
     pid_scope = None
@@ -12262,7 +13117,14 @@ def fees_heads():
             except Exception:
                 pass
     else:
-        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+        q = select(Program).order_by(Program.program_name.asc())
+        if effective_trust_id:
+            try:
+                from ..models import Institute
+                q = q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            except Exception:
+                q = q.where(false())
+        programs = db.session.execute(q).scalars().all()
     program_id_raw = (request.values.get("program_id") or "").strip()
     semester_raw = (request.values.get("semester") or "").strip()
     program_id = int(program_id_raw) if program_id_raw.isdigit() else None
@@ -12425,8 +13287,27 @@ def fees_heads():
 def fees_heads_seed_all():
     from ..models import Program, FeeStructure
     errors = []
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+        flash("Select a tenant workspace first (Global View → choose Trust).", "warning")
+        return redirect(url_for("main.fees_heads"))
     try:
-        programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+        q = select(Program).order_by(Program.program_name.asc())
+        if effective_trust_id:
+            try:
+                from ..models import Institute
+                q = q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            except Exception:
+                q = q.where(false())
+        programs = db.session.execute(q).scalars().all()
         # Assume up to 8 semesters (4 years) unless program has fewer
         total_created = 0
         for p in programs:
@@ -12719,22 +13600,33 @@ def fees_structure_compare():
 @role_required("admin", "principal", "clerk")
 def module_divisions():
     role = (getattr(current_user, "role", "") or "").strip().lower()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         user_program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
     except Exception:
         user_program_id = None
-    # Allow admin to select program via query param; principals/clerk are scoped
     program_id_arg = (request.args.get("program_id") or "").strip()
-    selected_program_id = None
-    try:
-        selected_program_id = int(program_id_arg) if program_id_arg else None
-    except Exception:
-        selected_program_id = None
     if role in ("principal", "clerk"):
-        selected_program_id = user_program_id
+        program_id_arg = str(user_program_id or "")
+    ctx = _program_dropdown_context(program_id_arg, include_admin_all=False, warn_unmapped=False, fallback_to_first=True, prefer_user_program_default=True)
+    selected_program_id = ctx.get("selected_program_id")
     q = select(Division)
+    if effective_trust_id:
+        try:
+            from ..models import Institute, Program
+            q = q.join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            q = q.where(false())
     if selected_program_id:
-        q = q.filter_by(program_id_fk=selected_program_id)
+        q = q.where(Division.program_id_fk == selected_program_id)
     divisions = db.session.execute(q).scalars().all()
     total_capacity = 0
     total_enrolled = 0
@@ -12742,7 +13634,10 @@ def module_divisions():
         cap = int(d.capacity or 0)
         total_capacity += cap
         try:
-            enrolled = db.session.scalar(select(func.count()).select_from(Student).filter_by(division_id_fk=d.division_id))
+            scq = select(func.count()).select_from(Student).filter_by(division_id_fk=d.division_id)
+            if effective_trust_id:
+                scq = scq.filter(Student.trust_id_fk == effective_trust_id)
+            enrolled = db.session.scalar(scq)
         except Exception:
             enrolled = 0
         total_enrolled += enrolled
@@ -12775,6 +13670,15 @@ def module_divisions():
 def divisions_planning_save():
     from ..models import ProgramDivisionPlan, Program
     role = (getattr(current_user, "role", "") or "").strip().lower()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         user_program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
     except Exception:
@@ -12790,6 +13694,21 @@ def divisions_planning_save():
     if not program_id:
         flash("Program is required to save division planning.", "danger")
         return redirect(url_for("main.module_divisions"))
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            ok = db.session.execute(
+                select(func.count())
+                .select_from(Program)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Program.program_id == program_id)
+                .filter(Institute.trust_id_fk == effective_trust_id)
+            ).scalar() or 0
+            if ok <= 0:
+                flash("Invalid program selection for the current tenant workspace.", "danger")
+                return redirect(url_for("main.module_divisions"))
+        except Exception:
+            pass
 
     sem_raw = (request.form.get("semester") or "").strip()
     cap_raw = (request.form.get("capacity_per_division") or request.form.get("capacity") or "").strip()
@@ -13059,6 +13978,15 @@ def divisions_list():
 
     # Scope principal/clerk to their program
     role = (getattr(current_user, "role", "") or "").strip().lower()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     user_program_id = None
     try:
         user_program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
@@ -13079,10 +14007,16 @@ def divisions_list():
         semester = None
 
     q = select(Division)
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            q = q.join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
     if program_id:
-        q = q.filter_by(program_id_fk=program_id)
+        q = q.where(Division.program_id_fk == program_id)
     if semester:
-        q = q.filter_by(semester=semester)
+        q = q.where(Division.semester == semester)
     divisions = db.session.execute(q.order_by(Division.program_id_fk.asc(), Division.semester.asc(), Division.division_code.asc())).scalars().all()
 
     # Usage metrics (capacity vs enrolled)
@@ -13105,7 +14039,14 @@ def divisions_list():
         }
     overall_pct = round((total_enrolled * 100.0 / total_capacity), 1) if total_capacity else None
 
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    prog_q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
+    programs = db.session.execute(prog_q).scalars().all()
     return render_template(
         "divisions.html",
         divisions=divisions,
@@ -13129,6 +14070,15 @@ def divisions_list():
 def division_new():
     from ..models import Division, Program
     role = (getattr(current_user, "role", "") or "").strip().lower()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     # Determine program scope
     try:
         user_program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
@@ -13153,6 +14103,20 @@ def division_new():
         errors = []
         if not program_id:
             errors.append("Program is required.")
+        if not errors and program_id and effective_trust_id and role == "admin":
+            try:
+                from ..models import Institute
+                ok = db.session.execute(
+                    select(func.count())
+                    .select_from(Program)
+                    .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                    .filter(Program.program_id == program_id)
+                    .filter(Institute.trust_id_fk == effective_trust_id)
+                ).scalar() or 0
+                if ok <= 0:
+                    errors.append("Invalid program selection for the current tenant workspace.")
+            except Exception:
+                pass
         try:
             semester = int(semester_raw)
             if semester < 1 or semester > 8:
@@ -13177,7 +14141,14 @@ def division_new():
                 errors.append("A division with the same Program, Semester, and Code already exists.")
 
         if errors:
-            programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+            prog_q = select(Program).order_by(Program.program_name.asc())
+            if effective_trust_id:
+                try:
+                    from ..models import Institute
+                    prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+                except Exception:
+                    pass
+            programs = db.session.execute(prog_q).scalars().all()
             return render_template(
                 "division_new.html",
                 errors=errors,
@@ -13200,7 +14171,14 @@ def division_new():
         return redirect(url_for("main.divisions_list", program_id=program_id, semester=semester))
 
     # GET: show form
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    prog_q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
+    programs = db.session.execute(prog_q).scalars().all()
     return render_template("division_new.html", programs=programs, role=role, user_program_id=user_program_id, form_data={})
 
 
@@ -13210,6 +14188,15 @@ def division_new():
 def division_edit(division_id: int):
     from ..models import Division, Program
     role = (getattr(current_user, "role", "") or "").strip().lower()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     d = db.session.get(Division, division_id)
     if not d:
         flash("Division not found.", "danger")
@@ -13240,6 +14227,20 @@ def division_edit(division_id: int):
         errors = []
         if not program_id:
             errors.append("Program is required.")
+        if not errors and program_id and effective_trust_id and role == "admin":
+            try:
+                from ..models import Institute
+                ok = db.session.execute(
+                    select(func.count())
+                    .select_from(Program)
+                    .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                    .filter(Program.program_id == program_id)
+                    .filter(Institute.trust_id_fk == effective_trust_id)
+                ).scalar() or 0
+                if ok <= 0:
+                    errors.append("Invalid program selection for the current tenant workspace.")
+            except Exception:
+                pass
         try:
             semester = int(semester_raw)
             if semester < 1 or semester > 8:
@@ -13268,7 +14269,14 @@ def division_edit(division_id: int):
                 errors.append("A division with the same Program, Semester, and Code already exists.")
 
         if errors:
-            programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+            prog_q = select(Program).order_by(Program.program_name.asc())
+            if effective_trust_id:
+                try:
+                    from ..models import Institute
+                    prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+                except Exception:
+                    pass
+            programs = db.session.execute(prog_q).scalars().all()
             return render_template(
                 "division_edit.html",
                 errors=errors,
@@ -13293,7 +14301,14 @@ def division_edit(division_id: int):
         flash("Division updated.", "success")
         return redirect(url_for("main.divisions_list", program_id=program_id, semester=semester))
 
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    prog_q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
+    programs = db.session.execute(prog_q).scalars().all()
     return render_template("division_edit.html", division=d, programs=programs, role=role, user_program_id=user_program_id, form_data={})
 
 
@@ -13301,17 +14316,29 @@ def division_edit(division_id: int):
 @main_bp.route("/api/chart/students-by-program")
 @login_required
 @role_required("admin", "principal")
-@cache.cached(timeout=180)
+@cache.cached(timeout=180, key_prefix=lambda: f"chart_students_by_program_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}")
 def chart_students_by_program():
     """API endpoint for students by program pie chart (admin view)"""
     from flask import jsonify
     try:
         role = (getattr(current_user, "role", "") or "").strip().lower()
+        effective_trust_id = None
+        if getattr(current_user, "is_authenticated", False):
+            if getattr(current_user, "is_super_admin", False):
+                try:
+                    effective_trust_id = int(session.get("active_trust_id") or 0) or None
+                except Exception:
+                    effective_trust_id = None
+            else:
+                effective_trust_id = getattr(current_user, "trust_id_fk", None)
+        if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+            return api_success({"data": []})
         
         if role == "admin":
             counts = db.session.execute(
                 select(Program.program_name, func.count(Student.enrollment_no))
                 .join(Student, Student.program_id_fk == Program.program_id)
+                .filter(Student.trust_id_fk == effective_trust_id)
                 .group_by(Program.program_name)
             ).all()
             data = [{"label": name, "value": cnt, "color": f"hsl({hash(name) % 360}, 70%, 60%)"} for name, cnt in counts if cnt > 0]
@@ -13320,7 +14347,9 @@ def chart_students_by_program():
             program_id = getattr(current_user, "program_id_fk", None)
             if program_id:
                 program = db.session.get(Program, program_id)
-                count = db.session.scalar(select(func.count(Student.enrollment_no)).filter(Student.program_id_fk == program_id)) or 0
+                count = db.session.scalar(
+                    select(func.count(Student.enrollment_no)).filter(Student.program_id_fk == program_id, Student.trust_id_fk == effective_trust_id)
+                ) or 0
                 data = [{"label": (program.program_name if program else "Unknown"), "value": count, "color": "hsl(200, 70%, 60%)"}]
             else:
                 data = []
@@ -13332,17 +14361,30 @@ def chart_students_by_program():
 @main_bp.route("/api/chart/students-by-semester")
 @login_required
 @role_required("admin", "principal")
-@cache.cached(timeout=180, query_string=True)
+@cache.cached(timeout=180, key_prefix=lambda: f"chart_students_by_semester_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def chart_students_by_semester():
     """API endpoint for students by semester chart (principal view)"""
     from flask import jsonify
     try:
         role = (getattr(current_user, "role", "") or "").strip().lower()
         program_id = getattr(current_user, "program_id_fk", None) if role == "principal" else request.args.get("program_id")
+        effective_trust_id = None
+        if getattr(current_user, "is_authenticated", False):
+            if getattr(current_user, "is_super_admin", False):
+                try:
+                    effective_trust_id = int(session.get("active_trust_id") or 0) or None
+                except Exception:
+                    effective_trust_id = None
+            else:
+                effective_trust_id = getattr(current_user, "trust_id_fk", None)
+        if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+            return api_success({"data": []})
         
         # Get divisions for the program to determine semesters
         q = select(Division.semester, func.count(Student.enrollment_no))\
             .join(Student, Student.division_id_fk == Division.division_id)
+        if effective_trust_id:
+            q = q.filter(Student.trust_id_fk == effective_trust_id)
         if program_id:
             q = q.filter(Division.program_id_fk == int(program_id))
         rows = db.session.execute(q.group_by(Division.semester)).all()
@@ -13365,17 +14407,29 @@ def chart_students_by_semester():
 @main_bp.route("/api/chart/staff-by-program")
 @login_required
 @role_required("admin", "principal")
-@cache.cached(timeout=180)
+@cache.cached(timeout=180, key_prefix=lambda: f"chart_staff_by_program_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}")
 def chart_staff_by_program():
     """API endpoint for staff by program bar chart"""
     from flask import jsonify
     try:
         role = (getattr(current_user, "role", "") or "").strip().lower()
+        effective_trust_id = None
+        if getattr(current_user, "is_authenticated", False):
+            if getattr(current_user, "is_super_admin", False):
+                try:
+                    effective_trust_id = int(session.get("active_trust_id") or 0) or None
+                except Exception:
+                    effective_trust_id = None
+            else:
+                effective_trust_id = getattr(current_user, "trust_id_fk", None)
+        if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+            return api_success({"data": []})
         
         if role == "admin":
             counts = db.session.execute(
                 select(Program.program_name, func.count(Faculty.faculty_id))
                 .join(Faculty, Faculty.program_id_fk == Program.program_id)
+                .filter(Faculty.trust_id_fk == effective_trust_id)
                 .group_by(Program.program_name)
             ).all()
             data = [{"label": name, "value": cnt, "color": f"hsl({hash(name) % 360}, 70%, 50%)"} for name, cnt in counts]
@@ -13384,7 +14438,9 @@ def chart_staff_by_program():
             program_id = getattr(current_user, "program_id_fk", None)
             if program_id:
                 program = db.session.get(Program, program_id)
-                count = db.session.scalar(select(func.count(Faculty.faculty_id)).filter(Faculty.program_id_fk == program_id)) or 0
+                count = db.session.scalar(
+                    select(func.count(Faculty.faculty_id)).filter(Faculty.program_id_fk == program_id, Faculty.trust_id_fk == effective_trust_id)
+                ) or 0
                 data = [{"label": (program.program_name if program else "Unknown"), "value": count, "color": "hsl(120, 70%, 50%)"}]
             else:
                 data = []
@@ -13401,6 +14457,17 @@ def chart_fees_collection():
     from flask import jsonify
     try:
         role = (getattr(current_user, "role", "") or "").strip().lower()
+        effective_trust_id = None
+        if getattr(current_user, "is_authenticated", False):
+            if getattr(current_user, "is_super_admin", False):
+                try:
+                    effective_trust_id = int(session.get("active_trust_id") or 0) or None
+                except Exception:
+                    effective_trust_id = None
+            else:
+                effective_trust_id = getattr(current_user, "trust_id_fk", None)
+        if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+            return jsonify({"data": [], "academic_year": None})
         
         # Get current academic year
         now = datetime.now()
@@ -13411,7 +14478,14 @@ def chart_fees_collection():
         end_date = datetime(start_year + 1, 5, 31).date()
         
         if role == "admin":
-            programs = db.session.execute(select(Program)).scalars().all()
+            q_prog = select(Program)
+            if effective_trust_id:
+                try:
+                    from ..models import Institute
+                    q_prog = q_prog.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+                except Exception:
+                    pass
+            programs = db.session.execute(q_prog).scalars().all()
             data = []
             for program in programs:
                 # Get total fees collected for this program
@@ -13420,6 +14494,7 @@ def chart_fees_collection():
                     .join(Student, Student.enrollment_no == FeesRecord.student_id_fk)
                     .filter(
                         Student.program_id_fk == program.program_id,
+                        Student.trust_id_fk == effective_trust_id,
                         FeesRecord.date_paid >= start_date,
                         FeesRecord.date_paid <= end_date
                     )
@@ -13440,6 +14515,7 @@ def chart_fees_collection():
                     .join(Student, Student.enrollment_no == FeesRecord.student_id_fk)
                     .filter(
                         Student.program_id_fk == program_id,
+                        Student.trust_id_fk == effective_trust_id,
                         FeesRecord.date_paid >= start_date,
                         FeesRecord.date_paid <= end_date
                     )
@@ -13467,6 +14543,17 @@ def chart_revenue_expenses():
     try:
         role = (getattr(current_user, "role", "") or "").strip().lower()
         program_id = getattr(current_user, "program_id_fk", None) if role == "principal" else request.args.get("program_id")
+        effective_trust_id = None
+        if getattr(current_user, "is_authenticated", False):
+            if getattr(current_user, "is_super_admin", False):
+                try:
+                    effective_trust_id = int(session.get("active_trust_id") or 0) or None
+                except Exception:
+                    effective_trust_id = None
+            else:
+                effective_trust_id = getattr(current_user, "trust_id_fk", None)
+        if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+            return jsonify({"data": [], "academic_year": None})
         
         # Get current academic year
         now = datetime.now()
@@ -13481,16 +14568,19 @@ def chart_revenue_expenses():
             FeesRecord.date_paid >= start_date,
             FeesRecord.date_paid <= end_date
         )
+        revenue_query = revenue_query.join(Student, Student.enrollment_no == FeesRecord.student_id_fk)
+        if effective_trust_id:
+            revenue_query = revenue_query.filter(Student.trust_id_fk == effective_trust_id)
         if program_id:
-            revenue_query = revenue_query.join(Student, Student.enrollment_no == FeesRecord.student_id_fk).filter(
-                Student.program_id_fk == int(program_id)
-            )
+            revenue_query = revenue_query.filter(Student.program_id_fk == int(program_id))
         
         total_revenue = db.session.scalar(revenue_query) or 0
         
         # For expenses, we'll use a simplified calculation based on faculty salaries
         # This is a placeholder - in a real system, you'd have an expenses table
         faculty_query = select(func.count()).select_from(Faculty)
+        if effective_trust_id:
+            faculty_query = faculty_query.filter(Faculty.trust_id_fk == effective_trust_id)
         if program_id:
             faculty_query = faculty_query.filter_by(program_id_fk=int(program_id))
         
@@ -13639,6 +14729,10 @@ def students_export_csv():
 @role_required("admin", "principal")
 def admin_import_logs():
     from ..models import ImportLog, Program, User
+    effective_trust_id = _effective_trust_id()
+    if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+        flash("Select a tenant workspace first (Global View → choose Trust).", "warning")
+        return redirect(url_for("super_admin.dashboard"))
     kind = (request.args.get("kind") or "").strip().lower()
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
@@ -13660,8 +14754,24 @@ def admin_import_logs():
         q = q.filter(ImportLog.semester == sem)
     if dry_run_raw in ("1", "true", "yes"):
         q = q.filter(ImportLog.dry_run == True)
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
-    users = {u.user_id: u for u in db.session.execute(select(User)).scalars().all()}
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            q = q.join(Program, ImportLog.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            q = q.where(false())
+    prog_q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            prog_q = prog_q.where(false())
+    programs = db.session.execute(prog_q).scalars().all()
+    user_q = select(User)
+    if effective_trust_id:
+        user_q = user_q.filter(User.trust_id_fk == effective_trust_id)
+    users = {u.user_id: u for u in db.session.execute(user_q).scalars().all()}
     rows = db.session.execute(q.limit(500)).scalars().all()
     return render_template("import_logs.html", rows=rows, programs=programs, users=users, filters={"kind": kind, "program_id": pid, "semester": sem, "dry_run": dry_run_raw})
 
@@ -13672,6 +14782,10 @@ def admin_import_logs():
 def admin_logbook():
     import json
     from ..models import DataAuditLog, ImportLog, PasswordChangeLog, SubjectMaterialLog, User, Program
+    effective_trust_id = _effective_trust_id()
+    if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+        flash("Select a tenant workspace first (Global View → choose Trust).", "warning")
+        return redirect(url_for("super_admin.dashboard"))
 
     kind = (request.args.get("kind") or "all").strip().lower()
     user_id_raw = (request.args.get("user_id") or "").strip()
@@ -13691,8 +14805,19 @@ def admin_logbook():
     except Exception:
         limit = 200
 
-    users = {u.user_id: u for u in db.session.execute(select(User)).scalars().all()}
-    programs = {p.program_id: p for p in db.session.execute(select(Program)).scalars().all()}
+    user_q = select(User)
+    if effective_trust_id:
+        user_q = user_q.filter(User.trust_id_fk == effective_trust_id)
+    users = {u.user_id: u for u in db.session.execute(user_q).scalars().all()}
+    prog_q = select(Program)
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            prog_q = prog_q.where(false())
+    programs = {p.program_id: p for p in db.session.execute(prog_q).scalars().all()}
+    user_ids_in_scope = set(users.keys())
 
     entries = []
 
@@ -13708,6 +14833,12 @@ def admin_logbook():
             q = q.filter(ImportLog.program_id_fk == program_id)
         if user_id:
             q = q.filter(ImportLog.user_id_fk == user_id)
+        if effective_trust_id:
+            try:
+                from ..models import Institute
+                q = q.join(Program, ImportLog.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            except Exception:
+                q = q.where(false())
         rows = db.session.execute(q.limit(limit)).scalars().all()
         for r in rows:
             entries.append(
@@ -13734,6 +14865,8 @@ def admin_logbook():
             q = q.filter(DataAuditLog.program_id_fk == program_id)
         if user_id:
             q = q.filter(DataAuditLog.actor_user_id_fk == user_id)
+        if effective_trust_id:
+            q = q.filter(DataAuditLog.trust_id_fk == effective_trust_id)
         rows = db.session.execute(q.limit(limit)).scalars().all()
         for r in rows:
             try:
@@ -13756,6 +14889,8 @@ def admin_logbook():
         q = select(SubjectMaterialLog).order_by(SubjectMaterialLog.at.desc())
         if user_id:
             q = q.filter(SubjectMaterialLog.actor_user_id_fk == user_id)
+        if user_ids_in_scope:
+            q = q.filter(SubjectMaterialLog.actor_user_id_fk.in_(list(user_ids_in_scope)))
         rows = db.session.execute(q.limit(limit)).scalars().all()
         for r in rows:
             entries.append(
@@ -13776,6 +14911,8 @@ def admin_logbook():
             q = q.filter(
                 or_(PasswordChangeLog.user_id_fk == user_id, PasswordChangeLog.changed_by_user_id_fk == user_id)
             )
+        if user_ids_in_scope:
+            q = q.filter(or_(PasswordChangeLog.user_id_fk.in_(list(user_ids_in_scope)), PasswordChangeLog.changed_by_user_id_fk.in_(list(user_ids_in_scope))))
         rows = db.session.execute(q.limit(limit)).scalars().all()
         for r in rows:
             entries.append(
@@ -13793,8 +14930,8 @@ def admin_logbook():
     entries.sort(key=lambda e: (e.get("at") is None, e.get("at")), reverse=True)
     entries = entries[:limit]
 
-    program_list = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
-    user_list = db.session.execute(select(User).order_by(User.username.asc())).scalars().all()
+    program_list = sorted(programs.values(), key=lambda p: (p.program_name or "").lower())
+    user_list = sorted(users.values(), key=lambda u: (u.username or "").lower())
     return render_template(
         "logbook.html",
         entries=entries,
@@ -13812,7 +14949,7 @@ def admin_system_status():
     email_ok = False
     storage_ok = False
     try:
-        db.session.execute(text("SELECT 1"))
+        db.session.execute(select(1)).scalar()
         db_ok = True
     except Exception:
         db_ok = False
@@ -13867,7 +15004,10 @@ def student_lifecycle():
     )
 
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    trust_id = getattr(current_user, "trust_id_fk", None)
+    trust_id = _effective_trust_id()
+    if getattr(current_user, "is_super_admin", False) and not trust_id:
+        flash("Select a tenant workspace first (Global View → choose Trust).", "warning")
+        return redirect(url_for("super_admin.dashboard"))
 
     program_id_raw = (request.values.get("program_id") or "").strip()
     semester_raw = (request.values.get("semester") or "").strip().lower()
@@ -13886,6 +15026,20 @@ def student_lifecycle():
             program_id = None
     if role == "principal" and not program_id:
         abort(403)
+
+    if trust_id and program_id:
+        try:
+            ok = db.session.execute(
+                select(func.count())
+                .select_from(Program)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Program.program_id == program_id)
+                .filter(Institute.trust_id_fk == trust_id)
+            ).scalar() or 0
+            if ok <= 0:
+                program_id = None
+        except Exception:
+            program_id = None
 
     semester = None
     if semester_raw and semester_raw not in ("all", ""):
@@ -14058,7 +15212,10 @@ def student_lifecycle():
     if role == "admin":
         q = select(Program).order_by(Program.program_name.asc())
         if trust_id:
-            q = q.join(Institute).filter(Institute.trust_id_fk == trust_id)
+            try:
+                q = q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == trust_id)
+            except Exception:
+                q = q.where(false())
         programs = db.session.execute(q).scalars().all()
 
     try:
@@ -14585,7 +15742,10 @@ def staff_lifecycle():
     from ..models import CourseAssignment, DataAuditLog, Faculty, Institute, Program, User
 
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    trust_id = getattr(current_user, "trust_id_fk", None)
+    trust_id = _effective_trust_id()
+    if getattr(current_user, "is_super_admin", False) and not trust_id:
+        flash("Select a tenant workspace first (Global View → choose Trust).", "warning")
+        return redirect(url_for("super_admin.dashboard"))
     program_id_raw = (request.values.get("program_id") or "").strip()
     include_inactive = (request.values.get("include_inactive") or "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -14603,11 +15763,28 @@ def staff_lifecycle():
         except Exception:
             program_id = None
 
+    if trust_id and program_id:
+        try:
+            ok = db.session.execute(
+                select(func.count())
+                .select_from(Program)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Program.program_id == program_id)
+                .filter(Institute.trust_id_fk == trust_id)
+            ).scalar() or 0
+            if ok <= 0:
+                program_id = None
+        except Exception:
+            program_id = None
+
     programs = []
     if role == "admin":
         q = select(Program).order_by(Program.program_name.asc())
         if trust_id:
-            q = q.join(Institute).filter(Institute.trust_id_fk == trust_id)
+            try:
+                q = q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == trust_id)
+            except Exception:
+                q = q.where(false())
         programs = db.session.execute(q).scalars().all()
 
     def _scope_faculty_query():
@@ -14812,12 +15989,23 @@ def staff_lifecycle():
 
 @main_bp.route("/api/reports/enrollment-summary", methods=["GET"])
 @login_required
-@cache.cached(timeout=180, query_string=True)
+@cache.cached(timeout=180, key_prefix=lambda: f"api_reports_enrollment_summary_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def api_reports_enrollment_summary():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
     q = select(Student)
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    if effective_trust_id:
+        q = q.filter(Student.trust_id_fk == effective_trust_id)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -14867,14 +16055,25 @@ def api_reports_enrollment_summary():
 
 @main_bp.route("/api/reports/fees-summary", methods=["GET"])
 @login_required
-@cache.cached(timeout=180, query_string=True)
+@cache.cached(timeout=180, key_prefix=lambda: f"api_reports_fees_summary_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def api_reports_fees_summary():
-    from ..models import FeePayment
+    from ..models import FeePayment, Program, Institute
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
     status_raw = (request.args.get("status") or "").strip().lower()
     q = select(FeePayment)
+    if effective_trust_id:
+        q = q.join(Program, FeePayment.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -14915,9 +16114,32 @@ def api_reports_fees_summary():
 
 @main_bp.route("/api/reports/fees-program-status", methods=["GET"])
 @login_required
-@cache.cached(timeout=180, query_string=True)
+@cache.cached(timeout=180, key_prefix=lambda: f"api_reports_fees_program_status_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def api_reports_fees_program_status():
     from ..models import FeePayment, FeeStructure, FeesRecord, Student, Program
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            trust_filter = (
+                select(Program.program_id)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Institute.trust_id_fk == effective_trust_id)
+                .subquery()
+            )
+            program_ids = [r[0] for r in db.session.execute(select(trust_filter.c.program_id)).all()] if trust_filter is not None else []
+        except Exception:
+            program_ids = []
+    else:
+        program_ids = None
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip()
@@ -14926,13 +16148,24 @@ def api_reports_fees_program_status():
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
         pid = None
+    if program_ids is not None:
+        if pid:
+            if pid not in program_ids:
+                return api_success({"items": []}, {"program_id": pid})
+        else:
+            if not program_ids:
+                return api_success({"items": []}, {"program_id": None})
     try:
         sem = int(semester_raw) if semester_raw else None
     except ValueError:
         sem = None
     med = medium_raw if medium_raw else None
-    prog = db.session.get(Program, pid) if pid else None
+    if not pid:
+        return api_success({"summary": {"program_id": None, "program_name": "Select Program", "semester": sem, "medium": med or "All"}, "items": []})
+    prog = db.session.get(Program, pid)
     sq = select(Student)
+    if effective_trust_id:
+        sq = sq.filter(Student.trust_id_fk == effective_trust_id)
     if pid:
         sq = sq.filter(Student.program_id_fk == pid)
     if sem:
@@ -15035,11 +16268,20 @@ def api_reports_fees_program_status():
 @main_bp.route("/fees/program-status/export.csv", methods=["GET"])
 @login_required
 def fees_program_status_export_csv():
-    from ..models import FeePayment, FeeStructure, FeesRecord, Student, Program
+    from ..models import FeePayment, FeeStructure, FeesRecord, Student, Program, Institute
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip()
     include_submitted_raw = (request.args.get("include_submitted") or "").strip().lower()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -15049,8 +16291,24 @@ def fees_program_status_export_csv():
     except ValueError:
         sem = None
     med = medium_raw if medium_raw else None
-    prog = db.session.get(Program, pid) if pid else None
+    prog = None
+    if pid and effective_trust_id:
+        try:
+            prog = db.session.execute(
+                select(Program)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Program.program_id == pid)
+                .filter(Institute.trust_id_fk == effective_trust_id)
+            ).scalars().first()
+        except Exception:
+            prog = None
+    elif pid:
+        prog = db.session.get(Program, pid)
+    if pid and not prog:
+        return Response(b"", headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=fees_program_status.csv"})
     sq = select(Student)
+    if effective_trust_id:
+        sq = sq.filter(Student.trust_id_fk == effective_trust_id)
     if pid:
         sq = sq.filter(Student.program_id_fk == pid)
     if sem:
@@ -15142,15 +16400,24 @@ def fees_program_status_export_csv():
 
 @main_bp.route("/api/reports/subject-lectures", methods=["GET"])
 @login_required
-@cache.cached(timeout=180, query_string=True)
+@cache.cached(timeout=180, key_prefix=lambda: f"api_reports_subject_lectures_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def api_reports_subject_lectures():
-    from ..models import Attendance, Subject, Division, Student, Program
+    from ..models import Attendance, Subject, Division, Student, Program, Institute
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     subject_id_raw = (request.args.get("subject_id") or "").strip()
     division_id_raw = (request.args.get("division_id") or "").strip()
     date_from_raw = (request.args.get("date_from") or "").strip()
     date_to_raw = (request.args.get("date_to") or "").strip()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -15179,9 +16446,21 @@ def api_reports_subject_lectures():
     except Exception:
         dt = None
     aq = select(Attendance)
+    if effective_trust_id:
+        allowed_div_ids = [r[0] for r in db.session.execute(
+            select(Division.division_id)
+            .join(Program, Division.program_id_fk == Program.program_id)
+            .join(Institute, Program.institute_id_fk == Institute.institute_id)
+            .filter(Institute.trust_id_fk == effective_trust_id)
+        ).all()]
+        if not allowed_div_ids:
+            return api_success({"summary": {"total_lectures": 0}, "items": []})
+        aq = aq.filter(Attendance.division_id_fk.in_(allowed_div_ids))
     if sid:
         aq = aq.filter(Attendance.subject_id_fk == sid)
     if did:
+        if effective_trust_id and did not in allowed_div_ids:
+            return api_success({"summary": {"total_lectures": 0}, "items": []})
         aq = aq.filter(Attendance.division_id_fk == did)
     if df:
         aq = aq.filter(Attendance.date_marked >= df)
@@ -15189,6 +16468,8 @@ def api_reports_subject_lectures():
         aq = aq.filter(Attendance.date_marked <= dt)
     if pid or sem:
         sq = select(Student)
+        if effective_trust_id:
+            sq = sq.filter(Student.trust_id_fk == effective_trust_id)
         if pid:
             sq = sq.filter(Student.program_id_fk == pid)
         if sem:
@@ -15205,8 +16486,22 @@ def api_reports_subject_lectures():
             sessions[k] = {"subject_id": k[0], "division_id": k[1], "date": k[2], "period": k[3]}
     items = list(sessions.values())
     items.sort(key=lambda x: ((x.get("date") or datetime.now(timezone.utc).date()), int(x.get("period") or 0)))
-    subj = db.session.get(Subject, sid) if sid else None
-    div_map = {d.division_id: d.division_code for d in db.session.execute(select(Division)).scalars().all()}
+    subj = None
+    if sid:
+        try:
+            subj = db.session.execute(
+                select(Subject)
+                .join(Program, Subject.program_id_fk == Program.program_id)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Subject.subject_id == sid)
+                .filter(Institute.trust_id_fk == effective_trust_id)
+            ).scalars().first()
+        except Exception:
+            subj = None
+    div_q = select(Division)
+    if effective_trust_id:
+        div_q = div_q.join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+    div_map = {d.division_id: d.division_code for d in db.session.execute(div_q).scalars().all()}
     for it in items:
         it["division_code"] = div_map.get(it.get("division_id"))
         it["subject_name"] = getattr(subj, "subject_name", "") if subj else ""
@@ -15214,7 +16509,14 @@ def api_reports_subject_lectures():
         p = int(it.get("period") or 0)
         timing_map = {1: "09:00-10:00", 2: "10:00-11:00", 3: "11:00-12:00", 4: "12:00-13:00", 5: "14:00-15:00", 6: "15:00-16:00"}
         it["timing"] = timing_map.get(p, "")
-    prog = db.session.get(Program, pid) if pid else None
+    prog = None
+    if pid:
+        try:
+            prog = db.session.execute(
+                select(Program).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Program.program_id == pid).filter(Institute.trust_id_fk == effective_trust_id)
+            ).scalars().first()
+        except Exception:
+            prog = None
     summary = {
         "program_id": pid,
         "program_name": getattr(prog, "program_name", "") if prog else "All",
@@ -15230,13 +16532,22 @@ def api_reports_subject_lectures():
 @main_bp.route("/subject-lectures/export.csv", methods=["GET"])
 @login_required
 def subject_lectures_export_csv():
-    from ..models import Attendance, Subject, Division, Student, Program
+    from ..models import Attendance, Subject, Division, Student, Program, Institute
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     subject_id_raw = (request.args.get("subject_id") or "").strip()
     division_id_raw = (request.args.get("division_id") or "").strip()
     date_from_raw = (request.args.get("date_from") or "").strip()
     date_to_raw = (request.args.get("date_to") or "").strip()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -15265,9 +16576,22 @@ def subject_lectures_export_csv():
     except Exception:
         dt = None
     aq = select(Attendance)
+    allowed_div_ids = None
+    if effective_trust_id:
+        allowed_div_ids = [r[0] for r in db.session.execute(
+            select(Division.division_id)
+            .join(Program, Division.program_id_fk == Program.program_id)
+            .join(Institute, Program.institute_id_fk == Institute.institute_id)
+            .filter(Institute.trust_id_fk == effective_trust_id)
+        ).all()]
+        if not allowed_div_ids:
+            return Response(b"", headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=subject_lectures.csv"})
+        aq = aq.filter(Attendance.division_id_fk.in_(allowed_div_ids))
     if sid:
         aq = aq.filter(Attendance.subject_id_fk == sid)
     if did:
+        if allowed_div_ids is not None and did not in allowed_div_ids:
+            return Response(b"", headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=subject_lectures.csv"})
         aq = aq.filter(Attendance.division_id_fk == did)
     if df:
         aq = aq.filter(Attendance.date_marked >= df)
@@ -15275,6 +16599,8 @@ def subject_lectures_export_csv():
         aq = aq.filter(Attendance.date_marked <= dt)
     if pid or sem:
         sq = select(Student)
+        if effective_trust_id:
+            sq = sq.filter(Student.trust_id_fk == effective_trust_id)
         if pid:
             sq = sq.filter(Student.program_id_fk == pid)
         if sem:
@@ -15291,15 +16617,40 @@ def subject_lectures_export_csv():
             sessions[k] = {"subject_id": k[0], "division_id": k[1], "date": k[2], "period": k[3]}
     items = list(sessions.values())
     items.sort(key=lambda x: ((x.get("date") or datetime.now(timezone.utc).date()), int(x.get("period") or 0)))
-    subj = db.session.get(Subject, sid) if sid else None
-    prog = db.session.get(Program, pid) if pid else None
+    subj = None
+    if sid and effective_trust_id:
+        try:
+            subj = db.session.execute(
+                select(Subject)
+                .join(Program, Subject.program_id_fk == Program.program_id)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Subject.subject_id == sid)
+                .filter(Institute.trust_id_fk == effective_trust_id)
+            ).scalars().first()
+        except Exception:
+            subj = None
+    elif sid:
+        subj = db.session.get(Subject, sid)
+    prog = None
+    if pid and effective_trust_id:
+        try:
+            prog = db.session.execute(
+                select(Program).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Program.program_id == pid).filter(Institute.trust_id_fk == effective_trust_id)
+            ).scalars().first()
+        except Exception:
+            prog = None
+    elif pid:
+        prog = db.session.get(Program, pid)
     import io, csv as _csv
     buf = io.StringIO()
     w = _csv.writer(buf)
     summary_line = f"Program: {(getattr(prog, 'program_name', '') or 'All')} • Semester: {(sem if sem is not None else 'All')} • Subject: {(getattr(subj, 'subject_name', '') or 'All')} • Date: {(date_from_raw or '')} to {(date_to_raw or '')} • Total Lectures: {len(items)}"
     w.writerow([summary_line])
     w.writerow(["Date", "Period", "Timing", "Division"])
-    div_map = {d.division_id: d.division_code for d in db.session.execute(select(Division)).scalars().all()}
+    div_q = select(Division)
+    if effective_trust_id:
+        div_q = div_q.join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+    div_map = {d.division_id: d.division_code for d in db.session.execute(div_q).scalars().all()}
     for it in items:
         p = int(it.get("period") or 0)
         timing_map = {1: "09:00-10:00", 2: "10:00-11:00", 3: "11:00-12:00", 4: "12:00-13:00", 5: "14:00-15:00", 6: "15:00-16:00"}
@@ -15315,21 +16666,36 @@ def subject_lectures_export_csv():
 
 @main_bp.route("/api/reports/attendance-summary", methods=["GET"])
 @login_required
-@cache.cached(timeout=180, query_string=True)
+@cache.cached(timeout=180, key_prefix=lambda: f"api_reports_attendance_summary_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def api_reports_attendance_summary():
+    from ..models import Attendance, Division, Program, Institute, Subject, CourseAssignment
     program_id_raw = (request.args.get("program_id") or "").strip()
     program_name_raw = (request.args.get("program_name") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     subject_id_raw = (request.args.get("subject_id") or "").strip()
     subject_name_raw = (request.args.get("subject_name") or "").strip()
     faculty_only_raw = (request.args.get("faculty_only") or "").strip().lower()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+        return api_success({"items": [], "total": 0}, {"program_id": None, "semester": None})
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
         pid = None
     if (not pid) and program_name_raw:
         try:
-            p0 = db.session.execute(select(Program).filter(Program.program_name.ilike(program_name_raw))).scalars().first()
+            pq = select(Program).filter(Program.program_name.ilike(program_name_raw))
+            if effective_trust_id:
+                pq = pq.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            p0 = db.session.execute(pq).scalars().first()
             pid = p0.program_id if p0 else None
         except Exception:
             pid = None
@@ -15348,12 +16714,16 @@ def api_reports_attendance_summary():
                 qn = qn.filter(Subject.program_id_fk == pid)
             if sem:
                 qn = qn.filter(Subject.semester == sem)
+            if effective_trust_id:
+                qn = qn.join(Program, Subject.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
             s0 = db.session.execute(qn.filter(Subject.subject_name.ilike(subject_name_raw))).scalars().first()
             sid = s0.subject_id if s0 else None
         except Exception:
             sid = None
     role = (getattr(current_user, "role", "") or "").strip().lower()
     subjects_q = select(Subject)
+    if effective_trust_id:
+        subjects_q = subjects_q.join(Program, Subject.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
     if pid:
         subjects_q = subjects_q.filter(Subject.program_id_fk == pid)
     if sem:
@@ -15372,30 +16742,40 @@ def api_reports_attendance_summary():
     subjects = db.session.execute(subjects_q.order_by(Subject.subject_name.asc())).scalars().all()
     items = []
     for s in subjects:
-        att = db.session.execute(select(Attendance).filter_by(subject_id_fk=s.subject_id)).scalars().all()
-        total = len(att)
-        present = 0
-        try:
-            for a in att:
-                if (a.status or "").upper() == "P":
-                    present += 1
-        except Exception:
-            pass
+        aq = select(Attendance.status).join(Division, Attendance.division_id_fk == Division.division_id).join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id)
+        aq = aq.filter(Attendance.subject_id_fk == s.subject_id)
+        if effective_trust_id:
+            aq = aq.filter(Institute.trust_id_fk == effective_trust_id)
+        statuses = [r[0] for r in db.session.execute(aq).all()]
+        total = len(statuses)
+        present = len([x for x in statuses if (x or "").upper() == "P"])
         rate = round((present * 100.0 / total), 1) if total else None
         items.append({"subject_id": s.subject_id, "subject_name": s.subject_name, "present": present, "total": total, "rate": rate})
     return api_success({"items": items, "total": len(items)}, {"program_id": pid, "program_name": program_name_raw or None, "semester": sem, "subject_id": sid, "subject_name": subject_name_raw or None, "faculty_only": (faculty_only_raw in ("1","true","yes") or role == "faculty")})
 
 @main_bp.route("/api/reports/materials-summary", methods=["GET"])
 @login_required
-@cache.cached(timeout=180, query_string=True)
+@cache.cached(timeout=180, key_prefix=lambda: f"api_reports_materials_summary_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def api_reports_materials_summary():
+    from ..models import Subject, Program, Institute
     role = (getattr(current_user, "role", "") or "").strip().lower()
     subject_id_raw = (request.args.get("subject_id") or "").strip()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         sid = int(subject_id_raw) if subject_id_raw else None
     except ValueError:
         sid = None
     q = select(SubjectMaterial)
+    if effective_trust_id:
+        q = q.join(Subject, SubjectMaterial.subject_id_fk == Subject.subject_id).join(Program, Subject.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
     if role == "faculty":
         q = q.filter(SubjectMaterial.faculty_id_fk == current_user.user_id)
     if sid:
@@ -15418,10 +16798,19 @@ def api_reports_materials_summary():
 
 @main_bp.route("/api/reports/division-capacity", methods=["GET"])
 @login_required
-@cache.cached(timeout=180, query_string=True)
+@cache.cached(timeout=180, key_prefix=lambda: f"api_reports_division_capacity_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def api_reports_division_capacity():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -15431,6 +16820,12 @@ def api_reports_division_capacity():
     except ValueError:
         sem = None
     dq = select(Division)
+    if effective_trust_id:
+        try:
+            from ..models import Institute, Program
+            dq = dq.join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
     if pid:
         dq = dq.filter(Division.program_id_fk == pid)
     if sem:
@@ -15440,18 +16835,18 @@ def api_reports_division_capacity():
     total_capacity = 0
     total_enrolled = 0
     for d in divs:
-        sc = db.session.scalar(select(func.count()).filter(Student.division_id_fk == d.division_id))
+        scq = select(func.count()).filter(Student.division_id_fk == d.division_id)
+        if effective_trust_id:
+            scq = scq.filter(Student.trust_id_fk == effective_trust_id)
+        sc = db.session.scalar(scq) or 0
         total_capacity += int(getattr(d, "capacity", 0) or 0)
         total_enrolled += sc
         medium_counts = {}
         try:
-            rows = (
-                db.session.execute(
-                    select(Student.medium_tag, func.count("*").label("c"))
-                    .filter(Student.division_id_fk == d.division_id)
-                    .group_by(Student.medium_tag)
-                ).all()
-            )
+            qmc = select(Student.medium_tag, func.count("*").label("c")).filter(Student.division_id_fk == d.division_id)
+            if effective_trust_id:
+                qmc = qmc.filter(Student.trust_id_fk == effective_trust_id)
+            rows = db.session.execute(qmc.group_by(Student.medium_tag)).all()
             for r in rows:
                 k = r[0] or ""
                 medium_counts[k] = int(r[1] or 0)
@@ -15470,10 +16865,19 @@ def api_reports_division_capacity():
 
 @main_bp.route("/api/reports/absentees", methods=["GET"])
 @login_required
-@cache.cached(timeout=120, query_string=True)
+@cache.cached(timeout=120, key_prefix=lambda: f"api_reports_absentees_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def api_reports_absentees():
     subject_id_raw = (request.args.get("subject_id") or "").strip()
     days_raw = (request.args.get("days") or "7").strip()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         sid = int(subject_id_raw) if subject_id_raw else None
     except ValueError:
@@ -15488,8 +16892,29 @@ def api_reports_absentees():
         sid = assigned.subject_id_fk if assigned else None
     if not sid:
         return api_success({"items": [], "total": 0}, {"subject_id": None})
+    if effective_trust_id:
+        try:
+            from ..models import Subject, Program, Institute
+            ok = db.session.execute(
+                select(func.count())
+                .select_from(Subject)
+                .join(Program, Subject.program_id_fk == Program.program_id)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Subject.subject_id == sid)
+                .filter(Institute.trust_id_fk == effective_trust_id)
+            ).scalar() or 0
+            if ok <= 0:
+                return api_success({"items": [], "total": 0}, {"subject_id": sid})
+        except Exception:
+            return api_success({"items": [], "total": 0}, {"subject_id": sid})
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).date()
     q = select(Attendance).filter(Attendance.subject_id_fk == sid)
+    if effective_trust_id:
+        try:
+            from ..models import Division, Program, Institute
+            q = q.join(Division, Attendance.division_id_fk == Division.division_id).join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
     try:
         q = q.filter(Attendance.date_marked >= cutoff_date)
     except Exception:
@@ -15504,6 +16929,8 @@ def api_reports_absentees():
     items = []
     for sid_fk, c in counts.items():
         st = db.session.get(Student, sid_fk) if sid_fk else None
+        if effective_trust_id and st and getattr(st, "trust_id_fk", None) != effective_trust_id:
+            continue
         items.append({
             "student_id": sid_fk,
             "enrollment_no": getattr(st, "enrollment_no", None),
@@ -15518,6 +16945,15 @@ def api_reports_absentees():
 def absentees_export_csv():
     subject_id_raw = (request.args.get("subject_id") or "").strip()
     days_raw = (request.args.get("days") or "7").strip()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         sid = int(subject_id_raw) if subject_id_raw else None
     except ValueError:
@@ -15528,8 +16964,29 @@ def absentees_export_csv():
         days = 7
     if not sid:
         return Response(b"", headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=absentees.csv"})
+    if effective_trust_id:
+        try:
+            from ..models import Subject, Program, Institute
+            ok = db.session.execute(
+                select(func.count())
+                .select_from(Subject)
+                .join(Program, Subject.program_id_fk == Program.program_id)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Subject.subject_id == sid)
+                .filter(Institute.trust_id_fk == effective_trust_id)
+            ).scalar() or 0
+            if ok <= 0:
+                return Response(b"", headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=absentees.csv"})
+        except Exception:
+            return Response(b"", headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=absentees.csv"})
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).date()
     q = select(Attendance).filter(Attendance.subject_id_fk == sid)
+    if effective_trust_id:
+        try:
+            from ..models import Division, Program, Institute
+            q = q.join(Division, Attendance.division_id_fk == Division.division_id).join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
     try:
         q = q.filter(Attendance.date_marked >= cutoff_date)
     except Exception:
@@ -15553,13 +17010,22 @@ def absentees_export_csv():
 
 @main_bp.route("/api/reports/attendance-students", methods=["GET"])
 @login_required
-@cache.cached(timeout=120, query_string=True)
+@cache.cached(timeout=120, key_prefix=lambda: f"api_reports_attendance_students_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}")
 def api_reports_attendance_students():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     subject_id_raw = (request.args.get("subject_id") or "").strip()
     threshold_raw = (request.args.get("threshold") or "50").strip()
     mode_raw = (request.args.get("mode") or "below").strip().lower()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -15577,6 +17043,8 @@ def api_reports_attendance_students():
     except ValueError:
         thr = 50
     sq = select(Student)
+    if effective_trust_id:
+        sq = sq.filter(Student.trust_id_fk == effective_trust_id)
     if pid:
         sq = sq.filter(Student.program_id_fk == pid)
     if sem:
@@ -15630,9 +17098,25 @@ def api_reports_attendance_students():
 @main_bp.route("/admin/reports/nep-exit-eligibility", methods=["GET"])
 @login_required
 @role_required("admin", "principal")
-@cache.cached(timeout=60, key_prefix=lambda: f"nep_report_{getattr(current_user, 'user_id', 'anon')}_{request.full_path}", unless=lambda: session.get("_flashes"))
+@cache.cached(timeout=60, key_prefix=lambda: f"nep_report_{getattr(current_user, 'user_id', 'anon')}_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}_{request.full_path}", unless=lambda: session.get("_flashes"))
 def nep_exit_report():
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            q = q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
+    programs = db.session.execute(q).scalars().all()
     program_id_raw = (request.args.get("program_id") or "").strip()
     selected_program = None
     report_data = []
@@ -15641,6 +17125,28 @@ def nep_exit_report():
         try:
             pid = int(program_id_raw)
             selected_program = db.session.get(Program, pid)
+            if selected_program:
+                if effective_trust_id:
+                    try:
+                        from ..models import Institute
+                        ok = db.session.execute(
+                            select(func.count())
+                            .select_from(Program)
+                            .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                            .filter(Program.program_id == pid)
+                            .filter(Institute.trust_id_fk == effective_trust_id)
+                        ).scalar() or 0
+                        if ok <= 0:
+                            selected_program = None
+                    except Exception:
+                        selected_program = None
+                if (getattr(current_user, "role", "") or "").strip().lower() == "principal":
+                    try:
+                        u_pid = int(getattr(current_user, "program_id_fk", None) or 0) or None
+                    except Exception:
+                        u_pid = None
+                    if u_pid and pid != u_pid:
+                        selected_program = None
             if selected_program:
                 # 1. Fetch all students for this program
                 students = db.session.execute(select(Student).filter_by(program_id_fk=pid).order_by(Student.enrollment_no.asc())).scalars().all()
@@ -15838,11 +17344,26 @@ def students_missing_category_report():
 @login_required
 def fees_export_csv():
     from ..models import FeePayment, Program
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
     status_raw = (request.args.get("status") or "").strip().lower()
     q = select(FeePayment)
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            q = q.join(Program, FeePayment.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -15862,7 +17383,14 @@ def fees_export_csv():
     if status_raw in ("submitted", "verified", "rejected"):
         q = q.filter(FeePayment.status == status_raw)
     rows = db.session.execute(q.order_by(FeePayment.created_at.desc()).limit(5000)).scalars().all()
-    prog_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
+    prog_q = select(Program)
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
+    prog_map = {p.program_id: p.program_name for p in db.session.execute(prog_q).scalars().all()}
     import io, csv as _csv
     buf = io.StringIO()
     w = _csv.writer(buf)
@@ -15884,10 +17412,26 @@ def fees_export_csv():
 
 @main_bp.route("/reports")
 @login_required
-@cache.cached(timeout=120, key_prefix=lambda: f"reports_hub_{getattr(current_user, 'role', 'unknown')}", unless=lambda: session.get("_flashes"))
+@cache.cached(timeout=120, key_prefix=lambda: f"reports_hub_{getattr(current_user, 'role', 'unknown')}_{(session.get('active_trust_id') if getattr(current_user, 'is_super_admin', False) else getattr(current_user, 'trust_id_fk', None))}", unless=lambda: session.get("_flashes"))
 def reports_hub():
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            q = q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            q = q.where(false())
+    programs = db.session.execute(q).scalars().all()
     return render_template("reports.html", role=role, programs=programs)
 
 # Documents section: manuals and brochure
@@ -15936,6 +17480,15 @@ def admin_redis_check():
 def api_subjects():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -15945,6 +17498,12 @@ def api_subjects():
     except ValueError:
         sem = None
     q = select(Subject)
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            q = q.join(Program, Subject.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
     if pid:
         q = q.filter(Subject.program_id_fk == pid)
     if sem:
@@ -15958,6 +17517,15 @@ def api_subjects():
 def api_program_mediums():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -15967,6 +17535,12 @@ def api_program_mediums():
     except ValueError:
         sem = None
     q = select(FeeStructure)
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            q = q.join(Program, FeeStructure.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
     if pid:
         q = q.filter(FeeStructure.program_id_fk == pid)
     if sem is not None:
@@ -15978,6 +17552,15 @@ def api_program_mediums():
 def api_divisions():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
@@ -15987,6 +17570,12 @@ def api_divisions():
     except ValueError:
         sem = None
     q = select(Division)
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            q = q.join(Program, Division.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
     if pid:
         q = q.filter(Division.program_id_fk == pid)
     if sem:
@@ -16202,13 +17791,25 @@ def admin_seed_attendance_mock():
 @login_required
 @role_required("admin", "principal")
 def module_analytics():
-    from ..models import Faculty, Attendance, Subject, Division, Program, CourseAssignment
+    from ..models import Faculty, Attendance, Subject, Division, Program, CourseAssignment, Institute
     from datetime import datetime, date, timedelta
     from collections import defaultdict
     from sqlalchemy import and_
     
     role = (getattr(current_user, "role", "") or "").strip().lower()
     user_pid = int(getattr(current_user, "program_id_fk", 0) or 0)
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
+        flash("Select a tenant workspace first (Global View → choose Trust).", "warning")
+        return redirect(url_for("super_admin.dashboard"))
     
     # 1. Daily Logs (Today)
     today = date.today()
@@ -16224,6 +17825,7 @@ def module_analytics():
     ).join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
      .join(Division, Attendance.division_id_fk == Division.division_id)\
      .join(Program, Division.program_id_fk == Program.program_id)\
+     .join(Institute, Program.institute_id_fk == Institute.institute_id)\
      .outerjoin(CourseAssignment, and_(
          CourseAssignment.subject_id_fk == Subject.subject_id,
          CourseAssignment.division_id_fk == Division.division_id,
@@ -16231,6 +17833,7 @@ def module_analytics():
      ))\
      .outerjoin(Faculty, Faculty.user_id_fk == CourseAssignment.faculty_id_fk)\
      .filter(Attendance.date_marked == today)\
+     .filter(Institute.trust_id_fk == effective_trust_id)\
      .order_by(Attendance.period_no.asc())
      
     if role == "principal" and user_pid:
@@ -16294,6 +17897,8 @@ def module_analytics():
         Attendance.subject_id_fk
     ).join(Subject, Attendance.subject_id_fk == Subject.subject_id)\
      .join(Division, Attendance.division_id_fk == Division.division_id)\
+     .join(Program, Division.program_id_fk == Program.program_id)\
+     .join(Institute, Program.institute_id_fk == Institute.institute_id)\
      .outerjoin(CourseAssignment, and_(
          CourseAssignment.subject_id_fk == Subject.subject_id,
          CourseAssignment.division_id_fk == Division.division_id,
@@ -16301,7 +17906,8 @@ def module_analytics():
      ))\
      .outerjoin(Faculty, Faculty.user_id_fk == CourseAssignment.faculty_id_fk)\
      .filter(Attendance.date_marked >= start_week)\
-     .filter(Attendance.date_marked <= end_week)
+     .filter(Attendance.date_marked <= end_week)\
+     .filter(Institute.trust_id_fk == effective_trust_id)
      
     if role == "principal" and user_pid:
         q_week_agg = q_week_agg.filter(Division.program_id_fk == user_pid)
@@ -16335,7 +17941,9 @@ def module_analytics():
     # 3. Performance Alerts
     performance_alerts = {"high": [], "low": []}
     
-    fac_ids = db.session.execute(select(Faculty.faculty_id, Faculty.full_name)).all()
+    fac_ids = db.session.execute(
+        select(Faculty.faculty_id, Faculty.full_name).filter(Faculty.trust_id_fk == effective_trust_id)
+    ).all()
     fac_lookup = {f.full_name: f.faculty_id for f in fac_ids}
 
     for item in weekly_grid:
@@ -16368,6 +17976,7 @@ def module_analytics():
 @role_required("admin", "principal")
 def analytics_notify():
     from ..email_utils import send_email
+    from ..models import Faculty
     
     fid = request.form.get("faculty_id")
     notif_type = request.form.get("type") # 'warning' or 'appreciation'
@@ -16375,6 +17984,24 @@ def analytics_notify():
     faculty = db.session.get(Faculty, fid)
     if not faculty:
         abort(404)
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    if effective_trust_id and getattr(faculty, "trust_id_fk", None) and int(getattr(faculty, "trust_id_fk", 0) or 0) != int(effective_trust_id):
+        abort(403)
+    if (getattr(current_user, "role", "") or "").strip().lower() == "principal":
+        try:
+            pid = int(getattr(current_user, "program_id_fk", None) or 0) or None
+        except Exception:
+            pid = None
+        if pid and getattr(faculty, "program_id_fk", None) and int(getattr(faculty, "program_id_fk", 0) or 0) != int(pid):
+            abort(403)
     
     if not faculty.email:
         flash(f"Cannot send notification: {faculty.full_name} has no email address.", "danger")

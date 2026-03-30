@@ -12,8 +12,8 @@ from werkzeug.security import generate_password_hash
 @login_required
 def step1_institute():
     # STRICT ACCESS: Only 'admin' (Super User) can access the Onboarding Wizard.
-    # Principals/Clients should not access this core configuration tool.
-    if getattr(current_user, 'role', '') != 'admin' and not getattr(current_user, 'is_super_admin', False):
+        # Principals/Clients should not access this core configuration tool.
+    if not getattr(current_user, 'is_super_admin', False):
         flash("Unauthorized: Only System Administrators can access the Onboarding Wizard.", "danger")
         return redirect(url_for('main.dashboard'))
 
@@ -24,12 +24,8 @@ def step1_institute():
     
     current_inst_id = session.get('wizard_institute_id')
     
-    # Fetch existing data
-    trust = Trust.query.first()
-    if current_inst_id:
-        institute = db.session.get(Institute, current_inst_id)
-    else:
-        institute = Institute.query.first()
+    institute = db.session.get(Institute, current_inst_id) if current_inst_id else None
+    trust = db.session.get(Trust, institute.trust_id_fk) if institute and institute.trust_id_fk else None
 
     if request.method == 'POST':
         # Trust Details
@@ -45,14 +41,13 @@ def step1_institute():
         i_affil = request.form.get('affiliation_body')
         i_aicte = request.form.get('aicte_code')
         
-        # Update or Create Trust
         if not trust:
             trust = Trust(
-                trust_name=t_name, 
-                trust_code=t_code, 
+                trust_name=t_name,
+                trust_code=t_code,
                 slogan=t_slogan,
                 vision=t_vision,
-                mission=t_mission
+                mission=t_mission,
             )
             db.session.add(trust)
         else:
@@ -64,23 +59,20 @@ def step1_institute():
             
         db.session.flush() # Get trust_id if needed
 
-        # Update or Create Institute
         if not institute:
             institute = Institute(
-                institute_name=i_name, 
-                institute_code=i_code, 
+                institute_name=i_name,
+                institute_code=i_code,
                 trust_id_fk=trust.trust_id,
                 affiliation_body=i_affil,
-                aicte_code=i_aicte
+                aicte_code=i_aicte,
             )
             db.session.add(institute)
             db.session.flush()
-            # If created new institute, set it as context
             session['wizard_institute_id'] = institute.institute_id
         else:
             institute.institute_name = i_name
             institute.institute_code = i_code
-            institute.trust_id_fk = trust.trust_id # Ensure link
             institute.affiliation_body = i_affil
             institute.aicte_code = i_aicte
             
@@ -93,8 +85,7 @@ def step1_institute():
 @wizard.route('/step2', methods=['GET', 'POST'])
 @login_required
 def step2_staff():
-    # Allow admin, principal, OR super_admin
-    if getattr(current_user, 'role', '') not in ['admin', 'principal'] and not getattr(current_user, 'is_super_admin', False):
+    if not getattr(current_user, 'is_super_admin', False):
          return redirect(url_for('main.dashboard'))
     
     if request.method == 'POST':
@@ -186,7 +177,7 @@ def step2_template():
 @wizard.route('/step3', methods=['GET', 'POST'])
 @login_required
 def step3_programs():
-    if getattr(current_user, 'role', '') not in ['admin', 'principal'] and not getattr(current_user, 'is_super_admin', False):
+    if not getattr(current_user, 'is_super_admin', False):
          return redirect(url_for('main.dashboard'))
 
     if request.method == 'POST':
@@ -199,9 +190,8 @@ def step3_programs():
         p_medium = request.form.get('medium')
         p_years = request.form.get('duration_years')
         
-        # Determine Institute (Assuming single institute context for now, or first one)
-        # Ideally, admin selects institute if multiple exist.
-        inst = Institute.query.first() 
+        inst_id = session.get('wizard_institute_id')
+        inst = db.session.get(Institute, inst_id) if inst_id else None
         if not inst:
             flash("Please set up an Institute first (Step 1).", "danger")
             return redirect(url_for('wizard.step1_institute'))
@@ -222,18 +212,23 @@ def step3_programs():
             else:
                 flash(f"Program code '{p_code}' already exists.", "warning")
     
-    programs = Program.query.all()
+    inst_id = session.get('wizard_institute_id')
+    inst = db.session.get(Institute, inst_id) if inst_id else None
+    programs = Program.query.filter_by(institute_id_fk=inst.institute_id).all() if inst else []
     return render_template('wizard/step3_programs.html', programs=programs)
 
 @wizard.route('/step4', methods=['GET', 'POST'])
 @login_required
 def step4_structure():
-    if getattr(current_user, 'role', '') not in ['admin', 'principal'] and not getattr(current_user, 'is_super_admin', False):
+    if not getattr(current_user, 'is_super_admin', False):
          return redirect(url_for('main.dashboard'))
 
     # Context
     inst_id = session.get('wizard_institute_id')
-    inst = db.session.get(Institute, inst_id) if inst_id else Institute.query.first()
+    inst = db.session.get(Institute, inst_id) if inst_id else None
+    if not inst:
+        flash("Please set up an Institute first (Step 1).", "danger")
+        return redirect(url_for('wizard.step1_institute'))
 
     # Logic to manage divisions/semesters would go here
     # For now, just a placeholder or simple display
@@ -242,17 +237,14 @@ def step4_structure():
              return redirect(url_for('wizard.step5_subjects'))
     
     # Filter programs by current institute
-    if inst:
-        programs = Program.query.filter_by(institute_id_fk=inst.institute_id).all()
-    else:
-        programs = Program.query.all()
+    programs = Program.query.filter_by(institute_id_fk=inst.institute_id).all()
 
     return render_template('wizard/step4_structure.html', programs=programs)
 
 @wizard.route('/step5', methods=['GET', 'POST'])
 @login_required
 def step5_subjects():
-    if current_user.role not in ['admin', 'principal']:
+    if not getattr(current_user, 'is_super_admin', False):
          return redirect(url_for('main.dashboard'))
 
     if request.method == 'POST':
@@ -264,7 +256,7 @@ def step5_subjects():
 @wizard.route('/step6', methods=['GET', 'POST'])
 @login_required
 def step6_students():
-    if getattr(current_user, 'role', '') not in ['admin', 'principal'] and not getattr(current_user, 'is_super_admin', False):
+    if not getattr(current_user, 'is_super_admin', False):
          return redirect(url_for('main.dashboard'))
 
     if request.method == 'POST':

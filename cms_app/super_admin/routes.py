@@ -1,30 +1,87 @@
 from flask import render_template, request, redirect, url_for, flash, current_app, session
 from flask_login import login_required, current_user
 from . import super_admin
-from ..models import db, SystemMessage, SystemConfig, Trust, Institute, User
+from ..models import db, SystemMessage, SystemConfig, Trust, Institute, User, Student, Faculty, ImportLog, DataAuditLog, Program
+from sqlalchemy import select, func
 from ..decorators import super_admin_required
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 @super_admin.route('/dashboard')
 @login_required
 @super_admin_required
 def dashboard():
-    # Gather stats
+    now = datetime.utcnow()
     total_trusts = Trust.query.count()
     total_institutes = Institute.query.count()
     total_users = User.query.count()
+    total_students = Student.query.count()
+    total_faculty = Faculty.query.count()
+
     active_messages = SystemMessage.query.filter_by(is_active=True).count()
-    
-    # Check maintenance mode
+
     maint_mode_config = SystemConfig.query.get('maintenance_mode')
     is_maintenance = (maint_mode_config.config_value == 'true') if maint_mode_config else False
 
+    suspended_trusts = Trust.query.filter(Trust.is_active == False).order_by(Trust.trust_name.asc()).all()
+
+    expiring_soon = []
+    expired = []
+    try:
+        trusts = Trust.query.order_by(Trust.trust_name.asc()).all()
+        for t in trusts:
+            end_at = getattr(t, "subscription_end_at", None)
+            grace = int(getattr(t, "subscription_grace_days", 0) or 0)
+            if not end_at:
+                continue
+            days_left = (end_at - now).days
+            is_expired = now > (end_at + timedelta(days=grace))
+            entry = {"trust": t, "end_at": end_at, "days_left": days_left, "grace_days": grace}
+            if is_expired:
+                expired.append(entry)
+            elif days_left <= 30:
+                expiring_soon.append(entry)
+    except Exception:
+        expiring_soon = []
+        expired = []
+
+    expiring_soon.sort(key=lambda x: x.get("days_left", 10**9))
+    expired.sort(key=lambda x: x.get("days_left", 10**9))
+    risk_list = (expired + expiring_soon)[:12]
+
+    recent_imports = ImportLog.query.order_by(ImportLog.created_at.desc()).limit(10).all()
+    recent_import_errors = ImportLog.query.filter(ImportLog.errors_count > 0).order_by(ImportLog.created_at.desc()).limit(10).all()
+    recent_audit = DataAuditLog.query.order_by(DataAuditLog.created_at.desc()).limit(12).all()
+
+    trust_name_map = {t.trust_id: t.trust_name for t in Trust.query.all()}
+    program_name_map = {p.program_id: p.program_name for p in Program.query.all()}
+    user_name_map = {u.user_id: (u.username or "") for u in User.query.all()}
+
+    db_ok = True
+    try:
+        db.session.execute(select(1)).scalar()
+    except Exception:
+        db_ok = False
+
     return render_template('super_admin/dashboard.html', 
+                           now=now,
                            total_trusts=total_trusts,
                            total_institutes=total_institutes,
                            total_users=total_users,
+                           total_students=total_students,
+                           total_faculty=total_faculty,
                            active_messages=active_messages,
-                           is_maintenance=is_maintenance)
+                           is_maintenance=is_maintenance,
+                           db_ok=db_ok,
+                           suspended_trusts=suspended_trusts,
+                           risk_list=risk_list,
+                           expiring_soon_count=len(expiring_soon),
+                           expired_count=len(expired),
+                           recent_imports=recent_imports,
+                           recent_import_errors=recent_import_errors,
+                           recent_audit=recent_audit,
+                           trust_name_map=trust_name_map,
+                           program_name_map=program_name_map,
+                           user_name_map=user_name_map)
 
 # ==========================================
 # SYSTEM MESSAGES
@@ -91,10 +148,38 @@ def toggle_message(msg_id):
 @login_required
 @super_admin_required
 def tenants():
-    trusts = Trust.query.all()
+    trusts = Trust.query.order_by(Trust.trust_name.asc()).all()
     # We can also list institutes if we want granular control
     institutes = Institute.query.all()
-    return render_template('super_admin/tenants.html', trusts=trusts, institutes=institutes)
+    now = datetime.utcnow()
+    inst_counts = {tid: n for (tid, n) in db.session.execute(select(Institute.trust_id_fk, func.count()).group_by(Institute.trust_id_fk)).all()}
+    stu_counts = {tid: n for (tid, n) in db.session.execute(select(Student.trust_id_fk, func.count()).group_by(Student.trust_id_fk)).all()}
+    fac_counts = {tid: n for (tid, n) in db.session.execute(select(Faculty.trust_id_fk, func.count()).group_by(Faculty.trust_id_fk)).all()}
+    user_counts = {tid: n for (tid, n) in db.session.execute(select(User.trust_id_fk, func.count()).group_by(User.trust_id_fk)).all()}
+    meta = {}
+    for t in trusts:
+        end_at = getattr(t, "subscription_end_at", None)
+        grace = getattr(t, "subscription_grace_days", 0) or 0
+        days_left = None
+        is_expired = False
+        if end_at:
+            try:
+                days_left = (end_at - now).days
+                is_expired = (now > (end_at + timedelta(days=int(grace))))
+            except Exception:
+                days_left = None
+                is_expired = False
+        meta[t.trust_id] = {
+            "end_at": end_at,
+            "days_left": days_left,
+            "grace_days": grace,
+            "is_expired": is_expired,
+            "institutes": inst_counts.get(t.trust_id, 0),
+            "students": stu_counts.get(t.trust_id, 0),
+            "faculty": fac_counts.get(t.trust_id, 0),
+            "users": user_counts.get(t.trust_id, 0),
+        }
+    return render_template('super_admin/tenants.html', trusts=trusts, institutes=institutes, meta=meta, now=now)
 
 @super_admin.route('/trusts/<int:trust_id>/toggle', methods=['POST'])
 @login_required
@@ -102,9 +187,104 @@ def tenants():
 def toggle_trust(trust_id):
     trust = Trust.query.get_or_404(trust_id)
     trust.is_active = not trust.is_active
+    if trust.is_active:
+        trust.suspended_at = None
+        trust.suspended_reason = None
+    else:
+        trust.suspended_at = datetime.utcnow()
     db.session.commit()
     status = "Active" if trust.is_active else "Suspended"
     flash(f"Trust '{trust.trust_name}' is now {status}.", "warning" if not trust.is_active else "success")
+    return redirect(url_for('super_admin.tenants'))
+
+
+@super_admin.route('/trusts/<int:trust_id>/subscription', methods=['POST'])
+@login_required
+@super_admin_required
+def update_trust_subscription(trust_id):
+    trust = Trust.query.get_or_404(trust_id)
+    mode = (request.form.get('mode') or 'one_year').strip().lower()
+    end_date = (request.form.get('end_date') or '').strip()
+    grace_days_raw = (request.form.get('grace_days') or '').strip()
+    reason = (request.form.get('reason') or '').strip()
+    try:
+        grace_days = int(grace_days_raw) if grace_days_raw else 0
+    except Exception:
+        grace_days = 0
+
+    now = datetime.utcnow()
+    if not trust.subscription_start_at:
+        trust.subscription_start_at = now
+
+    if mode == 'one_year':
+        trust.subscription_start_at = now
+        trust.subscription_end_at = now + timedelta(days=365)
+    else:
+        try:
+            dt = datetime.strptime(end_date, '%Y-%m-%d')
+            trust.subscription_end_at = dt.replace(hour=23, minute=59, second=59)
+            if not trust.subscription_start_at:
+                trust.subscription_start_at = now
+        except Exception:
+            flash("Invalid end date.", "danger")
+            return redirect(url_for('super_admin.tenants'))
+
+    trust.subscription_grace_days = max(0, min(60, grace_days))
+    if reason:
+        trust.suspended_reason = reason
+    db.session.commit()
+    flash(f"Subscription updated for '{trust.trust_name}'.", "success")
+    return redirect(url_for('super_admin.tenants'))
+
+
+@super_admin.route('/trusts/<int:trust_id>/notify-tenure', methods=['POST'])
+@login_required
+@super_admin_required
+def notify_tenure(trust_id):
+    trust = Trust.query.get_or_404(trust_id)
+    now = datetime.utcnow()
+    end_at = getattr(trust, "subscription_end_at", None)
+    if not end_at:
+        flash("Subscription end date is not set.", "warning")
+        return redirect(url_for('super_admin.tenants'))
+    try:
+        days_left = (end_at - now).days
+    except Exception:
+        days_left = None
+
+    title = f"Subscription Notice: {trust.trust_name}"
+    content = f"Your subscription tenure will end on {end_at.strftime('%Y-%m-%d')}. Please renew to avoid service interruption."
+    if days_left is not None:
+        content = f"Your subscription tenure will end in {days_left} day(s) on {end_at.strftime('%Y-%m-%d')}. Please renew to avoid service interruption."
+
+    msg = SystemMessage(
+        title=title,
+        content=content,
+        message_type="warning" if (days_left is None or days_left > 7) else "danger",
+        target_role="all",
+        target_trust_id=trust.trust_id,
+        start_date=datetime.now(timezone.utc),
+        end_date=datetime.now(timezone.utc) + timedelta(days=45),
+        is_active=True,
+    )
+    db.session.add(msg)
+    trust.last_tenure_notice_at = now
+    db.session.commit()
+
+    try:
+        from ..email_utils import send_email
+        to_addr = getattr(trust, "contact_email", None)
+        if to_addr:
+            send_email(
+                subject=title,
+                to_address=to_addr,
+                text_body=content,
+                html_body=f"<p>{content}</p>",
+            )
+    except Exception:
+        pass
+
+    flash(f"Tenure notice sent for '{trust.trust_name}'.", "success")
     return redirect(url_for('super_admin.tenants'))
 
 @super_admin.route('/institutes/<int:inst_id>/toggle', methods=['POST'])
@@ -136,7 +316,15 @@ def create_trust():
         flash("Trust Code must be unique.", "danger")
         return redirect(url_for('super_admin.tenants'))
         
-    new_trust = Trust(trust_name=name, trust_code=code, subscription_plan=plan)
+    now = datetime.utcnow()
+    new_trust = Trust(
+        trust_name=name,
+        trust_code=code,
+        subscription_plan=plan,
+        subscription_start_at=now,
+        subscription_end_at=now + timedelta(days=365),
+        subscription_grace_days=7,
+    )
     db.session.add(new_trust)
     db.session.commit()
     

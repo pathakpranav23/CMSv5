@@ -19,11 +19,17 @@ coverage.xml
 .mypy_cache
 .pytest_cache
 .hypotheses
-# *.db
-# *.sqlite3
+*.db
+*.sqlite3
+cms_*.db
 instance/
 .webassets-cache
 .env
 .DS_Store
 test.db
 ~$*
+DATA FOR IMPORT EXPORT/
+cms_app/static/imports/
+cms_app/static/uploads/
+Token.txt
+tmp*

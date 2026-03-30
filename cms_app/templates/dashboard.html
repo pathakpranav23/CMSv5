@@ -62,6 +62,7 @@
           {% endif %}
           {% if current_user.is_authenticated %}
             <form method="post" action="{{ url_for('main.announcement_dismiss', announcement_id=a.announcement_id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-sm btn-outline-secondary">{{ t('Dismiss') }}</button>
             </form>
           {% endif %}

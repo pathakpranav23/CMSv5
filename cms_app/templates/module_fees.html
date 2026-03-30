@@ -10,6 +10,7 @@
   <p class="text-muted soft-hint">{{ t('Manage fee heads, enter semester-wise amounts, and view structures.') }}</p>
 
   <div class="row g-4 fees-grid">
+    {% if current_user.is_authenticated and (current_user.role|lower) in ['admin','clerk'] %}
     <div class="col-md-4 fees-item fees-item--heads">
       <div class="card fees-card fees-card--heads h-100 position-relative">
         <div class="card-body">
@@ -40,6 +41,7 @@
         </div>
       </div>
     </div>
+    {% endif %}
     <div class="col-md-4 fees-item fees-item--structure">
       <div class="card fees-card fees-card--structure h-100 position-relative">
         <div class="card-body">
@@ -65,7 +67,7 @@
         <div class="card-body">
           <div class="card-icon" aria-hidden="true"><i class="bi bi-wallet2"></i></div>
           <h5 class="card-title">{{ t('Program Bank Details') }}</h5>
-          <p class="card-text">{{ t('Manage bank info and UPI QR per program for receipts.') }}</p>
+          <p class="card-text">{{ t('View bank info and UPI QR per program for receipts.') }}</p>
           <a href="{{ url_for('main.fees_bank_details') }}" class="btn btn-light btn-fees stretched-link" aria-label="Open Bank Details">{{ t('Open Bank Details') }}</a>
         </div>
       </div>

@@ -1,19 +1,114 @@
-from flask import render_template, request, flash, redirect, url_for
+from flask import render_template, request, flash, redirect, url_for, session
 import json
 from flask_login import login_required, current_user
 from sqlalchemy import select, func, and_, or_, case, cast
 from . import exams_bp
 from .. import db, csrf_required
-from ..models import ExamScheme, StudentSemesterResult, ExamMark, Student, Program, Subject, StudentSubjectEnrollment, SubjectType, CreditStructure
+from ..models import ExamScheme, StudentSemesterResult, ExamMark, Student, Program, Subject, StudentSubjectEnrollment, SubjectType, CreditStructure, CourseAssignment, DataAuditLog, Division
 from ..main.routes import academic_year_options, current_academic_year, _program_dropdown_context
 from ..decorators import role_required
 from .services import resolve_exam_limits, calculate_exam_results
+from datetime import datetime, timedelta
+
+def _effective_trust_id():
+    if not getattr(current_user, "is_authenticated", False):
+        return None
+    if getattr(current_user, "is_super_admin", False):
+        try:
+            return int(session.get("active_trust_id") or 0) or None
+        except Exception:
+            return None
+    return getattr(current_user, "trust_id_fk", None)
+
+def _require_exam_view_access():
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if not (getattr(current_user, "is_super_admin", False) or role in ("admin", "principal", "clerk", "faculty")):
+        try:
+            flash("You do not have permission to access Exams.", "danger")
+        except Exception:
+            pass
+        return redirect(url_for("main.dashboard"))
+    return None
+
+def _require_exam_edit_access(scheme: ExamScheme, subject_id: int = None):
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if getattr(current_user, "is_super_admin", False) or role in ("admin", "principal", "clerk"):
+        return None
+    if role == "faculty" and subject_id:
+        try:
+            uid = getattr(current_user, "user_id", None)
+            q = select(CourseAssignment).where(
+                CourseAssignment.is_active.is_(True),
+                CourseAssignment.faculty_id_fk == uid,
+                CourseAssignment.subject_id_fk == int(subject_id),
+            )
+            if getattr(scheme, "academic_year", None):
+                q = q.where(or_(CourseAssignment.academic_year == scheme.academic_year, CourseAssignment.academic_year.is_(None)))
+            row = db.session.execute(q.limit(1)).scalars().first()
+            if row:
+                return None
+        except Exception:
+            pass
+    try:
+        flash("You do not have permission to enter marks for this subject.", "danger")
+    except Exception:
+        pass
+    return redirect(url_for("exams.dashboard"))
+
+def _require_exam_admin_access():
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if getattr(current_user, "is_super_admin", False) or role in ("admin", "principal"):
+        return None
+    try:
+        flash("Only Admin/Principal can perform this action.", "danger")
+    except Exception:
+        pass
+    return redirect(url_for("exams.dashboard"))
+
+def _is_scheme_locked(scheme: ExamScheme) -> bool:
+    if not getattr(scheme, "is_frozen", False):
+        return False
+    until = getattr(scheme, "unlock_until", None)
+    if not until:
+        return True
+    try:
+        return datetime.utcnow() > until
+    except Exception:
+        return True
+
+def _mark_is_pass(scheme: ExamScheme, internal: float, external: float, total: float, is_absent: bool) -> bool:
+    if is_absent:
+        return False
+    if getattr(scheme, "min_internal_marks", None) is not None:
+        try:
+            if internal is None or float(internal) < float(scheme.min_internal_marks or 0):
+                return False
+        except Exception:
+            return False
+    if getattr(scheme, "min_external_marks", None) is not None:
+        try:
+            if external is None or float(external) < float(scheme.min_external_marks or 0):
+                return False
+        except Exception:
+            return False
+    if getattr(scheme, "min_total_marks", None) is not None:
+        try:
+            if total is None or float(total) < float(scheme.min_total_marks or 0):
+                return False
+        except Exception:
+            return False
+    return True
 
 @exams_bp.route("/academics/exams/<int:scheme_id>/calculate", methods=["POST"])
 @login_required
-@role_required("admin", "principal")
 @csrf_required
 def calculate_results(scheme_id):
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
+    rv_admin = _require_exam_admin_access()
+    if rv_admin:
+        return rv_admin
     """
     Triggers result calculation for an exam scheme.
     Computes Grades, SGPA, and updates StudentSemesterResult.
@@ -35,8 +130,10 @@ def calculate_results(scheme_id):
 
 @exams_bp.route("/academics/exams", methods=["GET"])
 @login_required
-@role_required("admin", "principal", "clerk", "faculty")
 def dashboard():
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
     """
     Exam Dashboard.
     Lists recent exam schemes.
@@ -44,9 +141,25 @@ def dashboard():
     # Filter logic (program)
     ctx = _program_dropdown_context(request.args.get("program_id"), include_admin_all=True, prefer_user_program_default=True)
     selected_program_id = ctx.get("selected_program_id")
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
     
     q = select(ExamScheme).order_by(ExamScheme.created_at.desc())
     
+    if effective_trust_id:
+        try:
+            from ..models import Institute
+            q = q.join(Program, ExamScheme.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            pass
+
     if selected_program_id:
         q = q.filter(ExamScheme.program_id_fk == selected_program_id)
         
@@ -56,9 +169,19 @@ def dashboard():
     scheme_data = []
     for s in schemes:
         p = db.session.get(Program, s.program_id_fk)
+        is_locked = _is_scheme_locked(s)
+        try:
+            pat = f"\"scheme_id\": {int(s.scheme_id)}"
+            flips_count = db.session.scalar(
+                select(func.count()).select_from(DataAuditLog).where(DataAuditLog.action == "exam_pass_fail_flip").where(DataAuditLog.selection_json.like(f"%{pat}%"))
+            ) or 0
+        except Exception:
+            flips_count = 0
         scheme_data.append({
             "scheme": s,
-            "program_name": p.program_name if p else "Unknown"
+            "program_name": p.program_name if p else "Unknown",
+            "is_locked": is_locked,
+            "flips_count": flips_count,
         })
         
     return render_template(
@@ -70,8 +193,13 @@ def dashboard():
 
 @exams_bp.route("/academics/exams/new", methods=["GET"])
 @login_required
-@role_required("admin", "principal")
 def create_scheme():
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
+    rv_admin = _require_exam_admin_access()
+    if rv_admin:
+        return rv_admin
     """
     Redirects to the exam rules page to create a new scheme.
     """
@@ -79,8 +207,10 @@ def create_scheme():
 
 @exams_bp.route("/academics/exams/<int:scheme_id>/marks-entry", methods=["GET"])
 @login_required
-@role_required("admin", "principal", "clerk", "faculty")
 def marks_entry(scheme_id):
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
     scheme = db.session.get(ExamScheme, scheme_id)
     if not scheme:
         flash("Exam not found.", "danger")
@@ -112,12 +242,16 @@ def marks_entry(scheme_id):
         "max_external": scheme.max_external_marks,
         "max_total": scheme.max_total_marks
     }
+    is_locked = _is_scheme_locked(scheme)
     
     if selected_subject_id:
         selected_subject = db.session.get(Subject, selected_subject_id)
         if selected_subject:
+            rv2 = _require_exam_edit_access(scheme, selected_subject_id)
+            if rv2:
+                return rv2
             # Resolve limits dynamically based on credit rules
-            current_limits = _resolve_exam_limits(scheme, selected_subject)
+            current_limits = resolve_exam_limits(scheme, selected_subject)
 
             # Load Students Enrolled in this subject
             # Join StudentSubjectEnrollment
@@ -157,35 +291,47 @@ def marks_entry(scheme_id):
         students=students,
         marks_map=marks_map,
         current_limits=current_limits,
-        division_map=division_map
+        division_map=division_map,
+        is_locked=is_locked
     )
 
 @exams_bp.route("/academics/exams/<int:scheme_id>/save-marks", methods=["POST"])
 @login_required
-@role_required("admin", "principal", "clerk", "faculty")
 @csrf_required
 def save_marks(scheme_id):
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
     scheme = db.session.get(ExamScheme, scheme_id)
     if not scheme:
         flash("Exam not found", "danger")
         return redirect(url_for("exams.dashboard"))
+
+    if _is_scheme_locked(scheme):
+        flash("This scheme is frozen. Ask Admin/Principal to unlock with reason.", "warning")
+        return redirect(url_for("exams.marks_entry", scheme_id=scheme_id))
         
     subject_id = request.form.get("subject_id")
     if not subject_id:
         flash("Subject missing.", "danger")
         return redirect(url_for("exams.marks_entry", scheme_id=scheme_id))
+    rv2 = _require_exam_edit_access(scheme, int(subject_id))
+    if rv2:
+        return rv2
         
     subject = db.session.get(Subject, int(subject_id))
     
     # Resolve limits for validation
-    limits = _resolve_exam_limits(scheme, subject)
+    limits = resolve_exam_limits(scheme, subject)
     
     updates = 0
     inserts = 0
     errors = []
     
     student_ids = request.form.getlist("student_ids")
+    changed_students = 0
     
+    flips = 0
     for enrollment in student_ids:
         internal_raw = request.form.get(f"internal_{enrollment}")
         external_raw = request.form.get(f"external_{enrollment}")
@@ -216,6 +362,19 @@ def save_marks(scheme_id):
             )
         ).scalars().first()
         
+        old_internal = None
+        old_external = None
+        old_total = None
+        old_absent = False
+        old_pass = None
+
+        if mark:
+            old_internal = mark.internal_marks
+            old_external = mark.external_marks
+            old_total = mark.total_marks
+            old_absent = bool(mark.is_absent)
+            old_pass = _mark_is_pass(scheme, old_internal, old_external, old_total, old_absent)
+
         if not mark:
             # Only create if there is some data to save
             if internal is None and external is None and not is_absent:
@@ -240,13 +399,82 @@ def save_marks(scheme_id):
         
         # Calculate Total
         total = 0
-        if internal: total += internal
-        if external: total += external
+        if internal is not None:
+            total += internal
+        if external is not None:
+            total += external
         mark.total_marks = total
+
+        changed_students += 1
+
+        if getattr(scheme, "is_frozen", False):
+            try:
+                unlocked = not _is_scheme_locked(scheme)
+            except Exception:
+                unlocked = False
+            if unlocked:
+                new_pass = _mark_is_pass(scheme, internal, external, total, is_absent)
+                if old_pass is not None and new_pass != old_pass:
+                    flips += 1
+                    try:
+                        db.session.add(
+                            DataAuditLog(
+                                action="exam_pass_fail_flip",
+                                actor_user_id_fk=getattr(current_user, "user_id", None),
+                                actor_role=(getattr(current_user, "role", "") or "").strip().lower(),
+                                trust_id_fk=_effective_trust_id(),
+                                program_id_fk=getattr(scheme, "program_id_fk", None),
+                                semester=getattr(scheme, "semester", None),
+                                selection_json=json.dumps(
+                                    {"scheme_id": scheme_id, "subject_id": int(subject_id), "student_id": enrollment}
+                                ),
+                                counts_json=json.dumps(
+                                    {
+                                        "old_pass": bool(old_pass),
+                                        "new_pass": bool(new_pass),
+                                        "old_total": old_total,
+                                        "new_total": total,
+                                        "unlock_until": (scheme.unlock_until.isoformat() if getattr(scheme, "unlock_until", None) else None),
+                                        "unlock_reason": (scheme.unlock_reason or ""),
+                                    }
+                                ),
+                            )
+                        )
+                    except Exception:
+                        pass
         
     try:
+        try:
+            db.session.add(
+                DataAuditLog(
+                    action="exam_marks_save",
+                    actor_user_id_fk=getattr(current_user, "user_id", None),
+                    actor_role=(getattr(current_user, "role", "") or "").strip().lower(),
+                    trust_id_fk=_effective_trust_id(),
+                    program_id_fk=getattr(scheme, "program_id_fk", None),
+                    semester=getattr(scheme, "semester", None),
+                    selection_json=json.dumps({"scheme_id": scheme_id, "subject_id": int(subject_id)}),
+                    counts_json=json.dumps(
+                        {
+                            "inserts": inserts,
+                            "updates": updates,
+                            "changed_students": changed_students,
+                            "is_frozen": bool(getattr(scheme, "is_frozen", False)),
+                            "unlock_until": (scheme.unlock_until.isoformat() if getattr(scheme, "unlock_until", None) else None),
+                            "flips_flagged": flips,
+                        }
+                    ),
+                )
+            )
+        except Exception:
+            pass
+        if flips:
+            db.session.flush()
         db.session.commit()
-        flash(f"Marks saved. ({inserts} added, {updates} updated)", "success")
+        if flips:
+            flash(f"Marks saved. ({inserts} added, {updates} updated). Flips flagged: {flips}", "warning")
+        else:
+            flash(f"Marks saved. ({inserts} added, {updates} updated)", "success")
     except Exception as e:
         db.session.rollback()
         flash(f"Error saving marks: {str(e)}", "danger")
@@ -255,8 +483,10 @@ def save_marks(scheme_id):
 
 @exams_bp.route("/academics/exams/<int:scheme_id>/result", methods=["GET"])
 @login_required
-@role_required("admin", "principal", "clerk", "faculty")
 def result_view(scheme_id):
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
     scheme = db.session.get(ExamScheme, scheme_id)
     if not scheme:
         flash("Exam not found.", "danger")
@@ -394,8 +624,13 @@ def student_result_view():
 
 @exams_bp.route("/admin/exams/debug", methods=["GET"])
 @login_required
-@role_required("admin", "principal")
 def debug_exam_schemes():
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
+    rv_admin = _require_exam_admin_access()
+    if rv_admin:
+        return rv_admin
     """List all exam schemes for debugging/viewing."""
     schemes = ExamScheme.query.order_by(ExamScheme.created_at.desc()).all()
     # Eager load programs for display if needed, but simple query is fine for now
@@ -407,8 +642,13 @@ def debug_exam_schemes():
 
 @exams_bp.route("/admin/exams/debug/<int:scheme_id>", methods=["GET"])
 @login_required
-@role_required("admin", "principal")
 def debug_exam_results(scheme_id):
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
+    rv_admin = _require_exam_admin_access()
+    if rv_admin:
+        return rv_admin
     """View results for a specific scheme."""
     scheme = ExamScheme.query.get_or_404(scheme_id)
     program = Program.query.get(scheme.program_id_fk)
@@ -461,9 +701,15 @@ def debug_exam_results(scheme_id):
 
 @exams_bp.route("/academics/exam-rules", methods=["GET", "POST"])
 @login_required
-@role_required("admin", "principal", "clerk")
 @csrf_required
 def exam_rules():
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if not (getattr(current_user, "is_super_admin", False) or role in ("admin", "principal", "clerk")):
+        flash("You do not have permission to edit exam rules.", "danger")
+        return redirect(url_for("exams.dashboard"))
     ctx = _program_dropdown_context(
         request.values.get("program_id"),
         include_admin_all=True,
@@ -636,3 +882,130 @@ def exam_rules():
         existing_credits=existing_credits,
         subject_type_codes=subject_type_codes
     )
+
+
+@exams_bp.route("/academics/exams/<int:scheme_id>/freeze", methods=["POST"])
+@login_required
+@csrf_required
+def scheme_freeze(scheme_id):
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if not (getattr(current_user, "is_super_admin", False) or role in ("admin", "principal")):
+        flash("Only Admin/Principal can freeze an exam scheme.", "danger")
+        return redirect(url_for("exams.dashboard"))
+    scheme = db.session.get(ExamScheme, scheme_id)
+    if not scheme:
+        flash("Exam not found.", "danger")
+        return redirect(url_for("exams.dashboard"))
+    scheme.is_frozen = True
+    scheme.frozen_at = datetime.utcnow()
+    scheme.frozen_by_fk = getattr(current_user, "user_id", None)
+    scheme.unlock_until = None
+    scheme.unlock_by_fk = None
+    scheme.unlock_reason = None
+    try:
+        db.session.add(
+            DataAuditLog(
+                action="exam_scheme_freeze",
+                actor_user_id_fk=getattr(current_user, "user_id", None),
+                actor_role=role,
+                trust_id_fk=_effective_trust_id(),
+                program_id_fk=getattr(scheme, "program_id_fk", None),
+                semester=getattr(scheme, "semester", None),
+                selection_json=json.dumps({"scheme_id": scheme_id}),
+                counts_json=json.dumps({"is_frozen": True}),
+            )
+        )
+    except Exception:
+        pass
+    try:
+        db.session.commit()
+        flash("Scheme frozen.", "success")
+    except Exception:
+        db.session.rollback()
+        flash("Failed to freeze scheme.", "danger")
+    return redirect(url_for("exams.dashboard"))
+
+
+@exams_bp.route("/academics/exams/<int:scheme_id>/unlock", methods=["POST"])
+@login_required
+@csrf_required
+def scheme_unlock(scheme_id):
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if not (getattr(current_user, "is_super_admin", False) or role in ("admin", "principal")):
+        flash("Only Admin/Principal can unlock an exam scheme.", "danger")
+        return redirect(url_for("exams.dashboard"))
+    scheme = db.session.get(ExamScheme, scheme_id)
+    if not scheme:
+        flash("Exam not found.", "danger")
+        return redirect(url_for("exams.dashboard"))
+    if not getattr(scheme, "is_frozen", False):
+        scheme.is_frozen = True
+    reason = (request.form.get("reason") or "").strip()
+    if not reason:
+        flash("Unlock reason is required.", "warning")
+        return redirect(url_for("exams.dashboard"))
+    duration_raw = (request.form.get("duration_minutes") or "30").strip()
+    try:
+        minutes = int(duration_raw)
+    except Exception:
+        minutes = 30
+    minutes = min(max(minutes, 5), 240)
+    until = datetime.utcnow() + timedelta(minutes=minutes)
+    scheme.unlock_until = until
+    scheme.unlock_by_fk = getattr(current_user, "user_id", None)
+    scheme.unlock_reason = reason
+    try:
+        db.session.add(
+            DataAuditLog(
+                action="exam_scheme_unlock",
+                actor_user_id_fk=getattr(current_user, "user_id", None),
+                actor_role=role,
+                trust_id_fk=_effective_trust_id(),
+                program_id_fk=getattr(scheme, "program_id_fk", None),
+                semester=getattr(scheme, "semester", None),
+                selection_json=json.dumps({"scheme_id": scheme_id}),
+                counts_json=json.dumps({"unlock_until": until.isoformat(), "reason": reason}),
+            )
+        )
+    except Exception:
+        pass
+    try:
+        db.session.commit()
+        flash(f"Scheme unlocked for {minutes} minutes.", "warning")
+    except Exception:
+        db.session.rollback()
+        flash("Failed to unlock scheme.", "danger")
+    return redirect(url_for("exams.dashboard"))
+
+
+@exams_bp.route("/academics/exams/<int:scheme_id>/flips", methods=["GET"])
+@login_required
+def scheme_flips(scheme_id):
+    rv = _require_exam_view_access()
+    if rv:
+        return rv
+    scheme = db.session.get(ExamScheme, scheme_id)
+    if not scheme:
+        flash("Exam not found.", "danger")
+        return redirect(url_for("exams.dashboard"))
+    pat = f"\"scheme_id\": {scheme_id}"
+    q = select(DataAuditLog).where(DataAuditLog.action == "exam_pass_fail_flip").where(DataAuditLog.selection_json.like(f"%{pat}%")).order_by(DataAuditLog.created_at.desc()).limit(200)
+    rows = db.session.execute(q).scalars().all()
+    items = []
+    for r in rows:
+        try:
+            sel = json.loads(r.selection_json or "{}")
+        except Exception:
+            sel = {}
+        try:
+            cnt = json.loads(r.counts_json or "{}")
+        except Exception:
+            cnt = {}
+        items.append({"log": r, "sel": sel, "cnt": cnt})
+    return render_template("exams/flips.html", scheme=scheme, items=items)

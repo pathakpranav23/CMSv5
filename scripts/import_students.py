@@ -18,7 +18,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from cms_app import create_app, db
-from cms_app.models import Program, Division, Student, User, ProgramDivisionPlan
+from cms_app.models import Program, Division, Student, User, ProgramDivisionPlan, Institute
 
 
 HEADER_MAP: Dict[str, List[str]] = {
@@ -184,7 +184,7 @@ def to_int(val):
         return None
 
 
-def ensure_student_user(enrollment_no, mobile, program_id):
+def ensure_student_user(enrollment_no, mobile, program_id, trust_id=None):
     """
     Ensures a User account exists for the student.
     Strategy:
@@ -222,9 +222,21 @@ def ensure_student_user(enrollment_no, mobile, program_id):
                     mobile=mobile_digits,
                     must_change_password=True,
                     is_active=True,
+                    trust_id_fk=trust_id,
                 )
                 db.session.add(user)
                 db.session.flush()
+            else:
+                try:
+                    if hasattr(user, "program_id_fk") and program_id:
+                        user.program_id_fk = program_id
+                except Exception:
+                    pass
+                try:
+                    if trust_id and hasattr(user, "trust_id_fk"):
+                        user.trust_id_fk = trust_id
+                except Exception:
+                    pass
             return user.user_id
         except OperationalError as e:
             msg = str(e).lower()
@@ -248,20 +260,36 @@ def ensure_student_user(enrollment_no, mobile, program_id):
 
 
 
-def import_excel(path: str, program_name: str = None, semester_hint: int = None, dry_run: bool = False):
+def import_excel(path: str, program_id: int = None, trust_id: int = None, program_name: str = None, semester_hint: int = None, dry_run: bool = False):
     # Determine semester
     semester = semester_hint or find_semester_from_filename(path) or 0
 
-    # Determine program name from filename if not provided
-    if not program_name:
-        program_name = detect_program_from_filename(path)
+    program = None
+    if program_id:
+        program = db.session.get(Program, int(program_id))
+        if not program:
+            raise ValueError("Program not found.")
+        if trust_id:
+            ok = db.session.execute(
+                select(func.count())
+                .select_from(Program)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Program.program_id == program.program_id)
+                .filter(Institute.trust_id_fk == int(trust_id))
+            ).scalar() or 0
+            if ok <= 0:
+                raise ValueError("Program is not in the selected tenant workspace.")
+    else:
+        # Determine program name from filename if not provided
+        if not program_name:
+            program_name = detect_program_from_filename(path)
 
-    # Ensure program exists
-    program = db.session.execute(select(Program).filter_by(program_name=program_name)).scalars().first()
-    if not program:
-        program = Program(program_name=program_name, program_duration_years=3)
-        db.session.add(program)
-        db.session.flush()
+        # Ensure program exists (legacy behavior)
+        program = db.session.execute(select(Program).filter_by(program_name=program_name)).scalars().first()
+        if not program:
+            program = Program(program_name=program_name, program_duration_years=3)
+            db.session.add(program)
+            db.session.flush()
 
     created = 0
     updated = 0
@@ -271,9 +299,10 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
     errors: List[str] = []
 
     # Get all existing students for this program and semester (for potential deletion)
-    existing_students = db.session.execute(
-        select(Student).filter_by(program_id_fk=program.program_id, current_semester=semester)
-    ).scalars().all()
+    existing_q = select(Student).filter_by(program_id_fk=program.program_id, current_semester=semester)
+    if trust_id:
+        existing_q = existing_q.filter(Student.trust_id_fk == int(trust_id))
+    existing_students = db.session.execute(existing_q).scalars().all()
     processed_enrollments = set()
     mediums_seen = set()
 
@@ -392,15 +421,19 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
             category = cell_to_str(data.get("category"))
 
             # Ensure User exists
-            user_id = ensure_student_user(enrollment_no, mobile, program.program_id)
+            user_id = ensure_student_user(enrollment_no, mobile, program.program_id, trust_id=trust_id)
 
-            student = db.session.execute(select(Student).filter_by(enrollment_no=enrollment_no)).scalars().first()
+            st_q = select(Student).filter_by(enrollment_no=enrollment_no)
+            if trust_id:
+                st_q = st_q.filter(Student.trust_id_fk == int(trust_id))
+            student = db.session.execute(st_q).scalars().first()
             if not student:
                 student = Student(
                     enrollment_no=enrollment_no,
                     user_id_fk=user_id,
                     program_id_fk=program.program_id,
                     division_id_fk=division.division_id,
+                    trust_id_fk=trust_id,
                     last_name=surname,
                     first_name=student_name,
                     father_name=father_name,
@@ -421,6 +454,11 @@ def import_excel(path: str, program_name: str = None, semester_hint: int = None,
             else:
                 try:
                     student.is_active = True
+                except Exception:
+                    pass
+                try:
+                    if trust_id and hasattr(student, "trust_id_fk"):
+                        student.trust_id_fk = trust_id
                 except Exception:
                     pass
                 student.program_id_fk = program.program_id

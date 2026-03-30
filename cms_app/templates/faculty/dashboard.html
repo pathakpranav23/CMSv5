@@ -4,16 +4,25 @@
 
 {% block content %}
 <div class="container-fluid py-4">
-    <!-- Welcome Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h1 class="h3 mb-0 text-gray-800">Welcome, {{ faculty.full_name }}</h1>
-            <p class="text-muted small mb-0">{{ faculty.designation }} | {{ faculty.department }}</p>
-        </div>
-        <div>
-            <a href="{{ url_for('faculty.my_timetable') }}" class="btn btn-primary">
-                <i class="bi bi-calendar-week"></i> My Timetable
-            </a>
+    <div class="faculty-hero mb-4">
+        <div class="card hero-card">
+            <div class="card-body d-flex flex-wrap align-items-center justify-content-between gap-3">
+                <div>
+                    <div class="small text-muted text-uppercase" style="letter-spacing: 0.12em;">Faculty Console</div>
+                    <h1 class="h3 mb-1">Welcome back, {{ faculty.full_name }}</h1>
+                    <div class="text-muted small">
+                        {{ faculty.designation }}{% if faculty.department %} · {{ faculty.department }}{% endif %}
+                    </div>
+                    <div class="small mt-2" style="color: var(--text-muted);">
+                        Quick start: mark attendance, share materials, and keep your classes on track.
+                    </div>
+                </div>
+                <div class="d-flex gap-2 flex-wrap">
+                    <a href="{{ url_for('faculty.my_timetable') }}" class="btn btn-primary">
+                        <i class="bi bi-calendar-week"></i> My Timetable
+                    </a>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -59,59 +68,6 @@
                     <div class="ms-3">
                         <i class="bi bi-journal-bookmark fs-3 text-info"></i>
                     </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="row mb-4">
-        <div class="col-xl-4 col-md-6 mb-4">
-            <!-- At-Risk Students Card -->
-            <div class="card shadow-sm mb-4 border-left-warning">
-                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                    <h6 class="m-0 font-weight-bold text-dark"><i class="bi bi-exclamation-triangle-fill me-2 text-warning"></i>At-Risk Students (&lt; 60% Attendance)</h6>
-                    <span class="badge bg-warning text-dark">{{ at_risk_students|length }}</span>
-                </div>
-                <div class="card-body">
-                    {% if at_risk_students %}
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle">
-                            <thead>
-                                <tr>
-                                    <th>Student</th>
-                                    <th>Subject</th>
-                                    <th>Attendance</th>
-                                    <th>Action</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for item in at_risk_students %}
-                                <tr>
-                                    <td>
-                                        <div class="fw-bold">{{ item.student.first_name }} {{ item.student.surname }}</div>
-                                        <div class="small text-muted">{{ item.student.enrollment_no }}</div>
-                                    </td>
-                                    <td>{{ item.subject_name }}</td>
-                                    <td>
-                                        <div class="fw-bold text-dark">{{ item.percentage }}%</div>
-                                        <div class="small text-muted">{{ item.attended }}/{{ item.total }} lectures</div>
-                                    </td>
-                                    <td>
-                                        <a href="mailto:{{ item.student.email }}?subject=Low Attendance Warning in {{ item.subject_name }}&body=Dear {{ item.student.first_name }}, your attendance in {{ item.subject_name }} is currently {{ item.percentage }}% ({{ item.attended }}/{{ item.total }} lectures). Please attend classes regularly." class="btn btn-sm btn-outline-warning text-dark">
-                                            <i class="bi bi-envelope"></i> Notify
-                                        </a>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                    {% else %}
-                    <div class="text-center py-3 text-success">
-                        <i class="bi bi-check-circle-fill fs-4 mb-2"></i>
-                        <p class="mb-0">Great! No students are below 60% attendance in your subjects.</p>
-                    </div>
-                    {% endif %}
                 </div>
             </div>
         </div>
@@ -210,6 +166,69 @@
 
         <!-- Quick Stats / Notifications -->
         <div class="col-md-4">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header bg-white py-3">
+                    <button class="btn w-100 d-flex justify-content-between align-items-center p-0 border-0 bg-transparent"
+                            type="button"
+                            data-bs-toggle="collapse"
+                            data-bs-target="#atRiskCollapse"
+                            aria-expanded="false"
+                            aria-controls="atRiskCollapse">
+                        <span class="m-0 fw-semibold text-dark d-flex align-items-center gap-2">
+                            <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                            At-Risk Students (&lt; 60% Attendance)
+                        </span>
+                        <span class="d-flex align-items-center gap-2">
+                            <span class="badge bg-warning text-dark">{{ at_risk_students|length }}</span>
+                            <i class="bi bi-chevron-down"></i>
+                        </span>
+                    </button>
+                </div>
+                <div id="atRiskCollapse" class="collapse">
+                    <div class="card-body">
+                        {% if at_risk_students %}
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Student</th>
+                                        <th>Subject</th>
+                                        <th>Attendance</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for item in at_risk_students %}
+                                    <tr>
+                                        <td>
+                                            <div class="fw-bold">{{ item.student.first_name }} {{ item.student.surname }}</div>
+                                            <div class="small text-muted">{{ item.student.enrollment_no }}</div>
+                                        </td>
+                                        <td>{{ item.subject_name }}</td>
+                                        <td>
+                                            <div class="fw-bold text-dark">{{ item.percentage }}%</div>
+                                            <div class="small text-muted">{{ item.attended }}/{{ item.total }} lectures</div>
+                                        </td>
+                                        <td>
+                                            <a href="mailto:{{ item.student.email }}?subject=Low Attendance Warning in {{ item.subject_name }}&body=Dear {{ item.student.first_name }}, your attendance in {{ item.subject_name }} is currently {{ item.percentage }}% ({{ item.attended }}/{{ item.total }} lectures). Please attend classes regularly."
+                                               class="btn btn-sm btn-outline-warning text-dark">
+                                                <i class="bi bi-envelope"></i> Notify
+                                            </a>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="text-center py-3 text-success">
+                            <i class="bi bi-check-circle-fill fs-4 mb-2"></i>
+                            <p class="mb-0">Great! No students are below 60% attendance in your subjects.</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
             <div class="card shadow-sm mb-4">
                 <div class="card-header bg-white py-3">
                     <h6 class="m-0 font-weight-bold text-primary">Notifications</h6>

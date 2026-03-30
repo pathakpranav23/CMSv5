@@ -6,6 +6,7 @@ from ..decorators import role_required
 from . import faculty_bp
 from sqlalchemy import and_, func, case, distinct
 from datetime import datetime, timedelta, date
+from ..main.routes import _auto_release_empty_semester_course_assignments
 
 @faculty_bp.route("/dashboard")
 @login_required
@@ -16,6 +17,11 @@ def dashboard():
     if not faculty:
         flash("Faculty profile not found.", "danger")
         return redirect(url_for("main.index"))
+
+    try:
+        _auto_release_empty_semester_course_assignments(getattr(current_user, "trust_id_fk", None))
+    except Exception:
+        pass
         
     # 2. Fetch Active Course Assignments
     assignments = (

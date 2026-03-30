@@ -28,6 +28,12 @@ class Trust(db.Model):
     # New: Status for "Kill Switch" per tenant
     is_active = db.Column(db.Boolean, default=True)
     subscription_plan = db.Column(db.String(32), default="basic") # basic, pro, enterprise
+    subscription_start_at = db.Column(db.DateTime)
+    subscription_end_at = db.Column(db.DateTime)
+    subscription_grace_days = db.Column(db.Integer, default=0)
+    last_tenure_notice_at = db.Column(db.DateTime)
+    suspended_at = db.Column(db.DateTime)
+    suspended_reason = db.Column(db.Text)
 
     institutes = db.relationship("Institute", backref="trust", lazy=True)
 
@@ -316,6 +322,12 @@ class ExamScheme(db.Model):
     grading_scheme_json = db.Column(db.Text)
     credit_rules_json = db.Column(db.Text)
     is_active = db.Column(db.Boolean, default=True)
+    is_frozen = db.Column(db.Boolean, default=False)
+    frozen_at = db.Column(db.DateTime)
+    frozen_by_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    unlock_until = db.Column(db.DateTime)
+    unlock_by_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    unlock_reason = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, onupdate=utc_now)
 
@@ -520,6 +532,7 @@ class Announcement(db.Model):
     message = db.Column(db.Text, nullable=False)
     severity = db.Column(db.String(16))
     is_active = db.Column(db.Boolean)
+    trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"))
     program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"))
     start_at = db.Column(db.DateTime)
     end_at = db.Column(db.DateTime)
@@ -679,6 +692,18 @@ class SystemMessage(db.Model):
     
     # Optional: Target specific Trust (if null, applies to all matching target_role)
     target_trust_id = db.Column(db.Integer, nullable=True)
+
+
+class SystemMessageRead(db.Model):
+    __tablename__ = "system_message_reads"
+    read_id = db.Column(db.Integer, primary_key=True)
+    message_id_fk = db.Column(db.Integer, db.ForeignKey("system_messages.message_id"), nullable=False)
+    user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)
+    read_at = db.Column(db.DateTime, default=utc_now)
+
+    __table_args__ = (
+        db.UniqueConstraint("message_id_fk", "user_id_fk", name="uq_system_message_read"),
+    )
 
 
 class SystemConfig(db.Model):

@@ -1,0 +1,152 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h2 class="mb-1">Inbox</h2>
+      <div class="text-muted small">
+        Inbox is personal (you can mark items as read). Notice Board is the public bulletin.
+      </div>
+    </div>
+    <div class="actions d-flex gap-2 flex-wrap">
+      {% if unread_counts and unread_counts.total and unread_counts.total > 0 %}
+      <form method="post" action="{{ url_for('main.inbox_mark_all_read') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-primary btn-sm" type="submit">Mark All Read</button>
+      </form>
+      {% endif %}
+      <a href="{{ url_for('main.notice_board') }}" class="btn btn-outline-secondary btn-sm">Notice Board</a>
+      <a href="{{ url_for('main.notice_archive') }}" class="btn btn-outline-secondary btn-sm">Archive</a>
+    </div>
+  </div>
+
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div class="btn-group">
+      <a class="btn btn-sm {% if tab != 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('main.inbox', tab='unread', kind=kind) }}">Unread</a>
+      <a class="btn btn-sm {% if tab == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('main.inbox', tab='all', kind=kind) }}">All</a>
+    </div>
+    <div class="btn-group">
+      <a class="btn btn-sm {% if kind == 'all' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="{{ url_for('main.inbox', tab=tab, kind='all') }}">All</a>
+      <a class="btn btn-sm {% if kind == 'announcements' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="{{ url_for('main.inbox', tab=tab, kind='announcements') }}">
+        Announcements{% if unread_counts %} ({{ unread_counts.announcements }}){% endif %}
+      </a>
+      <a class="btn btn-sm {% if kind == 'system' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="{{ url_for('main.inbox', tab=tab, kind='system') }}">
+        System{% if unread_counts %} ({{ unread_counts.system }}){% endif %}
+      </a>
+      {% if show_student_tab %}
+      <a class="btn btn-sm {% if kind == 'notifications' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="{{ url_for('main.inbox', tab=tab, kind='notifications') }}">
+        Personal{% if unread_counts %} ({{ unread_counts.notifications }}){% endif %}
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="card shadow-sm">
+        <div class="card-header bg-white d-flex align-items-center justify-content-between">
+          <div class="fw-semibold">Announcements</div>
+          <span class="badge bg-primary">{{ unread_counts.announcements if unread_counts else (announcements|length) }}</span>
+        </div>
+        <div class="list-group list-group-flush">
+          {% if announcements %}
+            {% for a in announcements %}
+              <div class="list-group-item">
+                <div class="d-flex justify-content-between align-items-center">
+                  <div class="me-3">
+                    <div class="fw-semibold {% if a._is_read %}text-muted{% endif %}">{{ a.title }}</div>
+                    <div class="small text-muted">
+                      {{ a.created_at.strftime('%d %b %Y, %I:%M %p') if a.created_at else '' }}
+                      {% if a._creator_name %} • by {{ a._creator_name }}{% endif %}
+                    </div>
+                  </div>
+                  <div class="d-flex gap-2">
+                    <a href="{{ url_for('main.notice_board') }}" class="btn btn-sm btn-outline-primary">Open</a>
+                    {% if a._is_read %}
+                    <form method="post" action="{{ url_for('main.inbox_announcement_unread', announcement_id=a.announcement_id) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button class="btn btn-sm btn-outline-secondary" type="submit">Mark Unread</button>
+                    </form>
+                    {% else %}
+                    <form method="post" action="{{ url_for('main.inbox_announcement_read', announcement_id=a.announcement_id) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button class="btn btn-sm btn-outline-secondary" type="submit">Mark Read</button>
+                    </form>
+                    {% endif %}
+                  </div>
+                </div>
+                {% if a.message %}
+                  <div class="mt-2 small {% if a._is_read %}text-muted{% endif %}">{{ a.message|safe }}</div>
+                {% endif %}
+              </div>
+            {% endfor %}
+          {% else %}
+            <div class="list-group-item text-muted">No announcements.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-5">
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-white d-flex align-items-center justify-content-between">
+          <div class="fw-semibold">System Messages</div>
+          <span class="badge bg-primary">{{ unread_counts.system if unread_counts else (system_messages|length) }}</span>
+        </div>
+        <div class="list-group list-group-flush">
+          {% if system_messages %}
+            {% for m in system_messages %}
+            <div class="list-group-item">
+              <div class="d-flex align-items-center justify-content-between">
+                <div class="me-3">
+                  <div class="fw-semibold {% if m._is_read %}text-muted{% endif %}">{{ m.title }}</div>
+                  <div class="small text-muted">{{ m.start_date.strftime('%d %b %Y, %I:%M %p') if m.start_date else '' }}</div>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                  <span class="badge {% if m.message_type == 'warning' %}bg-warning text-dark{% elif m.message_type == 'danger' %}bg-danger{% elif m.message_type == 'success' %}bg-success{% else %}bg-secondary{% endif %}">{{ m.message_type|capitalize }}</span>
+                  {% if m._is_read %}
+                  <form method="post" action="{{ url_for('main.inbox_system_unread', message_id=m.message_id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-secondary" type="submit">Unread</button>
+                  </form>
+                  {% else %}
+                  <form method="post" action="{{ url_for('main.inbox_system_read', message_id=m.message_id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-secondary" type="submit">Read</button>
+                  </form>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="mt-2 small {% if m._is_read %}text-muted{% endif %}">{{ m.content|safe }}</div>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="list-group-item text-muted">No system messages.</div>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if student_notifications %}
+      <div class="card shadow-sm">
+        <div class="card-header bg-white d-flex align-items-center justify-content-between">
+          <div class="fw-semibold">Personal</div>
+          <span class="badge bg-primary">{{ unread_counts.notifications if unread_counts else (student_notifications|length) }}</span>
+        </div>
+        <div class="list-group list-group-flush">
+          {% for n in student_notifications %}
+          <div class="list-group-item">
+            <div class="fw-semibold {% if n.is_read %}text-muted{% endif %}">{{ n.title }}</div>
+            <div class="small text-muted">{{ n.created_at.strftime('%d %b %Y, %I:%M %p') if n.created_at else '' }}</div>
+            {% if n.message %}<div class="small mt-2 {% if n.is_read %}text-muted{% endif %}">{{ n.message }}</div>{% endif %}
+          </div>
+          {% endfor %}
+          {% if student_notifications|length == 0 %}
+          <div class="list-group-item text-muted">No personal notifications.</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

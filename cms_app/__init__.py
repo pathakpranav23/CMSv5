@@ -9,6 +9,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlalchemy import inspect
+from sqlalchemy import select
 from werkzeug.exceptions import RequestEntityTooLarge
 from functools import wraps
 from flask_migrate import Migrate
@@ -187,6 +188,44 @@ def create_app():
             # If DB error or table missing, fail open (allow access)
             pass
 
+    @app.before_request
+    def enforce_trust_access():
+        if request.endpoint and 'static' in request.endpoint:
+            return
+        if request.endpoint in ['main.login', 'main.logout']:
+            return
+        try:
+            if request.blueprint == 'super_admin':
+                return
+        except Exception:
+            pass
+        if not current_user.is_authenticated:
+            return
+        if getattr(current_user, 'is_super_admin', False):
+            return
+        trust_id = getattr(current_user, 'trust_id_fk', None)
+        if not trust_id:
+            return
+        try:
+            from datetime import datetime, timedelta, timezone
+            from .models import Trust
+            trust = db.session.get(Trust, int(trust_id))
+            if not trust:
+                return
+            if trust.is_active is False:
+                return render_template('trust_suspended.html', trust=trust), 403
+            if trust.subscription_end_at:
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                end_at = trust.subscription_end_at
+                try:
+                    grace_days = int(trust.subscription_grace_days or 0)
+                except Exception:
+                    grace_days = 0
+                if now > (end_at + timedelta(days=grace_days)):
+                    return render_template('trust_expired.html', trust=trust, end_at=end_at, grace_days=grace_days), 403
+        except Exception:
+            return
+
     @app.context_processor
     def inject_ui_flags():
         # Base UI flags
@@ -205,7 +244,34 @@ def create_app():
                 SystemMessage.start_date <= now,
                 ((SystemMessage.end_date == None) | (SystemMessage.end_date >= now))
             ).all()
-            ctx['system_messages'] = msgs
+            effective_trust_id = None
+            try:
+                if current_user.is_authenticated and not getattr(current_user, 'is_super_admin', False):
+                    effective_trust_id = getattr(current_user, 'trust_id_fk', None)
+            except Exception:
+                effective_trust_id = None
+            filtered = []
+            for m in msgs:
+                try:
+                    if effective_trust_id is not None:
+                        if m.target_trust_id is not None and int(m.target_trust_id) != int(effective_trust_id):
+                            continue
+                    else:
+                        if m.target_trust_id is not None and not getattr(current_user, 'is_super_admin', False):
+                            continue
+                    if getattr(current_user, 'is_authenticated', False) and getattr(current_user, 'is_super_admin', False):
+                        filtered.append(m)
+                        continue
+                    target_role = (m.target_role or "all").strip().lower()
+                    if target_role == "all":
+                        filtered.append(m)
+                        continue
+                    if getattr(current_user, 'is_authenticated', False):
+                        if target_role == (getattr(current_user, 'role', '') or '').strip().lower():
+                            filtered.append(m)
+                except Exception:
+                    continue
+            ctx['system_messages'] = filtered
         except Exception:
             ctx['system_messages'] = []
 
@@ -222,6 +288,32 @@ def create_app():
                         ctx["program_slug"] = _slugify_program(p.program_name)
         except Exception:
             # Best-effort; missing program info should not break templates
+            pass
+
+        try:
+            from flask_login import current_user
+            if getattr(current_user, "is_authenticated", False):
+                role = (getattr(current_user, "role", "") or "").strip().lower()
+                uid = getattr(current_user, "user_id", None)
+                photo_url = None
+                display_name = None
+                if role == "faculty":
+                    from .models import Faculty
+                    f = db.session.execute(select(Faculty).filter_by(user_id_fk=uid)).scalars().first()
+                    if f:
+                        photo_url = (f.photo_url or None)
+                        display_name = (f.full_name or None)
+                elif role == "student":
+                    from .models import Student
+                    s = db.session.execute(select(Student).filter_by(user_id_fk=uid)).scalars().first()
+                    if s:
+                        photo_url = (s.photo_url or None)
+                        display_name = f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() or None
+                if not display_name:
+                    display_name = (getattr(current_user, "username", "") or "").strip() or "User"
+                ctx["ctx_user_photo_url"] = photo_url
+                ctx["ctx_user_display_name"] = display_name
+        except Exception:
             pass
         # Cache/Redis health flag
         try:
@@ -679,6 +771,80 @@ def create_app():
             if 'description' not in st_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE subject_types ADD COLUMN description VARCHAR(255)")
+
+            # 10. Trusts table
+            trust_cols = [c['name'] for c in inspector.get_columns('trusts')]
+            if 'subscription_start_at' not in trust_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE trusts ADD COLUMN subscription_start_at DATETIME")
+            if 'subscription_end_at' not in trust_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE trusts ADD COLUMN subscription_end_at DATETIME")
+            if 'subscription_grace_days' not in trust_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE trusts ADD COLUMN subscription_grace_days INTEGER DEFAULT 0")
+            if 'last_tenure_notice_at' not in trust_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE trusts ADD COLUMN last_tenure_notice_at DATETIME")
+            if 'suspended_at' not in trust_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE trusts ADD COLUMN suspended_at DATETIME")
+            if 'suspended_reason' not in trust_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE trusts ADD COLUMN suspended_reason TEXT")
+
+            # 11. Announcements table
+            ann_cols = [c['name'] for c in inspector.get_columns('announcements')]
+            if 'trust_id_fk' not in ann_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE announcements ADD COLUMN trust_id_fk INTEGER")
+                try:
+                    with db.engine.begin() as conn:
+                        conn.execute(
+                            "UPDATE announcements SET trust_id_fk = (SELECT institutes.trust_id_fk FROM programs JOIN institutes ON programs.institute_id_fk = institutes.institute_id WHERE programs.program_id = announcements.program_id_fk) WHERE trust_id_fk IS NULL AND program_id_fk IS NOT NULL"
+                        )
+                except Exception:
+                    pass
+
+            # 12. ExamSchemes table
+            exam_cols = [c['name'] for c in inspector.get_columns('exam_schemes')]
+            if 'is_frozen' not in exam_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE exam_schemes ADD COLUMN is_frozen BOOLEAN DEFAULT 0")
+            if 'frozen_at' not in exam_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE exam_schemes ADD COLUMN frozen_at DATETIME")
+            if 'frozen_by_fk' not in exam_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE exam_schemes ADD COLUMN frozen_by_fk INTEGER")
+            if 'unlock_until' not in exam_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE exam_schemes ADD COLUMN unlock_until DATETIME")
+            if 'unlock_by_fk' not in exam_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE exam_schemes ADD COLUMN unlock_by_fk INTEGER")
+            if 'unlock_reason' not in exam_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE exam_schemes ADD COLUMN unlock_reason TEXT")
+
+            # 13. SystemMessageReads table
+            try:
+                table_names = set(inspector.get_table_names())
+            except Exception:
+                table_names = set()
+            if "system_message_reads" not in table_names:
+                with db.engine.begin() as conn:
+                    conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS system_message_reads (
+                            read_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            message_id_fk INTEGER NOT NULL,
+                            user_id_fk INTEGER NOT NULL,
+                            read_at DATETIME,
+                            CONSTRAINT uq_system_message_read UNIQUE (message_id_fk, user_id_fk)
+                        )
+                        """
+                    )
 
         except Exception:
             # Best-effort; skip if migration fails
