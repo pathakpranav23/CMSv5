@@ -4,6 +4,7 @@ import pytest
 
 from cms_app import create_app, db
 from cms_app.models import User
+from cms_app.route_overrides import route_overrides_bp
 from werkzeug.security import generate_password_hash
 
 
@@ -21,6 +22,7 @@ def temp_db_path():
 @pytest.fixture(scope="session")
 def app(temp_db_path):
     app = create_app()
+    app.register_blueprint(route_overrides_bp)
     app.config["TESTING"] = True
     app.config["RATELIMIT_ENABLED"] = True
     with app.app_context():
