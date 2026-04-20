@@ -3,13 +3,13 @@ import secrets
 import time
 import uuid
 import sqlite3
-from flask import Flask, session, request, url_for, flash, redirect, current_app, render_template
+from flask import Flask, session, request, url_for, flash, redirect, current_app, render_template, g
 from flask_login import LoginManager, current_user
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlalchemy import inspect
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from werkzeug.exceptions import RequestEntityTooLarge
 from functools import wraps
 from flask_migrate import Migrate
@@ -161,6 +161,196 @@ def create_app():
         except Exception:
             return ""
 
+    def _cached_value(key, loader, timeout=60):
+        try:
+            cached = cache.get(key)
+        except Exception:
+            cached = None
+        if cached is not None:
+            return cached
+        value = loader()
+        try:
+            cache.set(key, value, timeout=timeout)
+        except Exception:
+            pass
+        return value
+
+    def _maintenance_mode_enabled():
+        from .models import SystemConfig
+
+        def _load():
+            try:
+                maint = db.session.get(SystemConfig, "maintenance_mode")
+                return 1 if (maint and (maint.config_value or "").strip().lower() == "true") else 0
+            except Exception:
+                return 0
+
+        return bool(_cached_value("__maintenance_mode__", _load, timeout=15))
+
+    def _trust_access_snapshot(trust_id):
+        try:
+            trust_id = int(trust_id)
+        except Exception:
+            return {}
+
+        def _load():
+            try:
+                from .models import Trust
+
+                trust = db.session.get(Trust, trust_id)
+                if not trust:
+                    return {}
+                end_at = getattr(trust, "subscription_end_at", None)
+                return {
+                    "is_active": False if getattr(trust, "is_active", True) is False else True,
+                    "subscription_end_at": end_at.isoformat() if end_at else None,
+                    "subscription_grace_days": int(getattr(trust, "subscription_grace_days", 0) or 0),
+                }
+            except Exception:
+                return {}
+
+        return _cached_value(f"trust_access_{trust_id}", _load, timeout=30)
+
+    def _program_theme_context(program_id):
+        try:
+            program_id = int(program_id)
+        except Exception:
+            return {}
+
+        def _load():
+            try:
+                from .models import Program
+
+                program = db.session.get(Program, program_id)
+                if not program:
+                    return {}
+                return {
+                    "program_name": program.program_name,
+                    "program_slug": _slugify_program(program.program_name),
+                }
+            except Exception:
+                return {}
+
+        return _cached_value(f"ui_program_theme_{program_id}", _load, timeout=300)
+
+    def _user_identity_context(user_id, role, fallback_username):
+        try:
+            user_id = int(user_id)
+        except Exception:
+            user_id = None
+
+        role_key = (role or "").strip().lower()
+        fallback_name = (fallback_username or "").strip() or "User"
+
+        def _load():
+            photo_url = None
+            display_name = fallback_name
+            try:
+                if role_key == "faculty" and user_id:
+                    from .models import Faculty
+
+                    row = db.session.execute(
+                        select(Faculty.photo_url, Faculty.full_name).filter_by(user_id_fk=user_id)
+                    ).first()
+                    if row:
+                        photo_url = row.photo_url or None
+                        display_name = (row.full_name or "").strip() or display_name
+                elif role_key == "student" and user_id:
+                    from .models import Student
+
+                    row = db.session.execute(
+                        select(Student.photo_url, Student.surname, Student.student_name).filter_by(user_id_fk=user_id)
+                    ).first()
+                    if row:
+                        photo_url = row.photo_url or None
+                        display_name = (
+                            f"{(row.surname or '').strip()} {(row.student_name or '').strip()}".strip() or display_name
+                        )
+            except Exception:
+                pass
+            return {
+                "ctx_user_photo_url": photo_url,
+                "ctx_user_display_name": display_name,
+            }
+
+        if role_key in {"faculty", "student"} and user_id:
+            return _cached_value(f"user_identity_{role_key}_{user_id}", _load, timeout=120)
+        return _load()
+
+    def _active_system_messages_context(role, effective_trust_id, is_super_admin):
+        role_key = (role or "").strip().lower() or "guest"
+        trust_key = "global"
+        if effective_trust_id is not None:
+            try:
+                trust_key = int(effective_trust_id)
+            except Exception:
+                trust_key = "global"
+        cache_key = f"layout_system_messages_{'super' if is_super_admin else role_key}_{trust_key}"
+
+        def _load():
+            from datetime import datetime, timezone
+            from .models import SystemMessage
+
+            now = datetime.now(timezone.utc)
+            query = (
+                select(
+                    SystemMessage.message_id,
+                    SystemMessage.title,
+                    SystemMessage.content,
+                    SystemMessage.message_type,
+                    SystemMessage.target_role,
+                )
+                .where(
+                    SystemMessage.is_active.is_(True),
+                    or_(SystemMessage.start_date == None, SystemMessage.start_date <= now),
+                    or_(SystemMessage.end_date == None, SystemMessage.end_date >= now),
+                )
+                .order_by(SystemMessage.start_date.desc(), SystemMessage.message_id.desc())
+            )
+            if not is_super_admin:
+                if effective_trust_id is not None:
+                    query = query.where(
+                        or_(SystemMessage.target_trust_id == None, SystemMessage.target_trust_id == int(effective_trust_id))
+                    )
+                else:
+                    query = query.where(SystemMessage.target_trust_id == None)
+                if role_key == "guest":
+                    query = query.where(SystemMessage.target_role == "all")
+                else:
+                    query = query.where(or_(SystemMessage.target_role == "all", SystemMessage.target_role == role_key))
+
+            rows = db.session.execute(query).all()
+            return [
+                {
+                    "message_id": row.message_id,
+                    "title": row.title,
+                    "content": row.content,
+                    "message_type": row.message_type or "info",
+                    "target_role": (row.target_role or "all").strip().lower(),
+                }
+                for row in rows
+            ]
+
+        return _cached_value(cache_key, _load, timeout=30)
+
+    def _cache_backend_status():
+        if app.config.get("CACHE_TYPE") != "RedisCache":
+            return False
+        state = app.extensions.setdefault("cache_health_state", {})
+        now_ts = time.time()
+        checked_at = float(state.get("checked_at") or 0)
+        if now_ts - checked_at < 30:
+            return bool(state.get("active", False))
+        active = False
+        try:
+            cache.set("__redis_health_probe__", "ok", timeout=60)
+            active = (cache.get("__redis_health_probe__") == "ok")
+        except Exception:
+            active = False
+        state["checked_at"] = now_ts
+        state["active"] = active
+        return active
+
     @app.before_request
     def check_maintenance_mode():
         # Allow static files (CSS, JS, images)
@@ -171,11 +361,8 @@ def create_app():
         if request.endpoint in ['main.login', 'main.logout']:
             return
 
-        # Check if maintenance mode is enabled in DB
         try:
-            from .models import SystemConfig
-            maint = db.session.get(SystemConfig, 'maintenance_mode')
-            if maint and maint.config_value == 'true':
+            if _maintenance_mode_enabled():
                 # If user is logged in
                 if current_user.is_authenticated:
                     # If super admin, allow access
@@ -208,119 +395,85 @@ def create_app():
             return
         try:
             from datetime import datetime, timedelta, timezone
-            from .models import Trust
-            trust = db.session.get(Trust, int(trust_id))
-            if not trust:
+            snapshot = _trust_access_snapshot(trust_id)
+            if not snapshot:
                 return
-            if trust.is_active is False:
-                return render_template('trust_suspended.html', trust=trust), 403
-            if trust.subscription_end_at:
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
-                end_at = trust.subscription_end_at
+            if snapshot.get("is_active") is False:
+                from .models import Trust
+
+                trust = db.session.get(Trust, int(trust_id))
+                if trust:
+                    return render_template('trust_suspended.html', trust=trust), 403
+                return
+            end_at = None
+            end_at_raw = snapshot.get("subscription_end_at")
+            if end_at_raw:
                 try:
-                    grace_days = int(trust.subscription_grace_days or 0)
+                    end_at = datetime.fromisoformat(end_at_raw)
+                    if getattr(end_at, "tzinfo", None) is not None:
+                        end_at = end_at.astimezone(timezone.utc).replace(tzinfo=None)
+                except Exception:
+                    end_at = None
+            if end_at:
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                try:
+                    grace_days = int(snapshot.get("subscription_grace_days") or 0)
                 except Exception:
                     grace_days = 0
                 if now > (end_at + timedelta(days=grace_days)):
+                    from .models import Trust
+
+                    trust = db.session.get(Trust, int(trust_id))
                     return render_template('trust_expired.html', trust=trust, end_at=end_at, grace_days=grace_days), 403
         except Exception:
             return
 
     @app.context_processor
     def inject_ui_flags():
+        cached_ctx = getattr(g, "_ui_flags_ctx", None)
+        if cached_ctx is not None:
+            return cached_ctx
+
         # Base UI flags
         ctx = {
             "info_hints_enabled": app.config.get("INFO_HINTS_ENABLED", False),
             "fees_disabled": app.config.get("FEES_DISABLED", False),
+            "system_messages": [],
         }
-        
-        # Inject Active System Messages
-        try:
-            from datetime import datetime, timezone
-            from .models import SystemMessage
-            now = datetime.now(timezone.utc)
-            msgs = db.session.query(SystemMessage).filter(
-                SystemMessage.is_active == True,
-                SystemMessage.start_date <= now,
-                ((SystemMessage.end_date == None) | (SystemMessage.end_date >= now))
-            ).all()
-            effective_trust_id = None
-            try:
-                if current_user.is_authenticated and not getattr(current_user, 'is_super_admin', False):
-                    effective_trust_id = getattr(current_user, 'trust_id_fk', None)
-            except Exception:
-                effective_trust_id = None
-            filtered = []
-            for m in msgs:
-                try:
-                    if effective_trust_id is not None:
-                        if m.target_trust_id is not None and int(m.target_trust_id) != int(effective_trust_id):
-                            continue
-                    else:
-                        if m.target_trust_id is not None and not getattr(current_user, 'is_super_admin', False):
-                            continue
-                    if getattr(current_user, 'is_authenticated', False) and getattr(current_user, 'is_super_admin', False):
-                        filtered.append(m)
-                        continue
-                    target_role = (m.target_role or "all").strip().lower()
-                    if target_role == "all":
-                        filtered.append(m)
-                        continue
-                    if getattr(current_user, 'is_authenticated', False):
-                        if target_role == (getattr(current_user, 'role', '') or '').strip().lower():
-                            filtered.append(m)
-                except Exception:
-                    continue
-            ctx['system_messages'] = filtered
-        except Exception:
-            ctx['system_messages'] = []
 
-        # Add program theming context (derived from logged-in user's assigned program)
         try:
-            from flask_login import current_user
+            is_authenticated = bool(getattr(current_user, "is_authenticated", False))
+            is_super_admin = bool(getattr(current_user, "is_super_admin", False)) if is_authenticated else False
+            role = (getattr(current_user, "role", "") or "").strip().lower() if is_authenticated else ""
+            effective_trust_id = None
+            if is_authenticated and not is_super_admin:
+                effective_trust_id = getattr(current_user, "trust_id_fk", None)
+            ctx["system_messages"] = _active_system_messages_context(role, effective_trust_id, is_super_admin)
+        except Exception:
+            pass
+
+        try:
             if getattr(current_user, "is_authenticated", False):
                 prog_id = getattr(current_user, "program_id_fk", None)
                 if prog_id:
-                    from .models import Program
-                    p = db.session.get(Program, int(prog_id))
-                    if p:
-                        ctx["program_name"] = p.program_name
-                        ctx["program_slug"] = _slugify_program(p.program_name)
+                    ctx.update(_program_theme_context(prog_id))
         except Exception:
-            # Best-effort; missing program info should not break templates
             pass
 
         try:
-            from flask_login import current_user
             if getattr(current_user, "is_authenticated", False):
-                role = (getattr(current_user, "role", "") or "").strip().lower()
-                uid = getattr(current_user, "user_id", None)
-                photo_url = None
-                display_name = None
-                if role == "faculty":
-                    from .models import Faculty
-                    f = db.session.execute(select(Faculty).filter_by(user_id_fk=uid)).scalars().first()
-                    if f:
-                        photo_url = (f.photo_url or None)
-                        display_name = (f.full_name or None)
-                elif role == "student":
-                    from .models import Student
-                    s = db.session.execute(select(Student).filter_by(user_id_fk=uid)).scalars().first()
-                    if s:
-                        photo_url = (s.photo_url or None)
-                        display_name = f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() or None
-                if not display_name:
-                    display_name = (getattr(current_user, "username", "") or "").strip() or "User"
-                ctx["ctx_user_photo_url"] = photo_url
-                ctx["ctx_user_display_name"] = display_name
+                ctx.update(
+                    _user_identity_context(
+                        getattr(current_user, "user_id", None),
+                        getattr(current_user, "role", ""),
+                        getattr(current_user, "username", ""),
+                    )
+                )
         except Exception:
             pass
-        # Cache/Redis health flag
-        try:
-            cache.set("__redis_ping__", "ok", timeout=30)
-            ctx["redis_active"] = (app.config.get("CACHE_TYPE") == "RedisCache" and cache.get("__redis_ping__") == "ok")
-        except Exception:
-            ctx["redis_active"] = False
+
+        ctx["redis_active"] = _cache_backend_status()
+        g._ui_flags_ctx = ctx
         return ctx
 
     @app.context_processor
@@ -750,9 +903,29 @@ def create_app():
             if 'proof_image_path' not in pay_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE fee_payments ADD COLUMN proof_image_path VARCHAR(255)")
+            legacy_verified_col = 'verified_by_user_id' in pay_cols
             if 'verified_by_fk' not in pay_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE fee_payments ADD COLUMN verified_by_fk INTEGER")
+                    if legacy_verified_col:
+                        try:
+                            conn.execute(
+                                "UPDATE fee_payments "
+                                "SET verified_by_fk = verified_by_user_id "
+                                "WHERE verified_by_fk IS NULL AND verified_by_user_id IS NOT NULL"
+                            )
+                        except Exception:
+                            pass
+            elif legacy_verified_col:
+                with db.engine.begin() as conn:
+                    try:
+                        conn.execute(
+                            "UPDATE fee_payments "
+                            "SET verified_by_fk = verified_by_user_id "
+                            "WHERE verified_by_fk IS NULL AND verified_by_user_id IS NOT NULL"
+                        )
+                    except Exception:
+                        pass
             if 'payer_name' not in pay_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE fee_payments ADD COLUMN payer_name VARCHAR(128)")

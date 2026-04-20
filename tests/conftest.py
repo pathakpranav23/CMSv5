@@ -49,4 +49,12 @@ def patch_cache_app(app):
     from cms_app import cache
     if not hasattr(cache, "app"):
         cache.app = app
+    try:
+        cache.clear()
+    except Exception:
+        pass
     yield
+    try:
+        cache.clear()
+    except Exception:
+        pass

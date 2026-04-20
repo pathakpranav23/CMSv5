@@ -9,8 +9,15 @@ def patch_cache_app(app):
     from cms_app import cache
     if not hasattr(cache, "app"):
         cache.app = app
+    try:
+        cache.clear()
+    except Exception:
+        pass
     yield
-    # No teardown needed as cache is global
+    try:
+        cache.clear()
+    except Exception:
+        pass
 
 def test_fees_bank_details_caching(client, app):
     # Create user and data
@@ -63,6 +70,25 @@ def test_dashboard_caching(client, app):
     # Second access (cached)
     resp2 = client.get("/dashboard")
     assert resp2.status_code == 200
+
+def test_dashboard_redirect_roles_are_not_cached(client, app):
+    with app.app_context():
+        for username, role in [("faculty_dash_redirect", "faculty"), ("student_dash_redirect", "student")]:
+            if not User.query.filter_by(username=username).first():
+                user = User(username=username, password_hash=generate_password_hash("secret"), role=role)
+                db.session.add(user)
+        db.session.commit()
+
+    client.post("/login", data={"username": "faculty_dash_redirect", "password": "secret"}, follow_redirects=False)
+    faculty_resp = client.get("/dashboard", follow_redirects=False)
+    assert faculty_resp.status_code == 302
+    assert "/faculty/dashboard" in faculty_resp.headers["Location"]
+    client.get("/logout", follow_redirects=True)
+
+    client.post("/login", data={"username": "student_dash_redirect", "password": "secret"}, follow_redirects=False)
+    student_resp = client.get("/dashboard", follow_redirects=False)
+    assert student_resp.status_code == 302
+    assert "/timetable/my_timetable" in student_resp.headers["Location"]
 
 def test_reports_hub_caching(client, app):
     # Login as admin

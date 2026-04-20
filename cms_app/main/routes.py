@@ -62,6 +62,46 @@ def _effective_trust_id():
             return None
     return getattr(current_user, "trust_id_fk", None)
 
+
+def _dashboard_cache_bypass():
+    try:
+        if session.get("_flashes"):
+            return True
+        role = (getattr(current_user, "role", "") or "").strip().lower()
+        if role in ("faculty", "student"):
+            return True
+        if getattr(current_user, "is_super_admin", False) and not (request.args.get("trust_id") or session.get("active_trust_id")):
+            return True
+        return False
+    except Exception:
+        return True
+
+
+def _apply_fee_payment_trust_scope(query, effective_trust_id=None):
+    trust_id = effective_trust_id if effective_trust_id is not None else _effective_trust_id()
+    if not trust_id:
+        return query
+    try:
+        return (
+            query.join(Program, FeePayment.program_id_fk == Program.program_id)
+            .join(Institute, Program.institute_id_fk == Institute.institute_id)
+            .filter(Institute.trust_id_fk == int(trust_id))
+        )
+    except Exception:
+        return query
+
+
+def _fee_payment_accessible(payment, effective_trust_id=None):
+    trust_id = effective_trust_id if effective_trust_id is not None else _effective_trust_id()
+    if not trust_id:
+        return True
+    try:
+        program = db.session.get(Program, getattr(payment, "program_id_fk", None))
+        institute = db.session.get(Institute, getattr(program, "institute_id_fk", None)) if program else None
+        return bool(institute and int(getattr(institute, "trust_id_fk", 0) or 0) == int(trust_id))
+    except Exception:
+        return False
+
 # Subject Materials: helpers and listing route
 ALLOWED_MATERIAL_EXTS = {"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "png", "jpg", "jpeg"}
 ALLOWED_QR_EXTS = {"png", "jpg", "jpeg", "webp"}
@@ -1728,6 +1768,7 @@ def fees_payments_queue():
         return redirect(url_for("main.dashboard"))
     from ..models import FeePayment, Student, Program
     q = select(FeePayment).filter_by(status="submitted").order_by(FeePayment.created_at.asc())
+    q = _apply_fee_payment_trust_scope(q)
     payments = db.session.execute(q).scalars().all()
     # Preload related student/program maps for display
     students = {s.enrollment_no: s for s in db.session.execute(select(Student).filter(Student.enrollment_no.in_([p.enrollment_no for p in payments]))).scalars().all()} if payments else {}
@@ -1747,6 +1788,9 @@ def fees_payment_verify(payment_id):
     fp = db.session.get(FeePayment, payment_id)
     if not fp:
         flash("Payment not found.", "danger")
+        return redirect(url_for("main.fees_payments_queue"))
+    if not _fee_payment_accessible(fp):
+        flash("Not authorized to verify this payment.", "danger")
         return redirect(url_for("main.fees_payments_queue"))
     # Duplicate UTR check
     override = ((request.form.get("override_duplicate") or "").strip().lower() in ("1", "true", "yes"))
@@ -1814,7 +1858,8 @@ def fees_payment_verify(payment_id):
         # Email notification
         try:
             s = db.session.get(Student, fp.enrollment_no)
-            user = db.session.get(User, getattr(s, "user_id_fk", None)) if s else None
+            user_id = getattr(s, "user_id_fk", None) if s else None
+            user = db.session.get(User, user_id) if user_id else None
             to = getattr(user, "username", None) or None
             if to:
                 subj = "Payment Verified"
@@ -1840,6 +1885,9 @@ def fees_payment_reject(payment_id):
     fp = db.session.get(FeePayment, payment_id)
     if not fp:
         flash("Payment not found.", "danger")
+        return redirect(url_for("main.fees_payments_queue"))
+    if not _fee_payment_accessible(fp):
+        flash("Not authorized to reject this payment.", "danger")
         return redirect(url_for("main.fees_payments_queue"))
     remarks = (request.form.get("remarks") or "").strip()
     try:
@@ -1877,7 +1925,8 @@ def fees_payment_reject(payment_id):
         # Email notification
         try:
             s = db.session.get(Student, fp.enrollment_no)
-            user = db.session.get(User, getattr(s, "user_id_fk", None)) if s else None
+            user_id = getattr(s, "user_id_fk", None) if s else None
+            user = db.session.get(User, user_id) if user_id else None
             to = getattr(user, "username", None) or None
             if to:
                 subj = "Payment Rejected"
@@ -2613,24 +2662,39 @@ def inject_inbox_badge():
         return {"inbox_unread_count": 0}
 
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    now = datetime.now()
-
-    effective_trust_id = None
-    if getattr(current_user, "is_super_admin", False):
+    effective_trust_id = _effective_trust_id()
+    cache_key = (
+        f"inbox_badge_{user_id}_{effective_trust_id or 0}_{role}_{getattr(current_user, 'program_id_fk', None) or 0}"
+    )
+    if not session.get("_flashes"):
         try:
-            effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            cached_count = cache.get(cache_key)
         except Exception:
-            effective_trust_id = None
-    if effective_trust_id is None:
-        effective_trust_id = getattr(current_user, "trust_id_fk", None)
+            cached_count = None
+        if cached_count is not None:
+            return {"inbox_unread_count": int(cached_count)}
+
+    now = datetime.now()
+    student_enrollment_no = None
+    if role == "student":
+        try:
+            student_row = db.session.execute(select(Student.enrollment_no).filter_by(user_id_fk=user_id)).first()
+            if student_row:
+                student_enrollment_no = student_row.enrollment_no
+        except Exception:
+            student_enrollment_no = None
 
     system_unread = 0
     try:
         sm_q = select(SystemMessage.message_id).where(SystemMessage.is_active.is_(True))
         if role:
             sm_q = sm_q.where(or_(SystemMessage.target_role == "all", SystemMessage.target_role == role))
+        else:
+            sm_q = sm_q.where(SystemMessage.target_role == "all")
         if effective_trust_id:
             sm_q = sm_q.where(or_(SystemMessage.target_trust_id == None, SystemMessage.target_trust_id == effective_trust_id))
+        else:
+            sm_q = sm_q.where(SystemMessage.target_trust_id == None)
         sm_q = sm_q.where(or_(SystemMessage.start_date == None, SystemMessage.start_date <= now))
         sm_q = sm_q.where(or_(SystemMessage.end_date == None, SystemMessage.end_date >= now))
         msg_ids = db.session.execute(sm_q.limit(80)).scalars().all()
@@ -2662,13 +2726,6 @@ def inject_inbox_badge():
 
         dismissed = set(db.session.execute(select(AnnouncementDismissal.announcement_id_fk).filter_by(user_id_fk=user_id)).scalars().all())
 
-        st = None
-        if role == "student":
-            try:
-                st = db.session.execute(select(Student).filter_by(user_id_fk=user_id)).scalars().first()
-            except Exception:
-                st = None
-
         for a in rows:
             include = False
             recips = []
@@ -2679,7 +2736,7 @@ def inject_inbox_badge():
             if recips:
                 if role in ("principal", "clerk"):
                     include = True
-                elif role == "student" and st and st.enrollment_no in recips:
+                elif role == "student" and student_enrollment_no and student_enrollment_no in recips:
                     include = True
             else:
                 try:
@@ -2694,20 +2751,24 @@ def inject_inbox_badge():
         ann_unread = 0
 
     notif_unread = 0
-    if role == "student":
+    if student_enrollment_no:
         try:
-            st = db.session.execute(select(Student).filter_by(user_id_fk=user_id)).scalars().first()
+            notif_unread = db.session.scalar(
+                select(func.count()).select_from(Notification).where(
+                    Notification.student_id_fk == student_enrollment_no,
+                    Notification.is_read == False,
+                )
+            ) or 0
         except Exception:
-            st = None
-        if st:
-            try:
-                notif_unread = db.session.scalar(
-                    select(func.count()).select_from(Notification).where(Notification.student_id_fk == st.enrollment_no, Notification.is_read == False)
-                ) or 0
-            except Exception:
-                notif_unread = 0
+            notif_unread = 0
 
-    return {"inbox_unread_count": int(ann_unread + system_unread + notif_unread)}
+    unread_count = int(ann_unread + system_unread + notif_unread)
+    if not session.get("_flashes"):
+        try:
+            cache.set(cache_key, unread_count, timeout=15)
+        except Exception:
+            pass
+    return {"inbox_unread_count": unread_count}
 
 @main_bp.route("/set-trust-context/<int:trust_id>")
 @login_required
@@ -2742,7 +2803,15 @@ def set_trust_context(trust_id):
 
 @main_bp.route("/dashboard")
 @login_required
-# Cache removed to ensure redirects (like Faculty -> dedicated dashboard) always fire immediately
+@cache.cached(
+    timeout=45,
+    key_prefix=lambda: (
+        f"dashboard_{getattr(current_user, 'user_id', 'anon')}_"
+        f"{(request.args.get('trust_id') or session.get('active_trust_id') or getattr(current_user, 'trust_id_fk', None) or 0)}_"
+        f"{request.full_path}"
+    ),
+    unless=_dashboard_cache_bypass,
+)
 def dashboard():
     # Super Admin Redirection Logic
     # If Super Admin accesses /dashboard without a specific trust_id context, redirect to Super Admin Dashboard.
@@ -3358,6 +3427,7 @@ def dashboard():
                 FeePayment.created_at >= start_dt,
                 FeePayment.created_at < end_dt,
             )
+            base_q = _apply_fee_payment_trust_scope(base_q, effective_trust_id)
             today_verified_q = base_q.filter(FeePayment.status == "verified")
             today_verified_rows = db.session.execute(
                 today_verified_q.with_only_columns(FeePayment.amount, FeePayment.payment_id)
@@ -3370,8 +3440,10 @@ def dashboard():
                 except Exception:
                     pass
             pending_q = select(func.count()).select_from(FeePayment).filter(FeePayment.status == "submitted")
+            pending_q = _apply_fee_payment_trust_scope(pending_q, effective_trust_id)
             pending_count = db.session.scalar(pending_q) or 0
             rejected_q = select(func.count()).select_from(FeePayment).filter(FeePayment.status == "rejected")
+            rejected_q = _apply_fee_payment_trust_scope(rejected_q, effective_trust_id)
             rejected_count = db.session.scalar(rejected_q) or 0
             clerk_fees = {
                 "today_amount": round(today_amount, 2),
@@ -11664,10 +11736,9 @@ def module_admin():
             select(func.count())
             .select_from(FeePayment)
             .filter(func.lower(FeePayment.status) == "submitted")
-            .filter(FeePayment.verified_by_user_id.is_(None))
+            .filter(FeePayment.verified_by_fk.is_(None))
         )
-        if effective_trust_id:
-            q = q.filter(FeePayment.trust_id_fk == effective_trust_id)
+        q = _apply_fee_payment_trust_scope(q, effective_trust_id)
         health["pending_fee_verifications"] = db.session.scalar(q) or 0
     except Exception:
         health["pending_fee_verifications"] = 0
@@ -11773,10 +11844,15 @@ def admin_workflow_new_academic_year():
 def programs_list():
     from ..models import Program, Division, Subject, Student, Faculty
     trust_id_raw = (request.args.get("trust_id") or "").strip()
+    institute_id_raw = (request.args.get("institute_id") or "").strip()
     try:
         trust_id = int(trust_id_raw) if trust_id_raw else None
     except Exception:
         trust_id = None
+    try:
+        institute_id = int(institute_id_raw) if institute_id_raw else None
+    except Exception:
+        institute_id = None
     if getattr(current_user, "is_super_admin", False):
         if not trust_id:
             try:
@@ -11786,17 +11862,29 @@ def programs_list():
     else:
         trust_id = getattr(current_user, "trust_id_fk", None)
 
+    institutes = []
     q = select(Program).order_by(Program.program_name.asc())
     try:
         from ..models import Institute
+        if trust_id:
+            institutes = db.session.execute(
+                select(Institute).filter_by(trust_id_fk=trust_id).order_by(Institute.institute_name.asc())
+            ).scalars().all()
         q = q.join(Institute, Program.institute_id_fk == Institute.institute_id)
         if trust_id:
             q = q.filter(Institute.trust_id_fk == trust_id)
+        if trust_id and institute_id:
+            q = q.filter(Institute.institute_id == institute_id)
     except Exception:
         pass
     programs = db.session.execute(q).scalars().all()
     rows = []
     for p in programs:
+        try:
+            from ..models import Institute
+            inst = db.session.get(Institute, p.institute_id_fk) if p.institute_id_fk else None
+        except Exception:
+            inst = None
         try:
             div_cnt = db.session.scalar(select(func.count()).select_from(Division).filter_by(program_id_fk=p.program_id))
             subj_cnt = db.session.scalar(select(func.count()).select_from(Subject).filter_by(program_id_fk=p.program_id))
@@ -11806,12 +11894,13 @@ def programs_list():
             div_cnt = subj_cnt = stu_cnt = fac_cnt = 0
         rows.append({
             "program": p,
+            "institute": inst,
             "divisions": div_cnt,
             "subjects": subj_cnt,
             "students": stu_cnt,
             "faculty": fac_cnt,
         })
-    return render_template("programs.html", rows=rows)
+    return render_template("programs.html", rows=rows, trust_id=trust_id, institutes=institutes, institute_id=institute_id)
 
 @main_bp.route("/programs/new", methods=["GET", "POST"])
 @login_required
@@ -11882,7 +11971,7 @@ def program_new():
             flash("Failed to create program.", "danger")
             return render_template("program_new.html", errors=["Database error. Please try again."], institutes=institutes, trust_id=trust_id, form={"program_name": name, "program_duration_years": duration_raw, "institute_id_fk": inst_id_raw})
     # GET
-    return render_template("program_new.html", institutes=institutes, trust_id=trust_id)
+    return render_template("program_new.html", institutes=institutes, trust_id=trust_id, form={"institute_id_fk": (str(institute_id_fk) if institute_id_fk else "")})
 
 @main_bp.route("/programs/<int:program_id>/edit", methods=["GET", "POST"])
 @login_required
@@ -11896,9 +11985,13 @@ def program_edit(program_id: int):
         abort(404)
     inst = db.session.get(Institute, p.institute_id_fk) if p.institute_id_fk else None
     trust_id = getattr(inst, "trust_id_fk", None)
+    institutes = []
+    if trust_id:
+        institutes = db.session.execute(select(Institute).filter_by(trust_id_fk=trust_id).order_by(Institute.institute_name.asc())).scalars().all()
     if request.method == "POST":
         name = (request.form.get("program_name") or "").strip()
         duration_raw = (request.form.get("program_duration_years") or "").strip()
+        inst_id_raw = (request.form.get("institute_id_fk") or "").strip()
         errors = []
         if not name:
             errors.append("Program name is required.")
@@ -11915,11 +12008,20 @@ def program_edit(program_id: int):
                 errors.append("Duration must be between 1 and 6 years.")
         except Exception:
             duration = p.program_duration_years or 3
+        try:
+            new_inst_id = int(inst_id_raw) if inst_id_raw else p.institute_id_fk
+        except Exception:
+            new_inst_id = p.institute_id_fk
+        if trust_id and new_inst_id:
+            ok = any(i.institute_id == new_inst_id for i in institutes)
+            if not ok:
+                errors.append("Invalid institute selection for this trust.")
         if errors:
-            return render_template("program_edit.html", errors=errors, program=p, form={"program_name": name, "program_duration_years": duration_raw})
+            return render_template("program_edit.html", errors=errors, program=p, institutes=institutes, trust_id=trust_id, form={"program_name": name, "program_duration_years": duration_raw, "institute_id_fk": inst_id_raw})
         try:
             p.program_name = name
             p.program_duration_years = duration
+            p.institute_id_fk = new_inst_id
             db.session.commit()
             try:
                 current_app.logger.info(
@@ -11928,13 +12030,13 @@ def program_edit(program_id: int):
             except Exception:
                 pass
             flash("Program updated.", "success")
-            return redirect(url_for("main.programs_list", trust_id=(trust_id or "")))
+            return redirect(url_for("main.programs_list", trust_id=(trust_id or ""), institute_id=(new_inst_id or "")))
         except Exception:
             db.session.rollback()
             flash("Failed to update program.", "danger")
-            return render_template("program_edit.html", errors=["Database error. Please try again."], program=p, form={"program_name": name, "program_duration_years": duration_raw})
+            return render_template("program_edit.html", errors=["Database error. Please try again."], program=p, institutes=institutes, trust_id=trust_id, form={"program_name": name, "program_duration_years": duration_raw, "institute_id_fk": inst_id_raw})
     # GET
-    return render_template("program_edit.html", program=p)
+    return render_template("program_edit.html", program=p, institutes=institutes, trust_id=trust_id, form={"institute_id_fk": (str(p.institute_id_fk) if p.institute_id_fk else "")})
 
 @main_bp.route("/programs/<int:program_id>/delete", methods=["POST"])
 @login_required
