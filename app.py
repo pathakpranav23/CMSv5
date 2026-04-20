@@ -1,7 +1,9 @@
 from cms_app import create_app
+from cms_app.route_overrides import route_overrides_bp
 import os
 
 app = create_app()
+app.register_blueprint(route_overrides_bp)
 
 if __name__ == "__main__":
     # Run the development server (allow PORT override for parallel previews)
