@@ -89,7 +89,7 @@
           <div class="card-icon" aria-hidden="true"><i class="bi bi-shield-check"></i></div>
           <h5 class="card-title">{{ t('Verification Queue') }}</h5>
           <p class="card-text">{{ t('Review UTRs and proofs, then verify or reject payments.') }}</p>
-          <a href="{{ url_for('main.fees_payments_queue') }}" class="btn btn-light btn-fees stretched-link" aria-label="Open Verification Queue">{{ t('Open Verification Queue') }}</a>
+          <a href="{{ url_for('route_overrides.fees_payments_queue') }}" class="btn btn-light btn-fees stretched-link" aria-label="Open Verification Queue">{{ t('Open Verification Queue') }}</a>
         </div>
       </div>
     </div>
