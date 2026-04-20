@@ -1,216 +1,208 @@
 {% extends "layout.html" %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-sm-flex align-items-center justify-content-between mb-4">
-        <h1 class="h3 mb-0 text-gray-800">Tenant Management (Kill Switch)</h1>
-        <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#newTrustModal">
-            <i class="fas fa-plus fa-sm text-white-50"></i> New Trust
-        </button>
-    </div>
+<div class="container-fluid py-4">
+  <div class="d-sm-flex align-items-center justify-content-between mb-3">
+    <h1 class="h3 mb-0">Tenant Management (Kill Switch)</h1>
+    <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#newTrustModal">
+      <i class="bi bi-plus-lg"></i> New Trust
+    </button>
+  </div>
 
-    <div class="card shadow mb-4">
-        <div class="card-header py-3">
-            <h6 class="m-0 font-weight-bold text-primary">Trusts & Institutes</h6>
-        </div>
+  <div class="row g-3">
+    {% for trust in trusts %}
+    {% set m = meta[trust.trust_id] if meta and trust.trust_id in meta else None %}
+    <div class="col-12">
+      <div class="card shadow-sm">
         <div class="card-body">
-            <div class="table-responsive">
-                <table class="table table-bordered" width="100%" cellspacing="0">
-                    <thead>
-                        <tr>
-                            <th>Type</th>
-                            <th>Name</th>
-                            <th>Plan</th>
-                            <th>Tenure</th>
-                            <th>Overview</th>
-                            <th>Status</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for trust in trusts %}
-                        <tr class="table-secondary">
-                            <td><span class="badge badge-dark">TRUST</span></td>
-                            <td><strong>{{ trust.trust_name }}</strong></td>
-                            <td>{{ trust.subscription_plan }}</td>
-                            <td>
-                                {% set m = meta[trust.trust_id] if meta and trust.trust_id in meta else None %}
-                                {% if m and m.end_at %}
-                                  <div class="small">
-                                    <div><span class="fw-semibold">{{ m.end_at.strftime('%Y-%m-%d') }}</span></div>
-                                    {% if m.days_left is not none %}
-                                      {% if m.is_expired %}
-                                        <span class="badge badge-danger">Expired</span>
-                                      {% else %}
-                                        <span class="badge badge-info">{{ m.days_left }} day(s) left</span>
-                                      {% endif %}
-                                    {% endif %}
-                                    {% if m.grace_days and m.grace_days > 0 %}
-                                      <div class="text-muted" style="font-size:12px;">Grace: {{ m.grace_days }}d</div>
-                                    {% endif %}
-                                  </div>
-                                {% else %}
-                                  <span class="text-muted">—</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% set m = meta[trust.trust_id] if meta and trust.trust_id in meta else None %}
-                                {% if m %}
-                                  <div class="small">
-                                    <span class="badge badge-light">Inst: {{ m.institutes }}</span>
-                                    <span class="badge badge-light">Students: {{ m.students }}</span>
-                                    <span class="badge badge-light">Staff: {{ m.faculty }}</span>
-                                    <span class="badge badge-light">Users: {{ m.users }}</span>
-                                  </div>
-                                {% else %}
-                                  <span class="text-muted">—</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if trust.is_active %}
-                                <span class="badge badge-success">Active</span>
-                                {% else %}
-                                <span class="badge badge-danger">SUSPENDED</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <div class="btn-group">
-                                    <form action="{{ url_for('super_admin.toggle_trust', trust_id=trust.trust_id) }}" method="POST">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token else '' }}">
-                                        {% if trust.is_active %}
-                                        <button type="submit" class="btn btn-danger btn-sm">Suspend</button>
-                                        {% else %}
-                                        <button type="submit" class="btn btn-success btn-sm">Activate</button>
-                                        {% endif %}
-                                    </form>
-                                    <a class="btn btn-outline-primary btn-sm ms-2" href="{{ url_for('main.programs_list', trust_id=trust.trust_id) }}">Programs</a>
-                                    <button class="btn btn-outline-secondary btn-sm ml-2" data-bs-toggle="modal" data-bs-target="#subscriptionModal{{ trust.trust_id }}">
-                                        Subscription
-                                    </button>
-                                    <form action="{{ url_for('super_admin.notify_tenure', trust_id=trust.trust_id) }}" method="POST" class="ms-2">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token else '' }}">
-                                        <button type="submit" class="btn btn-outline-warning btn-sm">Notify</button>
-                                    </form>
-                                    <button class="btn btn-primary btn-sm ml-2" data-bs-toggle="modal" data-bs-target="#newInstituteModal{{ trust.trust_id }}">
-                                        <i class="fas fa-plus"></i> Add Institute
-                                    </button>
-                                </div>
-
-                                <div class="modal fade" id="subscriptionModal{{ trust.trust_id }}" tabindex="-1" role="dialog" aria-hidden="true">
-                                    <div class="modal-dialog" role="document">
-                                        <div class="modal-content">
-                                            <form action="{{ url_for('super_admin.update_trust_subscription', trust_id=trust.trust_id) }}" method="POST">
-                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token else '' }}">
-                                                <div class="modal-header">
-                                                    <h5 class="modal-title">Subscription: {{ trust.trust_name }}</h5>
-                                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                                </div>
-                                                <div class="modal-body">
-                                                    <div class="form-group mb-2">
-                                                        <label>Mode</label>
-                                                        <select name="mode" class="form-control">
-                                                            <option value="one_year">1 Year (from today)</option>
-                                                            <option value="custom">Custom End Date</option>
-                                                        </select>
-                                                    </div>
-                                                    <div class="form-group mb-2">
-                                                        <label>Custom End Date</label>
-                                                        <input type="date" name="end_date" class="form-control">
-                                                    </div>
-                                                    <div class="form-group mb-2">
-                                                        <label>Grace Days</label>
-                                                        <input type="number" name="grace_days" class="form-control" min="0" max="60" value="{{ meta[trust.trust_id].grace_days if meta and trust.trust_id in meta else 0 }}">
-                                                    </div>
-                                                    <div class="form-group">
-                                                        <label>Note (optional)</label>
-                                                        <input type="text" name="reason" class="form-control" placeholder="Internal note / reason">
-                                                    </div>
-                                                </div>
-                                                <div class="modal-footer">
-                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                                    <button type="submit" class="btn btn-primary">Save</button>
-                                                </div>
-                                            </form>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Add Institute Modal -->
-                                <div class="modal fade" id="newInstituteModal{{ trust.trust_id }}" tabindex="-1" role="dialog" aria-hidden="true">
-                                    <div class="modal-dialog" role="document">
-                                        <div class="modal-content">
-                                            <form action="{{ url_for('super_admin.create_institute') }}" method="POST">
-                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token else '' }}">
-                                                <input type="hidden" name="trust_id" value="{{ trust.trust_id }}">
-                                                <div class="modal-header">
-                                                    <h5 class="modal-title">Add Institute to {{ trust.trust_name }}</h5>
-                                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                                </div>
-                                                <div class="modal-body">
-                                                    <div class="form-group">
-                                                        <label>Institute Name</label>
-                                                        <input type="text" name="institute_name" class="form-control" required>
-                                                    </div>
-                                                    <div class="form-group">
-                                                        <label>Institute Code</label>
-                                                        <input type="text" name="institute_code" class="form-control" required placeholder="e.g. SCET">
-                                                    </div>
-                                                </div>
-                                                <div class="modal-footer">
-                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                                    <button type="submit" class="btn btn-primary">Create Institute</button>
-                                                </div>
-                                            </form>
-                                        </div>
-                                    </div>
-                                </div>
-                            </td>
-                        </tr>
-                        <!-- List Institutes under this Trust -->
-                         {% for inst in trust.institutes %}
-                         <tr>
-                            <td class="text-right"><i class="fas fa-arrow-right text-gray-400"></i></td>
-                            <td>{{ inst.institute_name }}</td>
-                            <td>-</td>
-                            <td>-</td>
-                            <td>-</td>
-                            <td>
-                                {% if inst.is_active %}
-                                <span class="badge badge-success">Active</span>
-                                {% else %}
-                                <span class="badge badge-danger">SUSPENDED</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <div class="btn-group">
-                                    <form action="{{ url_for('super_admin.toggle_institute', inst_id=inst.institute_id) }}" method="POST">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token else '' }}">
-                                        {% if inst.is_active %}
-                                        <button type="submit" class="btn btn-outline-danger btn-sm">Suspend Institute</button>
-                                        {% else %}
-                                        <button type="submit" class="btn btn-outline-success btn-sm">Activate Institute</button>
-                                        {% endif %}
-                                    </form>
-                                    <a href="{{ url_for('wizard.step1_institute', institute_id=inst.institute_id) }}" class="btn btn-outline-primary btn-sm ml-2">
-                                        Setup Wizard
-                                    </a>
-                                </div>
-                            </td>
-                         </tr>
-                         {% endfor %}
-                        {% endfor %}
-                    </tbody>
-                </table>
+          <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+            <div>
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <span class="badge text-bg-dark">TRUST</span>
+                <div class="h5 mb-0">{{ trust.trust_name }}</div>
+                {% if trust.is_active %}
+                  <span class="badge bg-success-subtle text-success">Active</span>
+                {% else %}
+                  <span class="badge bg-danger-subtle text-danger">Suspended</span>
+                {% endif %}
+                {% if trust.subscription_plan %}
+                  <span class="badge text-bg-light">Plan: {{ trust.subscription_plan }}</span>
+                {% endif %}
+              </div>
+              <div class="mt-2 d-flex gap-2 flex-wrap">
+                {% if m %}
+                  <span class="badge text-bg-light">Inst: {{ m.institutes }}</span>
+                  <span class="badge text-bg-light">Students: {{ m.students }}</span>
+                  <span class="badge text-bg-light">Staff: {{ m.faculty }}</span>
+                  <span class="badge text-bg-light">Users: {{ m.users }}</span>
+                {% endif %}
+                {% if m and m.end_at %}
+                  <span class="badge text-bg-light">Ends: {{ m.end_at.strftime('%Y-%m-%d') }}</span>
+                  {% if m.days_left is not none %}
+                    {% if m.is_expired %}
+                      <span class="badge text-bg-danger">Expired</span>
+                    {% else %}
+                      <span class="badge text-bg-info">{{ m.days_left }} day(s) left</span>
+                    {% endif %}
+                  {% endif %}
+                  {% if m.grace_days and m.grace_days > 0 %}
+                    <span class="badge text-bg-light">Grace: {{ m.grace_days }}d</span>
+                  {% endif %}
+                {% endif %}
+              </div>
             </div>
+
+            <div class="d-flex gap-2 flex-wrap align-items-center">
+              <form action="{{ url_for('super_admin.toggle_trust', trust_id=trust.trust_id) }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                {% if trust.is_active %}
+                <button type="submit" class="btn btn-danger btn-sm">Suspend</button>
+                {% else %}
+                <button type="submit" class="btn btn-success btn-sm">Activate</button>
+                {% endif %}
+              </form>
+              <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.programs_list', trust_id=trust.trust_id) }}">Programs</a>
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('route_overrides.trust_institutes', trust_id=trust.trust_id) }}">Institutes</a>
+              <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#subscriptionModal{{ trust.trust_id }}">Subscription</button>
+              <form action="{{ url_for('super_admin.notify_tenure', trust_id=trust.trust_id) }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-warning btn-sm">Notify</button>
+              </form>
+              <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#newInstituteModal{{ trust.trust_id }}">
+                <i class="bi bi-plus-lg"></i> Add Institute
+              </button>
+            </div>
+          </div>
+
+          <div class="accordion mt-3" id="instAcc{{ trust.trust_id }}">
+            <div class="accordion-item">
+              <h2 class="accordion-header" id="instHead{{ trust.trust_id }}">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#instCollapse{{ trust.trust_id }}" aria-expanded="false" aria-controls="instCollapse{{ trust.trust_id }}">
+                  Institutes
+                </button>
+              </h2>
+              <div id="instCollapse{{ trust.trust_id }}" class="accordion-collapse collapse" aria-labelledby="instHead{{ trust.trust_id }}" data-bs-parent="#instAcc{{ trust.trust_id }}">
+                <div class="accordion-body">
+                  {% if trust.institutes and trust.institutes|length > 0 %}
+                    <div class="row g-2">
+                      {% for inst in trust.institutes %}
+                      <div class="col-12 col-lg-6">
+                        <div class="border rounded-3 p-3 d-flex align-items-start justify-content-between gap-2">
+                          <div>
+                            <div class="fw-semibold">{{ inst.institute_name }}</div>
+                            <div class="text-muted small">{{ inst.institute_code }}</div>
+                            <div class="mt-2">
+                              {% if inst.is_active %}
+                                <span class="badge bg-success-subtle text-success">Active</span>
+                              {% else %}
+                                <span class="badge bg-danger-subtle text-danger">Suspended</span>
+                              {% endif %}
+                            </div>
+                          </div>
+                          <div class="d-flex gap-2 flex-wrap align-items-center justify-content-end">
+                            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.programs_list', trust_id=trust.trust_id, institute_id=inst.institute_id) }}">Programs</a>
+                            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('wizard.step1_institute', institute_id=inst.institute_id) }}">Setup Wizard</a>
+                            <form action="{{ url_for('super_admin.toggle_institute', inst_id=inst.institute_id) }}" method="POST">
+                              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                              {% if inst.is_active %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Suspend</button>
+                              {% else %}
+                                <button type="submit" class="btn btn-sm btn-outline-success">Activate</button>
+                              {% endif %}
+                            </form>
+                          </div>
+                        </div>
+                      </div>
+                      {% endfor %}
+                    </div>
+                  {% else %}
+                    <div class="text-muted">No institutes found.</div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal fade" id="subscriptionModal{{ trust.trust_id }}" tabindex="-1" role="dialog" aria-hidden="true">
+            <div class="modal-dialog" role="document">
+              <div class="modal-content">
+                <form action="{{ url_for('super_admin.update_trust_subscription', trust_id=trust.trust_id) }}" method="POST">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <div class="modal-header">
+                    <h5 class="modal-title">Subscription: {{ trust.trust_name }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                  </div>
+                  <div class="modal-body">
+                    <div class="form-group mb-2">
+                      <label>Mode</label>
+                      <select name="mode" class="form-control">
+                        <option value="one_year">1 Year (from today)</option>
+                        <option value="custom">Custom End Date</option>
+                      </select>
+                    </div>
+                    <div class="form-group mb-2">
+                      <label>Custom End Date</label>
+                      <input type="date" name="end_date" class="form-control">
+                    </div>
+                    <div class="form-group mb-2">
+                      <label>Grace Days</label>
+                      <input type="number" name="grace_days" class="form-control" min="0" max="60" value="{{ meta[trust.trust_id].grace_days if meta and trust.trust_id in meta else 0 }}">
+                    </div>
+                    <div class="form-group">
+                      <label>Note (optional)</label>
+                      <input type="text" name="reason" class="form-control" placeholder="Internal note / reason">
+                    </div>
+                  </div>
+                  <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal fade" id="newInstituteModal{{ trust.trust_id }}" tabindex="-1" role="dialog" aria-hidden="true">
+            <div class="modal-dialog" role="document">
+              <div class="modal-content">
+                <form action="{{ url_for('super_admin.create_institute') }}" method="POST">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="trust_id" value="{{ trust.trust_id }}">
+                  <div class="modal-header">
+                    <h5 class="modal-title">Add Institute to {{ trust.trust_name }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                  </div>
+                  <div class="modal-body">
+                    <div class="form-group">
+                      <label>Institute Name</label>
+                      <input type="text" name="institute_name" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                      <label>Institute Code</label>
+                      <input type="text" name="institute_code" class="form-control" required placeholder="e.g. SCET">
+                    </div>
+                  </div>
+                  <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Institute</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+
         </div>
+      </div>
     </div>
+    {% endfor %}
+  </div>
 
     <!-- New Trust Modal -->
     <div class="modal fade" id="newTrustModal" tabindex="-1" role="dialog" aria-hidden="true">
         <div class="modal-dialog" role="document">
             <div class="modal-content">
                 <form action="{{ url_for('super_admin.create_trust') }}" method="POST">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token else '' }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-header">
                         <h5 class="modal-title">Create New Trust</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
