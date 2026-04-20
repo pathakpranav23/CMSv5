@@ -49,7 +49,7 @@
             </td>
             <td>{{ p.created_at.strftime('%Y-%m-%d %H:%M') if p.created_at else '' }}</td>
             <td class="d-flex gap-2">
-              <form method="post" action="{{ url_for('main.fees_payment_verify', payment_id=p.payment_id) }}">
+              <form method="post" action="{{ url_for('route_overrides.fees_payment_verify', payment_id=p.payment_id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                 <div class="row g-1 mb-1">
                   <div class="col-auto">
@@ -65,7 +65,7 @@
                 </div>
                 <button type="submit" class="btn btn-success btn-sm mt-1">Verify</button>
               </form>
-              <form method="post" action="{{ url_for('main.fees_payment_reject', payment_id=p.payment_id) }}" class="d-flex align-items-center">
+              <form method="post" action="{{ url_for('route_overrides.fees_payment_reject', payment_id=p.payment_id) }}" class="d-flex align-items-center">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                 <input type="text" name="remarks" class="form-control form-control-sm" placeholder="Remarks" />
                 <button type="submit" class="btn btn-danger btn-sm ms-2">Reject</button>
