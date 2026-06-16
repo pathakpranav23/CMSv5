@@ -322,3 +322,49 @@ def test_super_admin_tenants_page_renders_and_links_to_canonical_institutes_view
     assert "Tenant Management (Kill Switch)" in text
     assert "Trust Tenants Page" in text
     assert f"/super-admin/trusts/{trust_id}/institutes" in text
+
+
+def test_super_admin_tenants_page_tolerates_missing_optional_schema_columns(client, app, monkeypatch):
+    from cms_app.super_admin import routes as super_admin_routes
+    original_table_columns = super_admin_routes._table_columns
+
+    with app.app_context():
+        trust = Trust(
+            trust_name="Trust Minimal Schema",
+            trust_code="TRUST_MIN_SCHEMA",
+            is_active=True,
+        )
+        db.session.add(trust)
+        db.session.flush()
+
+        institute = Institute(
+            trust_id_fk=trust.trust_id,
+            institute_name="Minimal Institute",
+            institute_code="MIN_INST",
+            is_active=True,
+        )
+        super_admin = User(
+            username="sa_min_schema",
+            password_hash=generate_password_hash("secret"),
+            role="admin",
+            is_super_admin=True,
+        )
+        db.session.add_all([institute, super_admin])
+        db.session.commit()
+
+    def fake_table_columns(table_name):
+        if table_name == "trusts":
+            return {"trust_id", "trust_name"}
+        if table_name == "institutes":
+            return {"institute_id", "trust_id_fk", "institute_name", "institute_code"}
+        return original_table_columns(table_name)
+
+    monkeypatch.setattr(super_admin_routes, "_table_columns", fake_table_columns)
+
+    _login(client, "sa_min_schema")
+    response = client.get("/super-admin/tenants")
+    text = response.data.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "Trust Minimal Schema" in text
+    assert "Minimal Institute" in text

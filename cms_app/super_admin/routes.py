@@ -2,7 +2,7 @@ from flask import render_template, request, redirect, url_for, flash, current_ap
 from flask_login import login_required, current_user
 from . import super_admin
 from ..models import db, SystemMessage, SystemConfig, Trust, Institute, User, Student, Faculty, ImportLog, DataAuditLog, Program
-from sqlalchemy import select, func
+from sqlalchemy import select, func, inspect as sa_inspect
 from sqlalchemy.orm import load_only
 from ..decorators import super_admin_required
 from .. import cache
@@ -64,6 +64,46 @@ def _subscription_window(end_at, now, grace_days):
         except Exception:
             is_expired = False
     return normalized_end or end_at, days_left, is_expired
+
+
+def _table_columns(table_name):
+    cache_key = f"sa_table_columns:{table_name}"
+    try:
+        cached = cache.get(cache_key)
+    except Exception:
+        cached = None
+    if cached:
+        try:
+            return set(cached)
+        except Exception:
+            pass
+    try:
+        cols = {c["name"] for c in sa_inspect(db.engine).get_columns(table_name)}
+    except Exception:
+        cols = set()
+    try:
+        cache.set(cache_key, sorted(cols), timeout=300)
+    except Exception:
+        pass
+    return cols
+
+
+def _query_with_present_columns(model, required_attrs, optional_by_name, table_name):
+    attrs = list(required_attrs)
+    table_cols = _table_columns(table_name)
+    for col_name, attr in optional_by_name.items():
+        if col_name in table_cols:
+            attrs.append(attr)
+    return model.query.options(load_only(*attrs)).all(), table_cols
+
+
+def _query_ordered_with_present_columns(model, required_attrs, optional_by_name, table_name, order_by_attr):
+    attrs = list(required_attrs)
+    table_cols = _table_columns(table_name)
+    for col_name, attr in optional_by_name.items():
+        if col_name in table_cols:
+            attrs.append(attr)
+    return model.query.options(load_only(*attrs)).order_by(order_by_attr.asc()).all(), table_cols
 
 @super_admin.route('/dashboard')
 @login_required
@@ -292,37 +332,40 @@ def toggle_message(msg_id):
 @login_required
 @super_admin_required
 def tenants():
-    trusts = (
-        Trust.query.options(
-            load_only(
-                Trust.trust_id,
-                Trust.trust_name,
-                Trust.is_active,
-                Trust.subscription_end_at,
-                Trust.subscription_grace_days,
-            )
-        )
-        .order_by(Trust.trust_name.asc())
-        .all()
+    trusts, trust_cols = _query_ordered_with_present_columns(
+        Trust,
+        [Trust.trust_id, Trust.trust_name],
+        {
+            "is_active": Trust.is_active,
+            "subscription_end_at": Trust.subscription_end_at,
+            "subscription_grace_days": Trust.subscription_grace_days,
+        },
+        "trusts",
+        Trust.trust_name,
     )
-    institutes = (
-        Institute.query.options(
-            load_only(
-                Institute.institute_id,
-                Institute.trust_id_fk,
-                Institute.institute_name,
-                Institute.institute_code,
-                Institute.is_active,
-            )
-        )
-        .order_by(Institute.institute_name.asc())
-        .all()
+    institutes, institute_cols = _query_ordered_with_present_columns(
+        Institute,
+        [Institute.institute_id, Institute.trust_id_fk, Institute.institute_name],
+        {
+            "institute_code": Institute.institute_code,
+            "is_active": Institute.is_active,
+        },
+        "institutes",
+        Institute.institute_name,
     )
     now = datetime.now(timezone.utc)
 
     institutes_by_trust = {}
     for inst in institutes:
-        institutes_by_trust.setdefault(inst.trust_id_fk, []).append(inst)
+        institutes_by_trust.setdefault(inst.trust_id_fk, []).append(
+            {
+                "institute_id": inst.institute_id,
+                "trust_id_fk": inst.trust_id_fk,
+                "institute_name": getattr(inst, "institute_name", "") or "",
+                "institute_code": getattr(inst, "institute_code", "") if "institute_code" in institute_cols else "",
+                "is_active": bool(getattr(inst, "is_active", True)) if "is_active" in institute_cols else True,
+            }
+        )
 
     inst_counts = {
         trust_id: len(inst_list or [])
@@ -371,22 +414,27 @@ def tenants():
         },
         "sa_tenant_user_counts_join",
     )
-    plan_map = _safe_cached_value(
-        "sa_tenant_plan_map",
-        lambda: {
-            trust_id: plan
-            for (trust_id, plan) in db.session.execute(select(Trust.trust_id, Trust.subscription_plan)).all()
-        },
-        fallback={},
-        timeout=60,
+    plan_map = (
+        _safe_cached_value(
+            "sa_tenant_plan_map",
+            lambda: {
+                trust_id: plan
+                for (trust_id, plan) in db.session.execute(select(Trust.trust_id, Trust.subscription_plan)).all()
+            },
+            fallback={},
+            timeout=60,
+        )
+        if "subscription_plan" in trust_cols
+        else {}
     )
 
     meta = {}
     for t in trusts:
-        end_at = getattr(t, "subscription_end_at", None)
-        grace = getattr(t, "subscription_grace_days", 0) or 0
+        end_at = getattr(t, "subscription_end_at", None) if "subscription_end_at" in trust_cols else None
+        grace = (getattr(t, "subscription_grace_days", 0) or 0) if "subscription_grace_days" in trust_cols else 0
         end_at, days_left, is_expired = _subscription_window(end_at, now, grace)
         meta[t.trust_id] = {
+            "is_active": bool(getattr(t, "is_active", True)) if "is_active" in trust_cols else True,
             "end_at": end_at,
             "days_left": days_left,
             "grace_days": grace,
@@ -410,8 +458,28 @@ def tenants():
 @login_required
 @super_admin_required
 def trust_institutes(trust_id: int):
-    trust = Trust.query.get_or_404(trust_id)
-    insts = Institute.query.filter_by(trust_id_fk=trust_id).order_by(Institute.institute_name.asc()).all()
+    trust = Trust.query.options(load_only(Trust.trust_id, Trust.trust_name)).get_or_404(trust_id)
+    institute_cols = _table_columns("institutes")
+    insts = (
+        Institute.query.options(
+            load_only(
+                Institute.institute_id,
+                Institute.trust_id_fk,
+                Institute.institute_name,
+                *[
+                    attr
+                    for name, attr in {
+                        "institute_code": Institute.institute_code,
+                        "is_active": Institute.is_active,
+                    }.items()
+                    if name in institute_cols
+                ],
+            )
+        )
+        .filter_by(trust_id_fk=trust_id)
+        .order_by(Institute.institute_name.asc())
+        .all()
+    )
     inst_ids = [i.institute_id for i in insts]
     prog_counts = {}
     stu_counts = {}
@@ -450,14 +518,23 @@ def trust_institutes(trust_id: int):
             ).all()
         }
     counts = {}
+    institutes_payload = []
     for i in insts:
+        institutes_payload.append(
+            {
+                "institute_id": i.institute_id,
+                "institute_name": getattr(i, "institute_name", "") or "",
+                "institute_code": getattr(i, "institute_code", "") if "institute_code" in institute_cols else "",
+                "is_active": bool(getattr(i, "is_active", True)) if "is_active" in institute_cols else True,
+            }
+        )
         counts[i.institute_id] = {
             "programs": prog_counts.get(i.institute_id, 0),
             "students": stu_counts.get(i.institute_id, 0),
             "faculty": fac_counts.get(i.institute_id, 0),
             "users": user_counts.get(i.institute_id, 0),
         }
-    return render_template("super_admin/institutes.html", trust=trust, institutes=insts, counts=counts)
+    return render_template("super_admin/institutes.html", trust=trust, institutes=institutes_payload, counts=counts)
 
 @super_admin.route('/trusts/<int:trust_id>/toggle', methods=['POST'])
 @login_required

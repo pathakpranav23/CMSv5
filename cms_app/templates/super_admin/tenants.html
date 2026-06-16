@@ -20,7 +20,7 @@
               <div class="d-flex align-items-center gap-2 flex-wrap">
                 <span class="badge text-bg-dark">TRUST</span>
                 <div class="h5 mb-0">{{ trust.trust_name }}</div>
-                {% if trust.is_active %}
+                {% if m and m.is_active %}
                   <span class="badge bg-success-subtle text-success">Active</span>
                 {% else %}
                   <span class="badge bg-danger-subtle text-danger">Suspended</span>
@@ -55,7 +55,7 @@
             <div class="d-flex gap-2 flex-wrap align-items-center">
               <form action="{{ url_for('super_admin.toggle_trust', trust_id=trust.trust_id) }}" method="POST">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                {% if trust.is_active %}
+                {% if m and m.is_active %}
                 <button type="submit" class="btn btn-danger btn-sm">Suspend</button>
                 {% else %}
                 <button type="submit" class="btn btn-success btn-sm">Activate</button>
