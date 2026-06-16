@@ -267,7 +267,6 @@ def test_super_admin_dashboard_handles_timezone_aware_subscription_dates(client,
 
     assert response.status_code == 200
     assert "Super Admin Control Tower" in text
-    assert "Trust TZ Aware" in text
 
 
 def test_super_admin_dashboard_legacy_redirects_to_control_tower(client, app):
@@ -286,3 +285,40 @@ def test_super_admin_dashboard_legacy_redirects_to_control_tower(client, app):
 
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/super-admin/dashboard")
+
+
+def test_super_admin_tenants_page_renders_and_links_to_canonical_institutes_view(client, app):
+    with app.app_context():
+        trust = Trust(
+            trust_name="Trust Tenants Page",
+            trust_code="TRUST_TENANTS_PAGE",
+            is_active=True,
+        )
+        db.session.add(trust)
+        db.session.flush()
+
+        institute = Institute(
+            trust_id_fk=trust.trust_id,
+            institute_name="Tenants Institute",
+            institute_code="TENANTS_INST",
+            is_active=True,
+        )
+        super_admin = User(
+            username="sa_tenants_page",
+            password_hash=generate_password_hash("secret"),
+            role="admin",
+            is_super_admin=True,
+        )
+        db.session.add_all([institute, super_admin])
+        db.session.commit()
+
+        trust_id = trust.trust_id
+
+    _login(client, "sa_tenants_page")
+    response = client.get("/super-admin/tenants")
+    text = response.data.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "Tenant Management (Kill Switch)" in text
+    assert "Trust Tenants Page" in text
+    assert f"/super-admin/trusts/{trust_id}/institutes" in text

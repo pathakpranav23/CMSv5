@@ -1,7 +1,7 @@
 from flask import render_template, request, redirect, url_for, flash, current_app, session
 from flask_login import login_required, current_user
 from . import super_admin
-from ..models import db, SystemMessage, SystemConfig, Trust, Institute, User, Student, Faculty, ImportLog, DataAuditLog
+from ..models import db, SystemMessage, SystemConfig, Trust, Institute, User, Student, Faculty, ImportLog, DataAuditLog, Program
 from sqlalchemy import select, func
 from sqlalchemy.orm import load_only
 from ..decorators import super_admin_required
@@ -292,14 +292,95 @@ def toggle_message(msg_id):
 @login_required
 @super_admin_required
 def tenants():
-    trusts = Trust.query.order_by(Trust.trust_name.asc()).all()
-    # We can also list institutes if we want granular control
-    institutes = Institute.query.all()
+    trusts = (
+        Trust.query.options(
+            load_only(
+                Trust.trust_id,
+                Trust.trust_name,
+                Trust.is_active,
+                Trust.subscription_end_at,
+                Trust.subscription_grace_days,
+            )
+        )
+        .order_by(Trust.trust_name.asc())
+        .all()
+    )
+    institutes = (
+        Institute.query.options(
+            load_only(
+                Institute.institute_id,
+                Institute.trust_id_fk,
+                Institute.institute_name,
+                Institute.institute_code,
+                Institute.is_active,
+            )
+        )
+        .order_by(Institute.institute_name.asc())
+        .all()
+    )
     now = datetime.now(timezone.utc)
-    inst_counts = {tid: n for (tid, n) in db.session.execute(select(Institute.trust_id_fk, func.count()).group_by(Institute.trust_id_fk)).all()}
-    stu_counts = {tid: n for (tid, n) in db.session.execute(select(Student.trust_id_fk, func.count()).group_by(Student.trust_id_fk)).all()}
-    fac_counts = {tid: n for (tid, n) in db.session.execute(select(Faculty.trust_id_fk, func.count()).group_by(Faculty.trust_id_fk)).all()}
-    user_counts = {tid: n for (tid, n) in db.session.execute(select(User.trust_id_fk, func.count()).group_by(User.trust_id_fk)).all()}
+
+    institutes_by_trust = {}
+    for inst in institutes:
+        institutes_by_trust.setdefault(inst.trust_id_fk, []).append(inst)
+
+    inst_counts = {
+        trust_id: len(inst_list or [])
+        for trust_id, inst_list in institutes_by_trust.items()
+    }
+
+    def _trust_count_via_join(loader, cache_key):
+        return _safe_cached_value(cache_key, loader, fallback={}, timeout=30)
+
+    stu_counts = _trust_count_via_join(
+        lambda: {
+            trust_id: count
+            for (trust_id, count) in db.session.execute(
+                select(Institute.trust_id_fk, func.count(Student.enrollment_no))
+                .select_from(Student)
+                .join(Program, Student.program_id_fk == Program.program_id)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .group_by(Institute.trust_id_fk)
+            ).all()
+        },
+        "sa_tenant_student_counts_join",
+    )
+    fac_counts = _trust_count_via_join(
+        lambda: {
+            trust_id: count
+            for (trust_id, count) in db.session.execute(
+                select(Institute.trust_id_fk, func.count(Faculty.faculty_id))
+                .select_from(Faculty)
+                .join(Program, Faculty.program_id_fk == Program.program_id)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .group_by(Institute.trust_id_fk)
+            ).all()
+        },
+        "sa_tenant_faculty_counts_join",
+    )
+    user_counts = _trust_count_via_join(
+        lambda: {
+            trust_id: count
+            for (trust_id, count) in db.session.execute(
+                select(Institute.trust_id_fk, func.count(User.user_id))
+                .select_from(User)
+                .join(Program, User.program_id_fk == Program.program_id)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .group_by(Institute.trust_id_fk)
+            ).all()
+        },
+        "sa_tenant_user_counts_join",
+    )
+    plan_map = _safe_cached_value(
+        "sa_tenant_plan_map",
+        lambda: {
+            trust_id: plan
+            for (trust_id, plan) in db.session.execute(select(Trust.trust_id, Trust.subscription_plan)).all()
+        },
+        fallback={},
+        timeout=60,
+    )
+
     meta = {}
     for t in trusts:
         end_at = getattr(t, "subscription_end_at", None)
@@ -314,8 +395,15 @@ def tenants():
             "students": stu_counts.get(t.trust_id, 0),
             "faculty": fac_counts.get(t.trust_id, 0),
             "users": user_counts.get(t.trust_id, 0),
+            "plan": plan_map.get(t.trust_id),
         }
-    return render_template('super_admin/tenants.html', trusts=trusts, institutes=institutes, meta=meta, now=now)
+    return render_template(
+        'super_admin/tenants.html',
+        trusts=trusts,
+        institutes_by_trust=institutes_by_trust,
+        meta=meta,
+        now=now,
+    )
 
 
 @super_admin.route("/trusts/<int:trust_id>/institutes")

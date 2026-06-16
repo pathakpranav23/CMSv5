@@ -25,8 +25,8 @@
                 {% else %}
                   <span class="badge bg-danger-subtle text-danger">Suspended</span>
                 {% endif %}
-                {% if trust.subscription_plan %}
-                  <span class="badge text-bg-light">Plan: {{ trust.subscription_plan }}</span>
+                {% if m and m.plan %}
+                  <span class="badge text-bg-light">Plan: {{ m.plan }}</span>
                 {% endif %}
               </div>
               <div class="mt-2 d-flex gap-2 flex-wrap">
@@ -62,7 +62,7 @@
                 {% endif %}
               </form>
               <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.programs_list', trust_id=trust.trust_id) }}">Programs</a>
-              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('route_overrides.trust_institutes', trust_id=trust.trust_id) }}">Institutes</a>
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('super_admin.trust_institutes', trust_id=trust.trust_id) }}">Institutes</a>
               <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#subscriptionModal{{ trust.trust_id }}">Subscription</button>
               <form action="{{ url_for('super_admin.notify_tenure', trust_id=trust.trust_id) }}" method="POST">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -83,9 +83,10 @@
               </h2>
               <div id="instCollapse{{ trust.trust_id }}" class="accordion-collapse collapse" aria-labelledby="instHead{{ trust.trust_id }}" data-bs-parent="#instAcc{{ trust.trust_id }}">
                 <div class="accordion-body">
-                  {% if trust.institutes and trust.institutes|length > 0 %}
+                  {% set inst_list = institutes_by_trust.get(trust.trust_id, []) if institutes_by_trust else [] %}
+                  {% if inst_list and inst_list|length > 0 %}
                     <div class="row g-2">
-                      {% for inst in trust.institutes %}
+                      {% for inst in inst_list %}
                       <div class="col-12 col-lg-6">
                         <div class="border rounded-3 p-3 d-flex align-items-start justify-content-between gap-2">
                           <div>
