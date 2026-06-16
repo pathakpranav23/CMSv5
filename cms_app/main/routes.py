@@ -11345,7 +11345,7 @@ def attendance_report_faculty():
         csv_export_url=csv_export_url_faculty,
     )
 # Attendance search: by student name or enrollment, with date/week/month filters
-@main_bp.route("/super-admin/dashboard")
+@main_bp.route("/super-admin/dashboard-legacy")
 @login_required
 def super_admin_dashboard():
     # Strict Access Check

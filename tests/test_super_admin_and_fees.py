@@ -1,4 +1,5 @@
 from werkzeug.security import generate_password_hash
+from datetime import datetime, timedelta, timezone
 
 from cms_app import db
 from cms_app.models import Faculty, FeePayment, Institute, Program, Student, Trust, User
@@ -240,3 +241,30 @@ def test_fee_queue_scopes_by_trust_and_verify_sets_verifier(client, app):
         verifier_field = "verified_by_fk" if hasattr(refreshed_a, "verified_by_fk") else "verified_by_user_id"
         assert getattr(refreshed_a, verifier_field) == admin_id
         assert refreshed_b.status == "submitted"
+
+
+def test_super_admin_dashboard_handles_timezone_aware_subscription_dates(client, app):
+    with app.app_context():
+        trust = Trust(
+            trust_name="Trust TZ Aware",
+            trust_code="TRUST_TZ_AWARE",
+            is_active=True,
+            subscription_end_at=datetime.now(timezone.utc) + timedelta(days=12),
+            subscription_grace_days=7,
+        )
+        super_admin = User(
+            username="sa_dashboard_tz",
+            password_hash=generate_password_hash("secret"),
+            role="admin",
+            is_super_admin=True,
+        )
+        db.session.add_all([trust, super_admin])
+        db.session.commit()
+
+    _login(client, "sa_dashboard_tz")
+    response = client.get("/super-admin/dashboard")
+    text = response.data.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "Super Admin Control Tower" in text
+    assert "Trust TZ Aware" in text

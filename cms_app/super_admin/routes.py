@@ -22,50 +22,104 @@ def _cached_value(key, loader, timeout=60):
         pass
     return value
 
+
+def _safe_cached_value(key, loader, fallback, timeout=60):
+    try:
+        return _cached_value(key, loader, timeout=timeout)
+    except Exception:
+        return fallback
+
+
+def _normalize_utc_naive(dt):
+    if not dt:
+        return dt
+    tzinfo = getattr(dt, "tzinfo", None)
+    if tzinfo is None:
+        return dt
+    try:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    except Exception:
+        try:
+            return dt.replace(tzinfo=None)
+        except Exception:
+            return dt
+
+
+def _subscription_window(end_at, now, grace_days):
+    normalized_end = _normalize_utc_naive(end_at)
+    normalized_now = _normalize_utc_naive(now)
+    days_left = None
+    is_expired = False
+    try:
+        grace_days = int(grace_days or 0)
+    except Exception:
+        grace_days = 0
+    if normalized_end and normalized_now:
+        try:
+            days_left = (normalized_end - normalized_now).days
+        except Exception:
+            days_left = None
+        try:
+            is_expired = normalized_now > (normalized_end + timedelta(days=grace_days))
+        except Exception:
+            is_expired = False
+    return normalized_end or end_at, days_left, is_expired
+
 @super_admin.route('/dashboard')
 @login_required
 @super_admin_required
 def dashboard():
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
-    total_trusts = _cached_value(
+    total_trusts = _safe_cached_value(
         "sa_total_trusts",
         lambda: int(db.session.execute(select(func.count()).select_from(Trust)).scalar() or 0),
+        fallback=0,
         timeout=15,
     )
-    total_institutes = _cached_value(
+    total_institutes = _safe_cached_value(
         "sa_total_institutes",
         lambda: int(db.session.execute(select(func.count()).select_from(Institute)).scalar() or 0),
+        fallback=0,
         timeout=15,
     )
-    total_users = _cached_value(
+    total_users = _safe_cached_value(
         "sa_total_users",
         lambda: int(db.session.execute(select(func.count()).select_from(User)).scalar() or 0),
+        fallback=0,
         timeout=15,
     )
-    total_students = _cached_value(
+    total_students = _safe_cached_value(
         "sa_total_students",
         lambda: int(db.session.execute(select(func.count()).select_from(Student)).scalar() or 0),
+        fallback=0,
         timeout=15,
     )
-    total_faculty = _cached_value(
+    total_faculty = _safe_cached_value(
         "sa_total_faculty",
         lambda: int(db.session.execute(select(func.count()).select_from(Faculty)).scalar() or 0),
+        fallback=0,
         timeout=15,
     )
-    active_messages = _cached_value(
+    active_messages = _safe_cached_value(
         "sa_active_messages",
         lambda: int(
             db.session.execute(select(func.count()).select_from(SystemMessage).where(SystemMessage.is_active == True)).scalar()
             or 0
         ),
+        fallback=0,
         timeout=15,
     )
 
-    maint_mode_config = _cached_value("sa_maint_mode_cfg", lambda: db.session.get(SystemConfig, "maintenance_mode"), timeout=10)
+    maint_mode_config = _safe_cached_value(
+        "sa_maint_mode_cfg",
+        lambda: db.session.get(SystemConfig, "maintenance_mode"),
+        fallback=None,
+        timeout=10,
+    )
     is_maintenance = ((getattr(maint_mode_config, "config_value", "") or "").strip().lower() == "true") if maint_mode_config else False
 
-    suspended_trusts = _cached_value(
+    suspended_trusts = _safe_cached_value(
         "sa_suspended_trusts",
         lambda: Trust.query.options(
             load_only(Trust.trust_id, Trust.trust_name, Trust.subscription_end_at, Trust.subscription_grace_days, Trust.is_active)
@@ -74,6 +128,7 @@ def dashboard():
         .order_by(Trust.trust_name.asc())
         .limit(30)
         .all(),
+        fallback=[],
         timeout=30,
     )
 
@@ -91,12 +146,11 @@ def dashboard():
             if not end_at:
                 continue
             grace = int(getattr(t, "subscription_grace_days", 0) or 0)
-            days_left = (end_at - now).days
-            is_expired = now > (end_at + timedelta(days=grace))
+            end_at, days_left, is_expired = _subscription_window(end_at, now, grace)
             entry = {"trust": t, "end_at": end_at, "days_left": days_left, "grace_days": grace}
             if is_expired:
                 expired.append(entry)
-            elif days_left <= 30:
+            elif days_left is not None and days_left <= 30:
                 expiring_soon.append(entry)
         expiring_soon.sort(key=lambda x: x.get("days_left", 10**9))
         expired.sort(key=lambda x: x.get("days_left", 10**9))
@@ -106,32 +160,42 @@ def dashboard():
             "risk_list": (expired + expiring_soon)[:12],
         }
 
-    risk_ctx = _cached_value("sa_risk_ctx", _risk_context, timeout=30)
+    risk_ctx = _safe_cached_value(
+        "sa_risk_ctx",
+        _risk_context,
+        fallback={"expiring_soon": [], "expired": [], "risk_list": []},
+        timeout=30,
+    )
 
-    recent_imports = _cached_value(
+    recent_imports = _safe_cached_value(
         "sa_recent_imports",
         lambda: ImportLog.query.order_by(ImportLog.created_at.desc()).limit(10).all(),
+        fallback=[],
         timeout=20,
     )
-    recent_import_errors = _cached_value(
+    recent_import_errors = _safe_cached_value(
         "sa_recent_import_errors",
         lambda: ImportLog.query.filter(ImportLog.errors_count > 0).order_by(ImportLog.created_at.desc()).limit(10).all(),
+        fallback=[],
         timeout=20,
     )
-    recent_audit = _cached_value(
+    recent_audit = _safe_cached_value(
         "sa_recent_audit",
         lambda: DataAuditLog.query.order_by(DataAuditLog.created_at.desc()).limit(12).all(),
+        fallback=[],
         timeout=20,
     )
 
-    trust_name_map = _cached_value(
+    trust_name_map = _safe_cached_value(
         "sa_trust_name_map",
         lambda: {tid: name for (tid, name) in db.session.execute(select(Trust.trust_id, Trust.trust_name)).all()},
+        fallback={},
         timeout=300,
     )
-    user_name_map = _cached_value(
+    user_name_map = _safe_cached_value(
         "sa_user_name_map",
         lambda: {uid: (uname or "") for (uid, uname) in db.session.execute(select(User.user_id, User.username)).all()},
+        fallback={},
         timeout=120,
     )
 
@@ -231,7 +295,7 @@ def tenants():
     trusts = Trust.query.order_by(Trust.trust_name.asc()).all()
     # We can also list institutes if we want granular control
     institutes = Institute.query.all()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     inst_counts = {tid: n for (tid, n) in db.session.execute(select(Institute.trust_id_fk, func.count()).group_by(Institute.trust_id_fk)).all()}
     stu_counts = {tid: n for (tid, n) in db.session.execute(select(Student.trust_id_fk, func.count()).group_by(Student.trust_id_fk)).all()}
     fac_counts = {tid: n for (tid, n) in db.session.execute(select(Faculty.trust_id_fk, func.count()).group_by(Faculty.trust_id_fk)).all()}
@@ -240,15 +304,7 @@ def tenants():
     for t in trusts:
         end_at = getattr(t, "subscription_end_at", None)
         grace = getattr(t, "subscription_grace_days", 0) or 0
-        days_left = None
-        is_expired = False
-        if end_at:
-            try:
-                days_left = (end_at - now).days
-                is_expired = (now > (end_at + timedelta(days=int(grace))))
-            except Exception:
-                days_left = None
-                is_expired = False
+        end_at, days_left, is_expired = _subscription_window(end_at, now, grace)
         meta[t.trust_id] = {
             "end_at": end_at,
             "days_left": days_left,
