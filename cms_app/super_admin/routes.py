@@ -2,7 +2,7 @@ from flask import render_template, request, redirect, url_for, flash, current_ap
 from flask_login import login_required, current_user
 from . import super_admin
 from ..models import db, SystemMessage, SystemConfig, Trust, Institute, User, Student, Faculty, ImportLog, DataAuditLog, Program
-from sqlalchemy import select, func, inspect as sa_inspect
+from sqlalchemy import select, func, inspect as sa_inspect, MetaData, Table
 from sqlalchemy.orm import load_only
 from ..decorators import super_admin_required
 from .. import cache
@@ -104,6 +104,11 @@ def _query_ordered_with_present_columns(model, required_attrs, optional_by_name,
         if col_name in table_cols:
             attrs.append(attr)
     return model.query.options(load_only(*attrs)).order_by(order_by_attr.asc()).all(), table_cols
+
+
+def _reflected_table(table_name):
+    metadata = MetaData()
+    return Table(table_name, metadata, autoload_with=db.engine)
 
 @super_admin.route('/dashboard')
 @login_required
@@ -664,27 +669,41 @@ def create_trust():
     name = request.form.get('trust_name')
     code = request.form.get('trust_code')
     plan = request.form.get('subscription_plan', 'basic')
+    trust_cols = _table_columns("trusts")
     
     if not name or not code:
         flash("Trust Name and Code are required.", "danger")
         return redirect(url_for('super_admin.tenants'))
-        
-    existing = Trust.query.filter_by(trust_code=code).first()
-    if existing:
-        flash("Trust Code must be unique.", "danger")
-        return redirect(url_for('super_admin.tenants'))
-        
+
+    if "trust_code" in trust_cols:
+        existing = Trust.query.filter_by(trust_code=code).first()
+        if existing:
+            flash("Trust Code must be unique.", "danger")
+            return redirect(url_for('super_admin.tenants'))
+
     now = datetime.utcnow()
-    new_trust = Trust(
-        trust_name=name,
-        trust_code=code,
-        subscription_plan=plan,
-        subscription_start_at=now,
-        subscription_end_at=now + timedelta(days=365),
-        subscription_grace_days=7,
-    )
-    db.session.add(new_trust)
-    db.session.commit()
+    payload = {"trust_name": name}
+    if "trust_code" in trust_cols:
+        payload["trust_code"] = code
+    if "is_active" in trust_cols:
+        payload["is_active"] = True
+    if "subscription_plan" in trust_cols:
+        payload["subscription_plan"] = plan
+    if "subscription_start_at" in trust_cols:
+        payload["subscription_start_at"] = now
+    if "subscription_end_at" in trust_cols:
+        payload["subscription_end_at"] = now + timedelta(days=365)
+    if "subscription_grace_days" in trust_cols:
+        payload["subscription_grace_days"] = 7
+
+    try:
+        trusts_table = _reflected_table("trusts")
+        db.session.execute(trusts_table.insert().values(**payload))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        flash("Failed to create trust.", "danger")
+        return redirect(url_for('super_admin.tenants'))
     
     flash(f"Trust '{name}' created successfully!", "success")
     return redirect(url_for('super_admin.tenants'))
@@ -700,27 +719,54 @@ def create_institute():
     trust_id = request.form.get('trust_id')
     name = request.form.get('institute_name')
     code = request.form.get('institute_code')
+    institute_cols = _table_columns("institutes")
     
     if not trust_id or not name or not code:
         flash("All fields are required.", "danger")
         return redirect(url_for('super_admin.tenants'))
-        
-    existing = Institute.query.filter_by(institute_code=code).first()
-    if existing:
-        flash("Institute Code must be unique.", "danger")
+
+    if "institute_code" in institute_cols:
+        existing = Institute.query.filter_by(institute_code=code).first()
+        if existing:
+            flash("Institute Code must be unique.", "danger")
+            return redirect(url_for('super_admin.tenants'))
+
+    payload = {
+        "trust_id_fk": trust_id,
+        "institute_name": name,
+    }
+    if "institute_code" in institute_cols:
+        payload["institute_code"] = code
+    if "is_active" in institute_cols:
+        payload["is_active"] = True
+
+    try:
+        institutes_table = _reflected_table("institutes")
+        result = db.session.execute(institutes_table.insert().values(**payload))
+        db.session.commit()
+        institute_id = None
+        try:
+            inserted_pk = getattr(result, "inserted_primary_key", None) or []
+            institute_id = inserted_pk[0] if inserted_pk else None
+        except Exception:
+            institute_id = None
+        if not institute_id:
+            created = (
+                Institute.query.filter_by(trust_id_fk=trust_id, institute_name=name)
+                .order_by(Institute.institute_id.desc())
+                .first()
+            )
+            institute_id = getattr(created, "institute_id", None)
+    except Exception:
+        db.session.rollback()
+        flash("Failed to create institute.", "danger")
         return redirect(url_for('super_admin.tenants'))
-        
-    new_inst = Institute(
-        trust_id_fk=trust_id,
-        institute_name=name,
-        institute_code=code
-    )
-    db.session.add(new_inst)
-    db.session.commit()
     
     flash(f"Institute '{name}' added successfully! Redirecting to setup wizard...", "success")
     # Redirect to Wizard Step 1 to complete setup (with institute_id)
-    return redirect(url_for('wizard.step1_institute', institute_id=new_inst.institute_id))
+    if institute_id:
+        return redirect(url_for('wizard.step1_institute', institute_id=institute_id))
+    return redirect(url_for('super_admin.tenants'))
 
 
 # ==========================================

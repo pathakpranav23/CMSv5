@@ -390,3 +390,46 @@ def test_super_admin_create_endpoints_redirect_on_direct_get(client, app):
     assert trust_create.headers["Location"].endswith("/super-admin/tenants")
     assert institute_create.status_code == 302
     assert institute_create.headers["Location"].endswith("/super-admin/tenants")
+
+
+def test_super_admin_create_trust_tolerates_missing_subscription_columns(client, app, monkeypatch):
+    from cms_app.super_admin import routes as super_admin_routes
+
+    original_table_columns = super_admin_routes._table_columns
+
+    with app.app_context():
+        super_admin = User(
+            username="sa_create_min_schema",
+            password_hash=generate_password_hash("secret"),
+            role="admin",
+            is_super_admin=True,
+        )
+        db.session.add(super_admin)
+        db.session.commit()
+
+    def fake_table_columns(table_name):
+        if table_name == "trusts":
+            return {"trust_id", "trust_name", "trust_code"}
+        return original_table_columns(table_name)
+
+    monkeypatch.setattr(super_admin_routes, "_table_columns", fake_table_columns)
+
+    csrf = _login(client, "sa_create_min_schema")
+    response = client.post(
+        "/super-admin/trusts/create",
+        data={
+            "csrf_token": csrf,
+            "trust_name": "Trust Minimal Create",
+            "trust_code": "TRUST_MIN_CREATE",
+            "subscription_plan": "enterprise",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "Tenant Management (Kill Switch)" in response.data.decode("utf-8")
+
+    with app.app_context():
+        created = Trust.query.filter_by(trust_code="TRUST_MIN_CREATE").first()
+        assert created is not None
+        assert created.trust_name == "Trust Minimal Create"
