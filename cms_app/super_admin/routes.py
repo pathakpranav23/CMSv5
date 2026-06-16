@@ -1,4 +1,4 @@
-from flask import render_template, request, redirect, url_for, flash, current_app, session
+from flask import render_template, request, redirect, url_for, flash, current_app, session, abort
 from flask_login import login_required, current_user
 from . import super_admin
 from ..models import db, SystemMessage, SystemConfig, Trust, Institute, User, Student, Faculty, ImportLog, DataAuditLog, Program
@@ -109,6 +109,42 @@ def _query_ordered_with_present_columns(model, required_attrs, optional_by_name,
 def _reflected_table(table_name):
     metadata = MetaData()
     return Table(table_name, metadata, autoload_with=db.engine)
+
+
+def _row_exists_by_column(table_name, column_name, value):
+    table = _reflected_table(table_name)
+    if column_name not in table.c:
+        return False
+    stmt = select(table.c[column_name]).where(table.c[column_name] == value).limit(1)
+    return db.session.execute(stmt).first() is not None
+
+
+def _fetch_row_mapping(table_name, pk_column, pk_value, column_names=None):
+    table = _reflected_table(table_name)
+    if pk_column not in table.c:
+        return None
+    selected_cols = []
+    for name in column_names or []:
+        if name in table.c:
+            selected_cols.append(table.c[name])
+    if not selected_cols:
+        selected_cols = [table.c[pk_column]]
+    stmt = select(*selected_cols).where(table.c[pk_column] == pk_value).limit(1)
+    row = db.session.execute(stmt).mappings().first()
+    return dict(row) if row else None
+
+
+def _find_latest_matching_id(table_name, id_column, filters):
+    table = _reflected_table(table_name)
+    if id_column not in table.c:
+        return None
+    stmt = select(table.c[id_column])
+    for key, value in filters.items():
+        if key not in table.c:
+            return None
+        stmt = stmt.where(table.c[key] == value)
+    stmt = stmt.order_by(table.c[id_column].desc()).limit(1)
+    return db.session.execute(stmt).scalar()
 
 @super_admin.route('/dashboard')
 @login_required
@@ -545,16 +581,31 @@ def trust_institutes(trust_id: int):
 @login_required
 @super_admin_required
 def toggle_trust(trust_id):
-    trust = Trust.query.get_or_404(trust_id)
-    trust.is_active = not trust.is_active
-    if trust.is_active:
-        trust.suspended_at = None
-        trust.suspended_reason = None
-    else:
-        trust.suspended_at = datetime.utcnow()
+    trust_cols = _table_columns("trusts")
+    trust = _fetch_row_mapping("trusts", "trust_id", trust_id, ["trust_id", "trust_name", "is_active"])
+    if not trust:
+        abort(404)
+    if "is_active" not in trust_cols:
+        flash("Trust status is not supported on this database schema.", "danger")
+        return redirect(url_for('super_admin.tenants'))
+
+    next_status = not bool(trust.get("is_active", True))
+    updates = {"is_active": next_status}
+    if next_status:
+        if "suspended_at" in trust_cols:
+            updates["suspended_at"] = None
+        if "suspended_reason" in trust_cols:
+            updates["suspended_reason"] = None
+    elif "suspended_at" in trust_cols:
+        updates["suspended_at"] = datetime.utcnow()
+
+    trusts_table = _reflected_table("trusts")
+    db.session.execute(
+        trusts_table.update().where(trusts_table.c.trust_id == trust_id).values(**updates)
+    )
     db.session.commit()
-    status = "Active" if trust.is_active else "Suspended"
-    flash(f"Trust '{trust.trust_name}' is now {status}.", "warning" if not trust.is_active else "success")
+    status = "Active" if next_status else "Suspended"
+    flash(f"Trust '{trust.get('trust_name', 'Trust')}' is now {status}.", "warning" if not next_status else "success")
     return redirect(url_for('super_admin.tenants'))
 
 
@@ -562,7 +613,26 @@ def toggle_trust(trust_id):
 @login_required
 @super_admin_required
 def update_trust_subscription(trust_id):
-    trust = Trust.query.get_or_404(trust_id)
+    trust_cols = _table_columns("trusts")
+    trust = _fetch_row_mapping(
+        "trusts",
+        "trust_id",
+        trust_id,
+        [
+            "trust_id",
+            "trust_name",
+            "subscription_start_at",
+            "subscription_end_at",
+            "subscription_grace_days",
+            "suspended_reason",
+        ],
+    )
+    if not trust:
+        abort(404)
+    if "subscription_end_at" not in trust_cols:
+        flash("Subscription windows are not supported on this database schema.", "warning")
+        return redirect(url_for('super_admin.tenants'))
+
     mode = (request.form.get('mode') or 'one_year').strip().lower()
     end_date = (request.form.get('end_date') or '').strip()
     grace_days_raw = (request.form.get('grace_days') or '').strip()
@@ -573,27 +643,35 @@ def update_trust_subscription(trust_id):
         grace_days = 0
 
     now = datetime.utcnow()
-    if not trust.subscription_start_at:
-        trust.subscription_start_at = now
+    updates = {}
+    if "subscription_start_at" in trust_cols and not trust.get("subscription_start_at"):
+        updates["subscription_start_at"] = now
 
     if mode == 'one_year':
-        trust.subscription_start_at = now
-        trust.subscription_end_at = now + timedelta(days=365)
+        if "subscription_start_at" in trust_cols:
+            updates["subscription_start_at"] = now
+        updates["subscription_end_at"] = now + timedelta(days=365)
     else:
         try:
             dt = datetime.strptime(end_date, '%Y-%m-%d')
-            trust.subscription_end_at = dt.replace(hour=23, minute=59, second=59)
-            if not trust.subscription_start_at:
-                trust.subscription_start_at = now
+            updates["subscription_end_at"] = dt.replace(hour=23, minute=59, second=59)
+            if "subscription_start_at" in trust_cols and not trust.get("subscription_start_at"):
+                updates["subscription_start_at"] = now
         except Exception:
             flash("Invalid end date.", "danger")
             return redirect(url_for('super_admin.tenants'))
 
-    trust.subscription_grace_days = max(0, min(60, grace_days))
-    if reason:
-        trust.suspended_reason = reason
+    if "subscription_grace_days" in trust_cols:
+        updates["subscription_grace_days"] = max(0, min(60, grace_days))
+    if reason and "suspended_reason" in trust_cols:
+        updates["suspended_reason"] = reason
+
+    trusts_table = _reflected_table("trusts")
+    db.session.execute(
+        trusts_table.update().where(trusts_table.c.trust_id == trust_id).values(**updates)
+    )
     db.session.commit()
-    flash(f"Subscription updated for '{trust.trust_name}'.", "success")
+    flash(f"Subscription updated for '{trust.get('trust_name', 'Trust')}'.", "success")
     return redirect(url_for('super_admin.tenants'))
 
 
@@ -601,9 +679,17 @@ def update_trust_subscription(trust_id):
 @login_required
 @super_admin_required
 def notify_tenure(trust_id):
-    trust = Trust.query.get_or_404(trust_id)
+    trust_cols = _table_columns("trusts")
+    trust = _fetch_row_mapping(
+        "trusts",
+        "trust_id",
+        trust_id,
+        ["trust_id", "trust_name", "contact_email", "subscription_end_at"],
+    )
+    if not trust:
+        abort(404)
     now = datetime.utcnow()
-    end_at = getattr(trust, "subscription_end_at", None)
+    end_at = trust.get("subscription_end_at")
     if not end_at:
         flash("Subscription end date is not set.", "warning")
         return redirect(url_for('super_admin.tenants'))
@@ -612,7 +698,7 @@ def notify_tenure(trust_id):
     except Exception:
         days_left = None
 
-    title = f"Subscription Notice: {trust.trust_name}"
+    title = f"Subscription Notice: {trust.get('trust_name', 'Trust')}"
     content = f"Your subscription tenure will end on {end_at.strftime('%Y-%m-%d')}. Please renew to avoid service interruption."
     if days_left is not None:
         content = f"Your subscription tenure will end in {days_left} day(s) on {end_at.strftime('%Y-%m-%d')}. Please renew to avoid service interruption."
@@ -622,18 +708,22 @@ def notify_tenure(trust_id):
         content=content,
         message_type="warning" if (days_left is None or days_left > 7) else "danger",
         target_role="all",
-        target_trust_id=trust.trust_id,
+        target_trust_id=trust_id,
         start_date=datetime.now(timezone.utc),
         end_date=datetime.now(timezone.utc) + timedelta(days=45),
         is_active=True,
     )
     db.session.add(msg)
-    trust.last_tenure_notice_at = now
+    if "last_tenure_notice_at" in trust_cols:
+        trusts_table = _reflected_table("trusts")
+        db.session.execute(
+            trusts_table.update().where(trusts_table.c.trust_id == trust_id).values(last_tenure_notice_at=now)
+        )
     db.session.commit()
 
     try:
         from ..email_utils import send_email
-        to_addr = getattr(trust, "contact_email", None)
+        to_addr = trust.get("contact_email")
         if to_addr:
             send_email(
                 subject=title,
@@ -644,18 +734,32 @@ def notify_tenure(trust_id):
     except Exception:
         pass
 
-    flash(f"Tenure notice sent for '{trust.trust_name}'.", "success")
+    flash(f"Tenure notice sent for '{trust.get('trust_name', 'Trust')}'.", "success")
     return redirect(url_for('super_admin.tenants'))
 
 @super_admin.route('/institutes/<int:inst_id>/toggle', methods=['POST'])
 @login_required
 @super_admin_required
 def toggle_institute(inst_id):
-    inst = Institute.query.get_or_404(inst_id)
-    inst.is_active = not inst.is_active
+    institute_cols = _table_columns("institutes")
+    inst = _fetch_row_mapping("institutes", "institute_id", inst_id, ["institute_id", "institute_name", "is_active"])
+    if not inst:
+        abort(404)
+    if "is_active" not in institute_cols:
+        flash("Institute status is not supported on this database schema.", "danger")
+        return redirect(url_for('super_admin.tenants'))
+
+    next_status = not bool(inst.get("is_active", True))
+    institutes_table = _reflected_table("institutes")
+    db.session.execute(
+        institutes_table.update().where(institutes_table.c.institute_id == inst_id).values(is_active=next_status)
+    )
     db.session.commit()
-    status = "Active" if inst.is_active else "Suspended"
-    flash(f"Institute '{inst.institute_name}' is now {status}.", "warning" if not inst.is_active else "success")
+    status = "Active" if next_status else "Suspended"
+    flash(
+        f"Institute '{inst.get('institute_name', 'Institute')}' is now {status}.",
+        "warning" if not next_status else "success",
+    )
     return redirect(url_for('super_admin.tenants'))
 
 
@@ -675,10 +779,14 @@ def create_trust():
         flash("Trust Name and Code are required.", "danger")
         return redirect(url_for('super_admin.tenants'))
 
-    if "trust_code" in trust_cols:
-        existing = Trust.query.filter_by(trust_code=code).first()
-        if existing:
-            flash("Trust Code must be unique.", "danger")
+    if "trust_code" in trust_cols and _row_exists_by_column("trusts", "trust_code", code):
+        flash("Trust Code must be unique.", "danger")
+        return redirect(url_for('super_admin.tenants'))
+
+    if "trust_name" in trust_cols and _row_exists_by_column("trusts", "trust_name", name):
+        # Older databases may not enforce a trust_code column at all, so guard against easy duplicates.
+        if "trust_code" not in trust_cols:
+            flash("Trust already exists.", "danger")
             return redirect(url_for('super_admin.tenants'))
 
     now = datetime.utcnow()
@@ -725,14 +833,31 @@ def create_institute():
         flash("All fields are required.", "danger")
         return redirect(url_for('super_admin.tenants'))
 
-    if "institute_code" in institute_cols:
-        existing = Institute.query.filter_by(institute_code=code).first()
-        if existing:
-            flash("Institute Code must be unique.", "danger")
+    if "institute_code" in institute_cols and _row_exists_by_column("institutes", "institute_code", code):
+        flash("Institute Code must be unique.", "danger")
+        return redirect(url_for('super_admin.tenants'))
+
+    try:
+        trust_id_value = int(trust_id)
+    except Exception:
+        flash("Invalid trust selected.", "danger")
+        return redirect(url_for('super_admin.tenants'))
+
+    if "trust_id_fk" in institute_cols and not _fetch_row_mapping("trusts", "trust_id", trust_id_value, ["trust_id"]):
+        flash("Selected trust was not found.", "danger")
+        return redirect(url_for('super_admin.tenants'))
+
+    if "trust_id_fk" not in institute_cols:
+        flash("Institute trust mapping is not supported on this database schema.", "danger")
+        return redirect(url_for('super_admin.tenants'))
+
+    if "institute_name" in institute_cols and _row_exists_by_column("institutes", "institute_name", name):
+        if "institute_code" not in institute_cols:
+            flash("Institute already exists.", "danger")
             return redirect(url_for('super_admin.tenants'))
 
     payload = {
-        "trust_id_fk": trust_id,
+        "trust_id_fk": trust_id_value,
         "institute_name": name,
     }
     if "institute_code" in institute_cols:
@@ -751,12 +876,11 @@ def create_institute():
         except Exception:
             institute_id = None
         if not institute_id:
-            created = (
-                Institute.query.filter_by(trust_id_fk=trust_id, institute_name=name)
-                .order_by(Institute.institute_id.desc())
-                .first()
+            institute_id = _find_latest_matching_id(
+                "institutes",
+                "institute_id",
+                {"trust_id_fk": trust_id_value, "institute_name": name},
             )
-            institute_id = getattr(created, "institute_id", None)
     except Exception:
         db.session.rollback()
         flash("Failed to create institute.", "danger")
@@ -826,7 +950,13 @@ def students_purge():
         Trust,
     )
 
-    trusts = Trust.query.order_by(Trust.trust_name.asc()).all()
+    trusts, _ = _query_ordered_with_present_columns(
+        Trust,
+        [Trust.trust_id, Trust.trust_name],
+        {},
+        "trusts",
+        Trust.trust_name,
+    )
     trust_id_raw = (request.values.get("trust_id") or "").strip()
     program_id_raw = (request.values.get("program_id") or "").strip()
     semester_raw = (request.values.get("semester") or "").strip().lower()

@@ -1,6 +1,8 @@
 from werkzeug.security import generate_password_hash
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import MetaData, Table, select
+
 from cms_app import db
 from cms_app.models import Faculty, FeePayment, Institute, Program, Student, Trust, User
 
@@ -412,7 +414,13 @@ def test_super_admin_create_trust_tolerates_missing_subscription_columns(client,
             return {"trust_id", "trust_name", "trust_code"}
         return original_table_columns(table_name)
 
+    class BlockingTrustQuery:
+        def filter_by(self, **kwargs):
+            raise AssertionError("create_trust should not use Trust.query on old schemas")
+
     monkeypatch.setattr(super_admin_routes, "_table_columns", fake_table_columns)
+    with app.app_context():
+        monkeypatch.setattr(super_admin_routes.Trust, "query", BlockingTrustQuery(), raising=False)
 
     csrf = _login(client, "sa_create_min_schema")
     response = client.post(
@@ -423,13 +431,15 @@ def test_super_admin_create_trust_tolerates_missing_subscription_columns(client,
             "trust_code": "TRUST_MIN_CREATE",
             "subscription_plan": "enterprise",
         },
-        follow_redirects=True,
+        follow_redirects=False,
     )
 
-    assert response.status_code == 200
-    assert "Tenant Management (Kill Switch)" in response.data.decode("utf-8")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/super-admin/tenants")
 
     with app.app_context():
-        created = Trust.query.filter_by(trust_code="TRUST_MIN_CREATE").first()
-        assert created is not None
-        assert created.trust_name == "Trust Minimal Create"
+        trusts_table = Table("trusts", MetaData(), autoload_with=db.engine)
+        created_name = db.session.execute(
+            select(trusts_table.c.trust_name).where(trusts_table.c.trust_code == "TRUST_MIN_CREATE")
+        ).scalar_one_or_none()
+        assert created_name == "Trust Minimal Create"
