@@ -268,3 +268,21 @@ def test_super_admin_dashboard_handles_timezone_aware_subscription_dates(client,
     assert response.status_code == 200
     assert "Super Admin Control Tower" in text
     assert "Trust TZ Aware" in text
+
+
+def test_super_admin_dashboard_legacy_redirects_to_control_tower(client, app):
+    with app.app_context():
+        super_admin = User(
+            username="sa_dashboard_legacy_redirect",
+            password_hash=generate_password_hash("secret"),
+            role="admin",
+            is_super_admin=True,
+        )
+        db.session.add(super_admin)
+        db.session.commit()
+
+    _login(client, "sa_dashboard_legacy_redirect")
+    response = client.get("/super-admin/dashboard-legacy", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/super-admin/dashboard")

@@ -11352,21 +11352,7 @@ def super_admin_dashboard():
     if not getattr(current_user, "is_super_admin", False):
         flash("Unauthorized access.", "danger")
         return redirect(url_for("main.dashboard"))
-
-    # Fetch Stats
-    trusts = db.session.execute(select(Trust).order_by(Trust.trust_id)).scalars().all()
-    institutes = db.session.execute(select(Institute)).scalars().all()
-    total_institutes = len(institutes)
-    
-    # Simple active user count (approx)
-    active_users = db.session.scalar(select(func.count(User.user_id)).filter_by(is_active=True))
-
-    return render_template(
-        "super_admin_dashboard.html",
-        trusts=trusts,
-        total_institutes=total_institutes,
-        active_users=active_users
-    )
+    return redirect(url_for("super_admin.dashboard"))
 
 @main_bp.route("/super-admin/trust/add", methods=["GET", "POST"])
 @login_required
