@@ -654,10 +654,13 @@ def toggle_institute(inst_id):
     return redirect(url_for('super_admin.tenants'))
 
 
-@super_admin.route('/trusts/create', methods=['POST'])
+@super_admin.route('/trusts/create', methods=['GET', 'POST'])
 @login_required
 @super_admin_required
 def create_trust():
+    if request.method == 'GET':
+        return redirect(url_for('super_admin.tenants'))
+
     name = request.form.get('trust_name')
     code = request.form.get('trust_code')
     plan = request.form.get('subscription_plan', 'basic')
@@ -687,10 +690,13 @@ def create_trust():
     return redirect(url_for('super_admin.tenants'))
 
 
-@super_admin.route('/institutes/create', methods=['POST'])
+@super_admin.route('/institutes/create', methods=['GET', 'POST'])
 @login_required
 @super_admin_required
 def create_institute():
+    if request.method == 'GET':
+        return redirect(url_for('super_admin.tenants'))
+
     trust_id = request.form.get('trust_id')
     name = request.form.get('institute_name')
     code = request.form.get('institute_code')

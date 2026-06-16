@@ -368,3 +368,25 @@ def test_super_admin_tenants_page_tolerates_missing_optional_schema_columns(clie
     assert response.status_code == 200
     assert "Trust Minimal Schema" in text
     assert "Minimal Institute" in text
+
+
+def test_super_admin_create_endpoints_redirect_on_direct_get(client, app):
+    with app.app_context():
+        super_admin = User(
+            username="sa_create_redirects",
+            password_hash=generate_password_hash("secret"),
+            role="admin",
+            is_super_admin=True,
+        )
+        db.session.add(super_admin)
+        db.session.commit()
+
+    _login(client, "sa_create_redirects")
+
+    trust_create = client.get("/super-admin/trusts/create", follow_redirects=False)
+    institute_create = client.get("/super-admin/institutes/create", follow_redirects=False)
+
+    assert trust_create.status_code == 302
+    assert trust_create.headers["Location"].endswith("/super-admin/tenants")
+    assert institute_create.status_code == 302
+    assert institute_create.headers["Location"].endswith("/super-admin/tenants")
