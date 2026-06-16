@@ -5,6 +5,7 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 from flask_login import UserMixin
+from sqlalchemy.orm import synonym
 
 # ==========================================
 # ORGANIZATION / TENANT MODELS
@@ -451,7 +452,8 @@ class FeePayment(db.Model):
     remarks = db.Column(db.Text)
     
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.user_id"))
-    verified_by_user_id = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    verified_by_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    verified_by_user_id = synonym("verified_by_fk")
     
     created_at = db.Column(db.DateTime, default=utc_now)
     verified_at = db.Column(db.DateTime)

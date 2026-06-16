@@ -17,7 +17,6 @@ from ..email_utils import send_email
 from datetime import datetime, timedelta, timezone
 import math
 from io import BytesIO
-from openpyxl import Workbook, load_workbook
 import time
 import secrets
 
@@ -2858,7 +2857,11 @@ def dashboard():
         effective_trust_id = getattr(current_user, "trust_id_fk", None)
 
     try:
-        if effective_trust_id and role in ("admin", "principal", "clerk"):
+        if (
+            effective_trust_id
+            and role in ("admin", "principal", "clerk")
+            and current_app.config.get("AUTO_RELEASE_EMPTY_SEMESTER_ASSIGNMENTS", False)
+        ):
             _auto_release_empty_semester_course_assignments(effective_trust_id)
     except Exception:
         pass
@@ -2933,6 +2936,11 @@ def dashboard():
                 
         # 2. Trust-Level Scope (Medium)
         if effective_trust_id:
+            if hasattr(model, "trust_id_fk"):
+                try:
+                    return query.filter(getattr(model, "trust_id_fk") == int(effective_trust_id))
+                except Exception:
+                    pass
             # Handle Faculty (via Program -> Institute)
             if model == Faculty:
                 return query.join(Program, Faculty.program_id_fk == Program.program_id)\
@@ -3011,7 +3019,7 @@ def dashboard():
         if pid:
             q_st_miss = q_st_miss.filter_by(program_id_fk=pid)
         elif effective_trust_id:
-            q_st_miss = q_st_miss.join(Program).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+            q_st_miss = q_st_miss.filter(Student.trust_id_fk == int(effective_trust_id))
         st_missing_mobile = _safe_count(q_st_miss)
     except Exception:
         st_missing_mobile = 0
@@ -3021,7 +3029,7 @@ def dashboard():
         if pid:
             q_st_cat_missing = q_st_cat_missing.filter_by(program_id_fk=pid)
         elif effective_trust_id:
-            q_st_cat_missing = q_st_cat_missing.join(Program).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+            q_st_cat_missing = q_st_cat_missing.filter(Student.trust_id_fk == int(effective_trust_id))
         st_cat_missing = _safe_count(q_st_cat_missing)
     except Exception:
         st_cat_missing = 0
@@ -3031,7 +3039,7 @@ def dashboard():
         if pid:
             q_st_no_user = q_st_no_user.filter_by(program_id_fk=pid)
         elif effective_trust_id:
-            q_st_no_user = q_st_no_user.join(Program).join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
+            q_st_no_user = q_st_no_user.filter(Student.trust_id_fk == int(effective_trust_id))
         st_no_user = _safe_count(q_st_no_user)
     except Exception:
         st_no_user = 0
@@ -13450,6 +13458,7 @@ def fees_heads_seed_all():
 @limiter.limit("10 per minute")
 def fees_import():
     from ..models import Program, FeeStructure
+    from openpyxl import load_workbook
     # Build program list with role-based scoping
     role = (getattr(current_user, "role", "") or "").strip().lower()
     pid_scope = None
@@ -13619,6 +13628,7 @@ def fees_import():
 @role_required("clerk", "admin", "principal")
 def fees_import_sample():
     from ..models import Program, FeeStructure
+    from openpyxl import Workbook
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip()

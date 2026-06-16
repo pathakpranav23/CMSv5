@@ -107,12 +107,20 @@ def main():
              if not column_exists(conn, "fee_payments", "created_by_user_id"):
                  print("Adding created_by_user_id to fee_payments...")
                  conn.execute(text("ALTER TABLE fee_payments ADD COLUMN created_by_user_id INTEGER REFERENCES users(user_id)"))
-             if not column_exists(conn, "fee_payments", "verified_at"):
-                 print("Adding verified_at to fee_payments...")
-                 conn.execute(text("ALTER TABLE fee_payments ADD COLUMN verified_at DATETIME"))
-             if not column_exists(conn, "fee_payments", "verified_by_user_id"):
-                 print("Adding verified_by_user_id to fee_payments...")
-                 conn.execute(text("ALTER TABLE fee_payments ADD COLUMN verified_by_user_id INTEGER REFERENCES users(user_id)"))
+            if not column_exists(conn, "fee_payments", "verified_at"):
+                print("Adding verified_at to fee_payments...")
+                conn.execute(text("ALTER TABLE fee_payments ADD COLUMN verified_at DATETIME"))
+            legacy_verified_col = column_exists(conn, "fee_payments", "verified_by_user_id")
+            if not column_exists(conn, "fee_payments", "verified_by_fk"):
+                print("Adding verified_by_fk to fee_payments...")
+                conn.execute(text("ALTER TABLE fee_payments ADD COLUMN verified_by_fk INTEGER REFERENCES users(user_id)"))
+            if legacy_verified_col:
+                print("Backfilling verified_by_fk from verified_by_user_id where needed...")
+                conn.execute(text(
+                    "UPDATE fee_payments "
+                    "SET verified_by_fk = verified_by_user_id "
+                    "WHERE verified_by_fk IS NULL AND verified_by_user_id IS NOT NULL"
+                ))
 
         db.session.commit()
         print("Schema synchronization completed.")

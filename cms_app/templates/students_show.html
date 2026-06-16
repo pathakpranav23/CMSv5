@@ -302,9 +302,6 @@
           <div class="col-6 col-md-3 mt-2 mt-md-0"><div class="p-2 border rounded"><div class="text-muted">Avg Practical</div><div class="fw-bold">{{ '%.2f' % grade_summary.avg_practical }}</div></div></div>
           <div class="col-6 col-md-3 mt-2 mt-md-0"><div class="p-2 border rounded"><div class="text-muted">Avg GPA</div><div class="fw-bold">{{ '%.2f' % grade_summary.avg_gpa }}</div></div></div>
         </div>
-        <div class="d-none">
-          <canvas id="gpaChart" height="120"></canvas>
-        </div>
       </div>
     </div>
 
@@ -356,102 +353,41 @@
         {% endif %}
       </div>
     </div>
-    <!--
-    <script type="application/json" id="gradeChartValues">{{ grade_chart_values|tojson }}</script>
-    <script type="application/json" id="gradeChartSeries">{{ grade_chart_series|tojson }}</script>
-    <script type="application/json" id="gradeChartSubjectIds">{{ grade_chart_subject_ids|tojson }}</script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script>
-      (function(){
-        try {
-          const ctx = document.getElementById('gpaChart');
-          if (!ctx) return;
-          const labels = JSON.parse(document.getElementById('gradeChartLabels')?.textContent || '[]');
-          const baseData = JSON.parse(document.getElementById('gradeChartValues')?.textContent || '[]');
-          const series = JSON.parse(document.getElementById('gradeChartSeries')?.textContent || '[]');
-          const subjectIds = JSON.parse(document.getElementById('gradeChartSubjectIds')?.textContent || '[]');
-          const baseUrl = "{{ url_for('main.students_grades', enrollment_no=student.enrollment_no) }}";
-          const colors = ['rgba(54,162,235,0.5)','rgba(255,99,132,0.5)','rgba(255,206,86,0.5)','rgba(75,192,192,0.5)','rgba(153,102,255,0.5)','rgba(255,159,64,0.5)'];
-          const datasets = (series && series.length ? series : [{label: 'Avg GPA per Subject', data: baseData}]).map((s, i) => ({
-            label: s.label,
-            data: s.data,
-            backgroundColor: colors[i % colors.length],
-            borderWidth: 1
-          }));
-          const chart = new Chart(ctx, {
-            type: 'bar',
-            data: { labels: labels, datasets: datasets },
-            options: {
-              responsive: true,
-              scales: { y: { beginAtZero: true, max: 10 } },
-              onClick: (evt, elements) => {
-                if (!elements.length) return;
-                const el = elements[0];
-                const idx = el.index;
-                const datasetIndex = el.datasetIndex;
-                const ds = chart.data.datasets[datasetIndex];
-                const semMatch = (ds.label || '').match(/(\d+)/);
-                const sem = semMatch ? semMatch[1] : '';
-                const sid = subjectIds[idx];
-                const params = new URLSearchParams();
-                if (sem) params.set('g_sem', sem);
-                if (sid) params.set('subject_id', sid);
-                window.location.href = `${baseUrl}?${params.toString()}`;
-              }
-            }
-          });
-        } catch (e) { /* ignore chart errors */ }
-      })();
-    -->
   </div>
 </div>
 <div class="mt-3">
-  <canvas id="gpaChart" data-base-url="{{ url_for('main.students_grades', enrollment_no=student.enrollment_no) }}" height="120"></canvas>
-  <script type="application/json" id="gradeChartLabels">{{ (grade_chart_labels or []) | tojson }}</script>
-  <script type="application/json" id="gradeChartValues">{{ (grade_chart_values or []) | tojson }}</script>
-  <script type="application/json" id="gradeChartSeries">{{ (grade_chart_series or []) | tojson }}</script>
-  <script type="application/json" id="gradeChartSubjectIds">{{ (grade_chart_subject_ids or []) | tojson }}</script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script>
-    (function(){
-      try {
-        const ctx = document.getElementById('gpaChart');
-        if (!ctx) return;
-        const labels = JSON.parse(document.getElementById('gradeChartLabels')?.textContent || '[]');
-        const baseData = JSON.parse(document.getElementById('gradeChartValues')?.textContent || '[]');
-        const series = JSON.parse(document.getElementById('gradeChartSeries')?.textContent || '[]');
-        const subjectIds = JSON.parse(document.getElementById('gradeChartSubjectIds')?.textContent || '[]');
-        const baseUrl = ctx.dataset.baseUrl || '';
-        const colors = ['rgba(54,162,235,0.5)','rgba(255,99,132,0.5)','rgba(255,206,86,0.5)','rgba(75,192,192,0.5)','rgba(153,102,255,0.5)','rgba(255,159,64,0.5)'];
-        const datasets = (series && series.length ? series : [{label: 'Avg GPA per Subject', data: baseData}]).map((s, i) => ({
-          label: s.label,
-          data: s.data,
-          backgroundColor: colors[i % colors.length],
-          borderWidth: 1
-        }));
-        const chart = new Chart(ctx, {
-          type: 'bar',
-          data: { labels: labels, datasets: datasets },
-          options: {
-            responsive: true,
-            scales: { y: { beginAtZero: true, max: 10 } },
-            onClick: (evt, elements) => {
-              if (!elements.length || !baseUrl) return;
-              const el = elements[0];
-              const idx = el.index;
-              const datasetIndex = el.datasetIndex;
-              const ds = chart.data.datasets[datasetIndex];
-              const semMatch = (ds.label || '').match(/(\d+)/);
-              const sem = semMatch ? semMatch[1] : '';
-              const sid = subjectIds[idx];
-              const params = new URLSearchParams();
-              if (sem) params.set('g_sem', sem);
-              if (sid) params.set('subject_id', sid);
-              window.location.href = `${baseUrl}?${params.toString()}`;
-            }
-          }
-        });
-      } catch (e) {}
-    })();
-  </script>
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>Subject GPA Snapshot</span>
+      <span class="small text-muted">{{ (grade_chart_labels or [])|length }} subjects</span>
+    </div>
+    <div class="card-body">
+      {% if grade_chart_labels and grade_chart_labels|length > 0 %}
+        <div class="vstack gap-3">
+          {% for idx in range(grade_chart_labels|length) %}
+            {% set gpa = (grade_chart_values[idx] if idx < (grade_chart_values|length) else 0)|float %}
+            {% set subject_id = grade_chart_subject_ids[idx] if idx < (grade_chart_subject_ids|length) else None %}
+            <div>
+              <div class="d-flex justify-content-between align-items-center small fw-semibold mb-1">
+                <span>
+                  {% if subject_id %}
+                    <a class="text-decoration-none" href="{{ url_for('main.students_grades', enrollment_no=student.enrollment_no, subject_id=subject_id) }}">{{ grade_chart_labels[idx] }}</a>
+                  {% else %}
+                    {{ grade_chart_labels[idx] }}
+                  {% endif %}
+                </span>
+                <span>{{ '%.2f' % gpa }}/10</span>
+              </div>
+              <div class="progress" style="height: 8px;">
+                <div class="progress-bar {% if gpa >= 7 %}bg-success{% elif gpa >= 5 %}bg-warning{% else %}bg-danger{% endif %}" role="progressbar" style="width: {{ gpa * 10 }}%" aria-valuenow="{{ (gpa * 10)|round(0, 'floor') }}" aria-valuemin="0" aria-valuemax="100"></div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-muted">No GPA summary available.</div>
+      {% endif %}
+    </div>
+  </div>
+ </div>
 {% endblock %}

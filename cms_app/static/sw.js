@@ -1,5 +1,5 @@
 // Service Worker for Parekh Colleges CMS
-const CACHE_NAME = 'cms-cache-v34';
+const CACHE_NAME = 'cms-cache-v37';
 const URLS_TO_CACHE = [
   '/',
   '/static/style.css',
@@ -15,8 +15,11 @@ const URLS_TO_CACHE = [
   '/static/offline.html',
   '/static/js/session_manager.js?v=1',
   '/static/js/command_palette.js?v=2',
-  'https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css',
-  'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css'
+  '/static/vendor/bootstrap/css/bootstrap.min.css',
+  '/static/vendor/bootstrap/js/bootstrap.bundle.min.js',
+  '/static/vendor/bootstrap-icons/bootstrap-icons.css',
+  '/static/vendor/bootstrap-icons/fonts/bootstrap-icons.woff2',
+  '/static/vendor/bootstrap-icons/fonts/bootstrap-icons.woff'
 ];
 
 self.addEventListener('install', (event) => {

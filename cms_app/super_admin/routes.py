@@ -1,38 +1,96 @@
 from flask import render_template, request, redirect, url_for, flash, current_app, session
 from flask_login import login_required, current_user
 from . import super_admin
-from ..models import db, SystemMessage, SystemConfig, Trust, Institute, User, Student, Faculty, ImportLog, DataAuditLog, Program
+from ..models import db, SystemMessage, SystemConfig, Trust, Institute, User, Student, Faculty, ImportLog, DataAuditLog
 from sqlalchemy import select, func
+from sqlalchemy.orm import load_only
 from ..decorators import super_admin_required
+from .. import cache
 from datetime import datetime, timedelta, timezone
+
+def _cached_value(key, loader, timeout=60):
+    try:
+        cached = cache.get(key)
+    except Exception:
+        cached = None
+    if cached is not None:
+        return cached
+    value = loader()
+    try:
+        cache.set(key, value, timeout=timeout)
+    except Exception:
+        pass
+    return value
 
 @super_admin.route('/dashboard')
 @login_required
 @super_admin_required
 def dashboard():
     now = datetime.utcnow()
-    total_trusts = Trust.query.count()
-    total_institutes = Institute.query.count()
-    total_users = User.query.count()
-    total_students = Student.query.count()
-    total_faculty = Faculty.query.count()
 
-    active_messages = SystemMessage.query.filter_by(is_active=True).count()
+    total_trusts = _cached_value(
+        "sa_total_trusts",
+        lambda: int(db.session.execute(select(func.count()).select_from(Trust)).scalar() or 0),
+        timeout=15,
+    )
+    total_institutes = _cached_value(
+        "sa_total_institutes",
+        lambda: int(db.session.execute(select(func.count()).select_from(Institute)).scalar() or 0),
+        timeout=15,
+    )
+    total_users = _cached_value(
+        "sa_total_users",
+        lambda: int(db.session.execute(select(func.count()).select_from(User)).scalar() or 0),
+        timeout=15,
+    )
+    total_students = _cached_value(
+        "sa_total_students",
+        lambda: int(db.session.execute(select(func.count()).select_from(Student)).scalar() or 0),
+        timeout=15,
+    )
+    total_faculty = _cached_value(
+        "sa_total_faculty",
+        lambda: int(db.session.execute(select(func.count()).select_from(Faculty)).scalar() or 0),
+        timeout=15,
+    )
+    active_messages = _cached_value(
+        "sa_active_messages",
+        lambda: int(
+            db.session.execute(select(func.count()).select_from(SystemMessage).where(SystemMessage.is_active == True)).scalar()
+            or 0
+        ),
+        timeout=15,
+    )
 
-    maint_mode_config = SystemConfig.query.get('maintenance_mode')
-    is_maintenance = (maint_mode_config.config_value == 'true') if maint_mode_config else False
+    maint_mode_config = _cached_value("sa_maint_mode_cfg", lambda: db.session.get(SystemConfig, "maintenance_mode"), timeout=10)
+    is_maintenance = ((getattr(maint_mode_config, "config_value", "") or "").strip().lower() == "true") if maint_mode_config else False
 
-    suspended_trusts = Trust.query.filter(Trust.is_active == False).order_by(Trust.trust_name.asc()).all()
+    suspended_trusts = _cached_value(
+        "sa_suspended_trusts",
+        lambda: Trust.query.options(
+            load_only(Trust.trust_id, Trust.trust_name, Trust.subscription_end_at, Trust.subscription_grace_days, Trust.is_active)
+        )
+        .filter(Trust.is_active == False)
+        .order_by(Trust.trust_name.asc())
+        .limit(30)
+        .all(),
+        timeout=30,
+    )
 
-    expiring_soon = []
-    expired = []
-    try:
-        trusts = Trust.query.order_by(Trust.trust_name.asc()).all()
+    def _risk_context():
+        expiring_soon = []
+        expired = []
+        trusts = (
+            Trust.query.options(load_only(Trust.trust_id, Trust.trust_name, Trust.subscription_end_at, Trust.subscription_grace_days))
+            .filter(Trust.subscription_end_at != None)
+            .order_by(Trust.trust_name.asc())
+            .all()
+        )
         for t in trusts:
             end_at = getattr(t, "subscription_end_at", None)
-            grace = int(getattr(t, "subscription_grace_days", 0) or 0)
             if not end_at:
                 continue
+            grace = int(getattr(t, "subscription_grace_days", 0) or 0)
             days_left = (end_at - now).days
             is_expired = now > (end_at + timedelta(days=grace))
             entry = {"trust": t, "end_at": end_at, "days_left": days_left, "grace_days": grace}
@@ -40,21 +98,42 @@ def dashboard():
                 expired.append(entry)
             elif days_left <= 30:
                 expiring_soon.append(entry)
-    except Exception:
-        expiring_soon = []
-        expired = []
+        expiring_soon.sort(key=lambda x: x.get("days_left", 10**9))
+        expired.sort(key=lambda x: x.get("days_left", 10**9))
+        return {
+            "expiring_soon": expiring_soon,
+            "expired": expired,
+            "risk_list": (expired + expiring_soon)[:12],
+        }
 
-    expiring_soon.sort(key=lambda x: x.get("days_left", 10**9))
-    expired.sort(key=lambda x: x.get("days_left", 10**9))
-    risk_list = (expired + expiring_soon)[:12]
+    risk_ctx = _cached_value("sa_risk_ctx", _risk_context, timeout=30)
 
-    recent_imports = ImportLog.query.order_by(ImportLog.created_at.desc()).limit(10).all()
-    recent_import_errors = ImportLog.query.filter(ImportLog.errors_count > 0).order_by(ImportLog.created_at.desc()).limit(10).all()
-    recent_audit = DataAuditLog.query.order_by(DataAuditLog.created_at.desc()).limit(12).all()
+    recent_imports = _cached_value(
+        "sa_recent_imports",
+        lambda: ImportLog.query.order_by(ImportLog.created_at.desc()).limit(10).all(),
+        timeout=20,
+    )
+    recent_import_errors = _cached_value(
+        "sa_recent_import_errors",
+        lambda: ImportLog.query.filter(ImportLog.errors_count > 0).order_by(ImportLog.created_at.desc()).limit(10).all(),
+        timeout=20,
+    )
+    recent_audit = _cached_value(
+        "sa_recent_audit",
+        lambda: DataAuditLog.query.order_by(DataAuditLog.created_at.desc()).limit(12).all(),
+        timeout=20,
+    )
 
-    trust_name_map = {t.trust_id: t.trust_name for t in Trust.query.all()}
-    program_name_map = {p.program_id: p.program_name for p in Program.query.all()}
-    user_name_map = {u.user_id: (u.username or "") for u in User.query.all()}
+    trust_name_map = _cached_value(
+        "sa_trust_name_map",
+        lambda: {tid: name for (tid, name) in db.session.execute(select(Trust.trust_id, Trust.trust_name)).all()},
+        timeout=300,
+    )
+    user_name_map = _cached_value(
+        "sa_user_name_map",
+        lambda: {uid: (uname or "") for (uid, uname) in db.session.execute(select(User.user_id, User.username)).all()},
+        timeout=120,
+    )
 
     db_ok = True
     try:
@@ -62,26 +141,27 @@ def dashboard():
     except Exception:
         db_ok = False
 
-    return render_template('super_admin/dashboard.html', 
-                           now=now,
-                           total_trusts=total_trusts,
-                           total_institutes=total_institutes,
-                           total_users=total_users,
-                           total_students=total_students,
-                           total_faculty=total_faculty,
-                           active_messages=active_messages,
-                           is_maintenance=is_maintenance,
-                           db_ok=db_ok,
-                           suspended_trusts=suspended_trusts,
-                           risk_list=risk_list,
-                           expiring_soon_count=len(expiring_soon),
-                           expired_count=len(expired),
-                           recent_imports=recent_imports,
-                           recent_import_errors=recent_import_errors,
-                           recent_audit=recent_audit,
-                           trust_name_map=trust_name_map,
-                           program_name_map=program_name_map,
-                           user_name_map=user_name_map)
+    return render_template(
+        'super_admin/dashboard.html',
+        now=now,
+        total_trusts=total_trusts,
+        total_institutes=total_institutes,
+        total_users=total_users,
+        total_students=total_students,
+        total_faculty=total_faculty,
+        active_messages=active_messages,
+        is_maintenance=is_maintenance,
+        db_ok=db_ok,
+        suspended_trusts=suspended_trusts,
+        risk_list=risk_ctx.get("risk_list") if risk_ctx else [],
+        expiring_soon_count=len(risk_ctx.get("expiring_soon") or []) if risk_ctx else 0,
+        expired_count=len(risk_ctx.get("expired") or []) if risk_ctx else 0,
+        recent_imports=recent_imports,
+        recent_import_errors=recent_import_errors,
+        recent_audit=recent_audit,
+        trust_name_map=trust_name_map,
+        user_name_map=user_name_map,
+    )
 
 # ==========================================
 # SYSTEM MESSAGES
@@ -180,6 +260,60 @@ def tenants():
             "users": user_counts.get(t.trust_id, 0),
         }
     return render_template('super_admin/tenants.html', trusts=trusts, institutes=institutes, meta=meta, now=now)
+
+
+@super_admin.route("/trusts/<int:trust_id>/institutes")
+@login_required
+@super_admin_required
+def trust_institutes(trust_id: int):
+    trust = Trust.query.get_or_404(trust_id)
+    insts = Institute.query.filter_by(trust_id_fk=trust_id).order_by(Institute.institute_name.asc()).all()
+    inst_ids = [i.institute_id for i in insts]
+    prog_counts = {}
+    stu_counts = {}
+    fac_counts = {}
+    user_counts = {}
+    if inst_ids:
+        prog_counts = {iid: n for (iid, n) in db.session.execute(select(Program.institute_id_fk, func.count()).where(Program.institute_id_fk.in_(inst_ids)).group_by(Program.institute_id_fk)).all()}
+        stu_counts = {
+            iid: n
+            for (iid, n) in db.session.execute(
+                select(Program.institute_id_fk, func.count(Student.enrollment_no))
+                .select_from(Student)
+                .join(Program, Student.program_id_fk == Program.program_id)
+                .where(Program.institute_id_fk.in_(inst_ids))
+                .group_by(Program.institute_id_fk)
+            ).all()
+        }
+        fac_counts = {
+            iid: n
+            for (iid, n) in db.session.execute(
+                select(Program.institute_id_fk, func.count(Faculty.faculty_id))
+                .select_from(Faculty)
+                .join(Program, Faculty.program_id_fk == Program.program_id)
+                .where(Program.institute_id_fk.in_(inst_ids))
+                .group_by(Program.institute_id_fk)
+            ).all()
+        }
+        user_counts = {
+            iid: n
+            for (iid, n) in db.session.execute(
+                select(Program.institute_id_fk, func.count(User.user_id))
+                .select_from(User)
+                .join(Program, User.program_id_fk == Program.program_id)
+                .where(Program.institute_id_fk.in_(inst_ids))
+                .group_by(Program.institute_id_fk)
+            ).all()
+        }
+    counts = {}
+    for i in insts:
+        counts[i.institute_id] = {
+            "programs": prog_counts.get(i.institute_id, 0),
+            "students": stu_counts.get(i.institute_id, 0),
+            "faculty": fac_counts.get(i.institute_id, 0),
+            "users": user_counts.get(i.institute_id, 0),
+        }
+    return render_template("super_admin/institutes.html", trust=trust, institutes=insts, counts=counts)
 
 @super_admin.route('/trusts/<int:trust_id>/toggle', methods=['POST'])
 @login_required

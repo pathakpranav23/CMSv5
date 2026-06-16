@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container-fluid py-4">
+  <div class="d-sm-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h1 class="h3 mb-1">Institutes</h1>
+      <div class="text-muted small">{{ trust.trust_name }}</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('super_admin.tenants') }}">Back</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('main.programs_list', trust_id=trust.trust_id) }}">Programs</a>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    {% for inst in institutes %}
+    <div class="col-12 col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <div class="d-flex align-items-start justify-content-between gap-3">
+            <div>
+              <div class="h5 mb-1">{{ inst.institute_name }}</div>
+              <div class="text-muted small">{{ inst.institute_code }}</div>
+              <div class="mt-2">
+                {% if inst.is_active %}
+                  <span class="badge bg-success-subtle text-success">Active</span>
+                {% else %}
+                  <span class="badge bg-danger-subtle text-danger">Suspended</span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="d-flex gap-2 flex-wrap justify-content-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.programs_list', trust_id=trust.trust_id, institute_id=inst.institute_id) }}">Programs</a>
+              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('wizard.step1_institute', institute_id=inst.institute_id) }}">Setup Wizard</a>
+              <form action="{{ url_for('super_admin.toggle_institute', inst_id=inst.institute_id) }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                {% if inst.is_active %}
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Suspend</button>
+                {% else %}
+                  <button type="submit" class="btn btn-sm btn-outline-success">Activate</button>
+                {% endif %}
+              </form>
+            </div>
+          </div>
+          <div class="mt-3 d-flex gap-2 flex-wrap">
+            <span class="badge text-bg-light">Programs: {{ counts[inst.institute_id].programs if counts and inst.institute_id in counts else 0 }}</span>
+            <span class="badge text-bg-light">Students: {{ counts[inst.institute_id].students if counts and inst.institute_id in counts else 0 }}</span>
+            <span class="badge text-bg-light">Staff: {{ counts[inst.institute_id].faculty if counts and inst.institute_id in counts else 0 }}</span>
+            <span class="badge text-bg-light">Users: {{ counts[inst.institute_id].users if counts and inst.institute_id in counts else 0 }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+    {% if institutes|length == 0 %}
+    <div class="col-12">
+      <div class="alert alert-info mb-0">No institutes found.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

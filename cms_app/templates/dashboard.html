@@ -272,19 +272,126 @@
         <div class="col">
           <div class="card">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Students by Program') }}</div></div>
-            <div class="card-body"><canvas id="chartStudentsProgram" height="100"></canvas></div>
+            <div class="card-body">
+              {% if charts.students_by_program %}
+                {% set student_totals = namespace(total=0) %}
+                {% for row in charts.students_by_program %}
+                  {% set student_totals.total = student_totals.total + (row.value or 0) %}
+                {% endfor %}
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>{{ t('Program') }}</th>
+                        <th class="text-end">{{ t('Students') }}</th>
+                        <th>{{ t('Share') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for row in charts.students_by_program %}
+                        {% set share = ((row.value or 0) * 100.0 / student_totals.total) if student_totals.total else 0 %}
+                        <tr>
+                          <td>{{ row.label }}</td>
+                          <td class="text-end">{{ row.value }}</td>
+                          <td>
+                            <div class="d-flex justify-content-between small mb-1">
+                              <span>{{ "%.1f"|format(share) }}%</span>
+                              <span class="text-muted">{{ row.value }} / {{ student_totals.total }}</span>
+                            </div>
+                            <div class="progress" style="height: 6px;">
+                              <div class="progress-bar bg-primary" role="progressbar" style="width: {{ share }}%" aria-valuenow="{{ share|round(0, 'floor') }}" aria-valuemin="0" aria-valuemax="100"></div>
+                            </div>
+                          </td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No student data available.') }}</div>
+              {% endif %}
+            </div>
           </div>
         </div>
         <div class="col">
           <div class="card">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Fees Collection by Program') }}</div></div>
-            <div class="card-body"><canvas id="chartFeesProgram" height="140"></canvas></div>
+            <div class="card-body">
+              {% if charts.fees_by_program %}
+                {% set fee_totals = namespace(total=0) %}
+                {% for row in charts.fees_by_program %}
+                  {% set fee_totals.total = fee_totals.total + (row.value or 0) %}
+                {% endfor %}
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>{{ t('Program') }}</th>
+                        <th class="text-end">{{ t('Amount (INR)') }}</th>
+                        <th>{{ t('Share') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for row in charts.fees_by_program %}
+                        {% set share = ((row.value or 0) * 100.0 / fee_totals.total) if fee_totals.total else 0 %}
+                        <tr>
+                          <td>{{ row.label }}</td>
+                          <td class="text-end">{{ row.value }}</td>
+                          <td>
+                            <div class="d-flex justify-content-between small mb-1">
+                              <span>{{ "%.1f"|format(share) }}%</span>
+                              <span class="text-muted">{{ t('Contribution') }}</span>
+                            </div>
+                            <div class="progress" style="height: 6px;">
+                              <div class="progress-bar bg-info" role="progressbar" style="width: {{ share }}%" aria-valuenow="{{ share|round(0, 'floor') }}" aria-valuemin="0" aria-valuemax="100"></div>
+                            </div>
+                          </td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No fee data available.') }}</div>
+              {% endif %}
+            </div>
           </div>
         </div>
         <div class="col">
           <div class="card">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Annual Income vs Expenses') }}</div></div>
-            <div class="card-body"><canvas id="chartIncomeExpensesAnnual" height="140"></canvas></div>
+            <div class="card-body">
+              {% set annual = charts.income_vs_expenses %}
+              {% if annual and annual.labels %}
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>{{ t('Month') }}</th>
+                        <th class="text-end">{{ t('Income') }}</th>
+                        <th class="text-end">{{ t('Expenses') }}</th>
+                        <th class="text-end">{{ t('Net') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for idx in range(annual.labels|length) %}
+                        {% set income = annual.income[idx] if idx < (annual.income|length) else 0 %}
+                        {% set expenses = annual.expenses[idx] if idx < (annual.expenses|length) else 0 %}
+                        {% set net = income - expenses %}
+                        <tr>
+                          <td>{{ annual.labels[idx] }}</td>
+                          <td class="text-end">{{ income }}</td>
+                          <td class="text-end">{{ expenses }}</td>
+                          <td class="text-end {% if net < 0 %}text-danger{% else %}text-success{% endif %}">{{ net }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No finance data available.') }}</div>
+              {% endif %}
+            </div>
           </div>
         </div>
         <div class="col">
@@ -681,7 +788,32 @@
           <div class="card h-100">
             <div class="card-header card-header-standard"><div class="card-title">{{ t('Attendance Trend (Last 7 Days)') }}</div></div>
             <div class="card-body">
-              <canvas id="chartAttendanceWeek" height="120"></canvas>
+              {% set week = summary.att_week_chart %}
+              {% if week and week.labels and week.labels|length > 0 %}
+                <div class="row row-cols-1 row-cols-sm-2 g-2">
+                  {% for idx in range(week.labels|length) %}
+                    {% set present = week.present_pct[idx] if idx < (week.present_pct|length) else 0 %}
+                    {% set absent = week.absent_pct[idx] if idx < (week.absent_pct|length) else 0 %}
+                    <div class="col">
+                      <div class="border rounded p-2 h-100">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                          <div class="fw-semibold">{{ week.labels[idx] }}</div>
+                          <span class="badge {% if present >= 75 %}bg-success-subtle text-success{% elif present >= 50 %}bg-warning-subtle text-warning{% else %}bg-danger-subtle text-danger{% endif %} border">
+                            {{ "%.1f"|format(present) }}%
+                          </span>
+                        </div>
+                        <div class="small text-muted mb-1">{{ t('Present %') }}</div>
+                        <div class="progress mb-2" style="height: 6px;">
+                          <div class="progress-bar bg-success" role="progressbar" style="width: {{ present }}%" aria-valuenow="{{ present|round(0, 'floor') }}" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                        <div class="small text-muted">{{ t('Absent %') }}: {{ "%.1f"|format(absent) }}%</div>
+                      </div>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="text-muted small">{{ t('No attendance trend available.') }}</div>
+              {% endif %}
             </div>
           </div>
         </div>
@@ -698,7 +830,32 @@
               <div class="card-body">
                 {% set cg = charts.category_gender_for_program %}
                 {% if cg and cg.labels and cg.labels|length > 0 %}
-                  <canvas id="chartCategoryGender" height="140"></canvas>
+                  {% set cg_totals = namespace(male=0, female=0, total=0) %}
+                  {% for idx in range(cg.labels|length) %}
+                    {% set cg_totals.male = cg_totals.male + (cg.male[idx] if idx < (cg.male|length) else 0) %}
+                    {% set cg_totals.female = cg_totals.female + (cg.female[idx] if idx < (cg.female|length) else 0) %}
+                    {% set cg_totals.total = cg_totals.total + (cg.total[idx] if idx < (cg.total|length) else 0) %}
+                  {% endfor %}
+                  <div class="row row-cols-1 row-cols-sm-3 g-2 mb-3">
+                    <div class="col">
+                      <div class="border rounded p-2 text-center h-100">
+                        <div class="small text-muted">{{ t('Boys') }}</div>
+                        <div class="fw-semibold">{{ cg_totals.male }}</div>
+                      </div>
+                    </div>
+                    <div class="col">
+                      <div class="border rounded p-2 text-center h-100">
+                        <div class="small text-muted">{{ t('Girls') }}</div>
+                        <div class="fw-semibold">{{ cg_totals.female }}</div>
+                      </div>
+                    </div>
+                    <div class="col">
+                      <div class="border rounded p-2 text-center h-100">
+                        <div class="small text-muted">{{ t('Total Students') }}</div>
+                        <div class="fw-semibold">{{ cg_totals.total }}</div>
+                      </div>
+                    </div>
+                  </div>
                   <div class="table-responsive">
                     <table class="table table-sm align-middle mb-0">
                       <thead class="table-light">
@@ -1033,234 +1190,5 @@
   {% endif %}
 
   <!-- Post-metrics cards removed to avoid duplication -->
-  
-<script id="attWeekData" type="application/json">{{ summary.att_week_chart | tojson | safe }}</script>
-<script id="chartsData" type="application/json">{{ charts | tojson | safe }}</script>
-<script id="chartsConfig" type="application/json">{{ {"isAdmin": is_admin, "isPrincipal": is_principal, "isFaculty": is_faculty} | tojson | safe }}</script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://d3js.org/d3.v7.min.js"></script>
-<script src="https://unpkg.com/cal-heatmap@4.2.3/dist/cal-heatmap.min.js"></script>
-<script src="https://unpkg.com/@popperjs/core@2"></script>
-<script src="https://unpkg.com/cal-heatmap@4.2.3/dist/plugins/Tooltip.min.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/cal-heatmap@4.2.3/dist/cal-heatmap.css">
-<script>
-  (function(){
-    const charts = JSON.parse(document.getElementById('chartsData').textContent);
-    const cfg = JSON.parse(document.getElementById('chartsConfig').textContent);
-    const isAdmin = !!cfg.isAdmin;
-    const isPrincipal = !!cfg.isPrincipal;
-    const isFaculty = !!cfg.isFaculty;
-    const attWeekEl = document.getElementById('attWeekData');
-    let attWeek = null;
-    if (attWeekEl) {
-      try {
-        attWeek = JSON.parse(attWeekEl.textContent);
-      } catch (e) {
-        attWeek = null;
-      }
-    }
-     
-    // Render Heatmap for Principal
-    if (isPrincipal && charts && charts.attendance_heatmap) {
-        const cal = new CalHeatmap();
-        // Convert timestamp keys to numeric
-        const rawData = charts.attendance_heatmap;
-        const data = [];
-        for (const [ts, val] of Object.entries(rawData)) {
-            data.push({ date: parseInt(ts) * 1000, value: val });
-        }
-        
-        cal.paint({
-            itemSelector: "#cal-heatmap",
-            domain: { type: "month" },
-            subDomain: { type: "day" },
-            date: { start: new Date(new Date().setMonth(new Date().getMonth() - 5)) },
-            range: 6,
-            data: { source: data, x: 'date', y: 'value' },
-            scale: { color: { type: 'linear', range: ['#e6f2ff', '#004085'], domain: [0, 100] } },
-            theme: "light"
-        }, [
-            [
-                Tooltip,
-                {
-                    text: function (date, value, dayRect) {
-                        if (value === null) return "";
-                        const dateObj = new Date(date);
-                        const ts = Math.floor(dateObj.getTime() / 1000);
-                        return `${value}% Attendance`;
-                    },
-                },
-            ],
-        ]);
-    }
-
-    // Render Heatmap for Faculty (absent % across assigned classes)
-    if (isFaculty && charts && charts.faculty_attendance_heatmap) {
-        const cal = new CalHeatmap();
-        // Backend now returns { heatmap: {...}, details: {...} }
-        // We need to handle both legacy format (direct dict) and new format
-        let rawData = charts.faculty_attendance_heatmap;
-        let details = {};
-        
-        if (rawData.heatmap) {
-            details = rawData.details || {};
-            rawData = rawData.heatmap;
-        }
-
-        const data = [];
-        for (const [ts, val] of Object.entries(rawData)) {
-            data.push({ date: parseInt(ts) * 1000, value: val });
-        }
-        
-        cal.paint({
-            itemSelector: "#cal-heatmap-faculty",
-            domain: { type: "month" },
-            subDomain: { type: "day" },
-            date: { start: new Date(new Date().setMonth(new Date().getMonth() - 5)) },
-            range: 6,
-            data: { source: data, x: 'date', y: 'value' },
-            scale: { color: { type: 'linear', range: ['#f8d7da', '#842029'], domain: [0, 100] } },
-            theme: "light"
-        }, [
-            [
-                Tooltip,
-                {
-                    text: function (date, value, dayRect) {
-                        if (value === null) return "";
-                        // Handle date being either a timestamp (number) or Date object
-                        const dateObj = new Date(date);
-                        const ts = Math.floor(dateObj.getTime() / 1000);
-                        const detailText = details[ts] ? `\n${details[ts]}` : "";
-                        return `${value}% Absent${detailText}`;
-                    },
-                },
-            ],
-        ]);
-    }
-
-    // Admin charts
-    if (isAdmin && charts) {
-      // Students by Program (pie)
-      const el1 = document.getElementById('chartStudentsProgram');
-      if (el1 && charts.students_by_program) {
-        const labels = charts.students_by_program.map(x=>x.label);
-        const data = charts.students_by_program.map(x=>x.value);
-        new Chart(el1, {
-          type: 'pie',
-          data: { labels, datasets: [{ data, backgroundColor: ['#0d6efd','#6f42c1','#198754','#fd7e14','#20c997','#6610f2'] }] },
-          options: { responsive:true, plugins:{ legend:{ position:'bottom' } } }
-        });
-      }
-      // Fees by Program (bar)
-      const el2 = document.getElementById('chartFeesProgram');
-      if (el2 && charts.fees_by_program) {
-        const labels = charts.fees_by_program.map(x=>x.label);
-        const data = charts.fees_by_program.map(x=>x.value);
-        new Chart(el2, {
-          type: 'bar',
-          data: { labels, datasets: [{ label:'Amount (INR)', data, backgroundColor:'#0d6efd' }] },
-          options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
-        });
-      }
-      // Staff by Program (bar)
-      const el3 = document.getElementById('chartStaffProgram');
-      if (el3 && charts.staff_by_program) {
-        const labels = charts.staff_by_program.map(x=>x.label);
-        const data = charts.staff_by_program.map(x=>x.value);
-        new Chart(el3, {
-          type: 'bar',
-          data: { labels, datasets: [{ label:'Staff', data, backgroundColor:'#198754' }] },
-          options: { responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, precision:0 } } }
-        });
-      }
-      // Annual Income vs Expenses (bar)
-      const el4 = document.getElementById('chartIncomeExpensesAnnual');
-      if (el4 && charts.income_vs_expenses) {
-        const labels = charts.income_vs_expenses.labels;
-        const income = charts.income_vs_expenses.income;
-        const expenses = charts.income_vs_expenses.expenses;
-        new Chart(el4, {
-          type: 'bar',
-          data: { labels, datasets: [
-            { label:'Income', data: income, backgroundColor:'#20c997' },
-            { label:'Expenses', data: expenses, backgroundColor:'#dc3545' }
-          ] },
-          options: { responsive:true, plugins:{ legend:{ position:'bottom' } }, scales:{ y:{ beginAtZero:true } } }
-        });
-      }
-    }
-
-    // Principal/Clerk charts
-    if (!isAdmin && charts) {
-      const elWeek = document.getElementById('chartAttendanceWeek');
-      if (elWeek && attWeek && attWeek.labels && attWeek.labels.length) {
-        new Chart(elWeek, {
-          type: 'line',
-          data: {
-            labels: attWeek.labels,
-            datasets: [
-              {
-                label: 'Present %',
-                data: attWeek.present_pct,
-                borderColor: '#198754',
-                backgroundColor: 'rgba(25,135,84,0.1)',
-                tension: 0.3
-              },
-              {
-                label: 'Absent %',
-                data: attWeek.absent_pct,
-                borderColor: '#dc3545',
-                backgroundColor: 'rgba(220,53,69,0.1)',
-                tension: 0.3
-              }
-            ]
-          },
-          options: {
-            responsive: true,
-            plugins: {
-              legend: { position: 'bottom' },
-              tooltip: {
-                callbacks: {
-                  label: function(ctx) {
-                    return ctx.dataset.label + ': ' + ctx.parsed.y + '%';
-                  }
-                }
-              }
-            },
-            scales: {
-              y: {
-                beginAtZero: true,
-                max: 100
-              }
-            }
-          }
-        });
-      }
-      if (isPrincipal && charts.category_gender_for_program) {
-        const el8 = document.getElementById('chartCategoryGender');
-        const cg = charts.category_gender_for_program || {};
-        if (el8 && cg.labels && cg.labels.length) {
-          new Chart(el8, {
-            type: 'bar',
-            data: {
-              labels: cg.labels,
-              datasets: [
-                { label: 'Boys', data: cg.male || [], backgroundColor: '#0d6efd' },
-                { label: 'Girls', data: cg.female || [], backgroundColor: '#e83e8c' }
-              ]
-            },
-            options: {
-              responsive: true,
-              plugins: { legend: { position: 'bottom' } },
-              scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, precision: 0 } }
-            }
-          });
-        }
-      }
-    }
-
-    // Admin charts are filtered at server-side when a program is selected
-  })();
-</script>
 </div>
 {% endblock %}

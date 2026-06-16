@@ -134,8 +134,7 @@
                       <div
                         class="progress-bar analytics-attendance-bar {% if pct >= 85 %}bg-success{% elif pct >= 60 %}bg-warning{% else %}bg-danger{% endif %}"
                         role="progressbar"
-                        style="width: 0%"
-                        data-width="{{ pct }}"
+                        style="width: {{ pct }}%"
                         aria-valuenow="{{ pct }}"
                         aria-valuemin="0"
                         aria-valuemax="100"
@@ -262,7 +261,40 @@
           </div>
         </div>
         <div class="card-body">
-          <canvas id="chartLecturesByPeriod" height="140"></canvas>
+          {% if has_daily %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>{{ t('Period') }}</th>
+                  <th class="text-end">{{ t('Lectures') }}</th>
+                  <th>{{ t('Share') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for period_group in daily_logs|groupby('period_no') %}
+                {% set period_total = period_group.list|length %}
+                {% set share = (period_total * 100.0 / (daily_logs|length)) if daily_logs else 0 %}
+                <tr>
+                  <td>P{{ period_group.grouper }}</td>
+                  <td class="text-end">{{ period_total }}</td>
+                  <td>
+                    <div class="d-flex justify-content-between small mb-1">
+                      <span>{{ "%.1f"|format(share) }}%</span>
+                      <span class="text-muted">{{ t('of logged lectures') }}</span>
+                    </div>
+                    <div class="progress" style="height: 6px;">
+                      <div class="progress-bar bg-primary" role="progressbar" style="width: {{ share }}%" aria-valuenow="{{ share|round(0, 'floor') }}" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="text-muted small">{{ t('No lecture logs available for this range.') }}</div>
+          {% endif %}
         </div>
       </div>
     </div>
@@ -275,7 +307,47 @@
           </div>
         </div>
         <div class="card-body">
-          <canvas id="chartTopFacultyWeek" height="140"></canvas>
+          {% if has_weekly %}
+          {% set faculty_stats = namespace(max_total=0) %}
+          {% for row in weekly_grid %}
+            {% if (row.total or 0) > faculty_stats.max_total %}
+              {% set faculty_stats.max_total = row.total or 0 %}
+            {% endif %}
+          {% endfor %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>{{ t('Faculty') }}</th>
+                  <th class="text-end">{{ t('Lectures') }}</th>
+                  <th>{{ t('Coverage') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in weekly_grid|sort(attribute='total', reverse=true) %}
+                {% if loop.index <= 5 %}
+                  {% set share = ((row.total or 0) * 100.0 / faculty_stats.max_total) if faculty_stats.max_total else 0 %}
+                  <tr>
+                    <td>{{ row.faculty_name or t('Unknown') }}</td>
+                    <td class="text-end">{{ row.total }}</td>
+                    <td>
+                      <div class="d-flex justify-content-between small mb-1">
+                        <span>{{ "%.1f"|format(share) }}%</span>
+                        <span class="text-muted">{{ t('vs top load') }}</span>
+                      </div>
+                      <div class="progress" style="height: 6px;">
+                        <div class="progress-bar bg-success" role="progressbar" style="width: {{ share }}%" aria-valuenow="{{ share|round(0, 'floor') }}" aria-valuemin="0" aria-valuemax="100"></div>
+                      </div>
+                    </td>
+                  </tr>
+                {% endif %}
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="text-muted small">{{ t('No faculty activity available for this range.') }}</div>
+          {% endif %}
         </div>
       </div>
     </div>
@@ -320,94 +392,4 @@
     </div>
   </div>
 </div>
-<script id="analyticsDaily" type="application/json">{{ daily_logs | tojson | safe }}</script>
-<script id="analyticsWeekly" type="application/json">{{ weekly_grid | tojson | safe }}</script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script>
-  (function () {
-    var attendanceBars = document.querySelectorAll('.analytics-attendance-bar[data-width]');
-    attendanceBars.forEach(function (bar) {
-      var w = parseInt(bar.getAttribute('data-width') || '0', 10);
-      if (!isNaN(w) && w >= 0) {
-        if (w > 100) { w = 100; }
-        bar.style.width = w + '%';
-      }
-    });
-
-    var daily = [];
-    var weekly = [];
-    var dailyEl = document.getElementById('analyticsDaily');
-    var weeklyEl = document.getElementById('analyticsWeekly');
-    if (dailyEl) {
-      try { daily = JSON.parse(dailyEl.textContent || '[]'); } catch (e) { daily = []; }
-    }
-    if (weeklyEl) {
-      try { weekly = JSON.parse(weeklyEl.textContent || '[]'); } catch (e) { weekly = []; }
-    }
-
-    var ctxPeriod = document.getElementById('chartLecturesByPeriod');
-    if (ctxPeriod && daily && daily.length) {
-      var periodMap = {};
-      daily.forEach(function (row) {
-        var p = row.period_no || 0;
-        if (!p) return;
-        periodMap[p] = (periodMap[p] || 0) + 1;
-      });
-      var periods = Object.keys(periodMap).map(function (k) { return parseInt(k, 10); }).sort(function (a, b) { return a - b; });
-      var counts = periods.map(function (p) { return periodMap[p] || 0; });
-      if (periods.length) {
-        new Chart(ctxPeriod, {
-          type: 'bar',
-          data: {
-            labels: periods.map(function (p) { return 'P' + p; }),
-            datasets: [{
-              label: 'Lectures',
-              data: counts,
-              backgroundColor: '#0d6efd'
-            }]
-          },
-          options: {
-            responsive: true,
-            plugins: { legend: { display: false } },
-            scales: {
-              y: { beginAtZero: true, ticks: { precision: 0 } }
-            }
-          }
-        });
-      }
-    }
-
-    var ctxFaculty = document.getElementById('chartTopFacultyWeek');
-    if (ctxFaculty && weekly && weekly.length) {
-      var sorted = weekly.slice().sort(function (a, b) {
-        var ta = a.total || 0;
-        var tb = b.total || 0;
-        return tb - ta;
-      }).slice(0, 5);
-      var labels = sorted.map(function (row) { return row.faculty_name || 'Unknown'; });
-      var totals = sorted.map(function (row) { return row.total || 0; });
-      if (labels.length) {
-        new Chart(ctxFaculty, {
-          type: 'bar',
-          data: {
-            labels: labels,
-            datasets: [{
-              label: 'Lectures this week',
-              data: totals,
-              backgroundColor: '#198754'
-            }]
-          },
-          options: {
-            indexAxis: 'y',
-            responsive: true,
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { beginAtZero: true, ticks: { precision: 0 } }
-            }
-          }
-        });
-      }
-    }
-  })();
-</script>
 {% endblock %}

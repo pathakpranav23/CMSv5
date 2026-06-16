@@ -3,7 +3,7 @@ import secrets
 import time
 import uuid
 import sqlite3
-from flask import Flask, session, request, url_for, flash, redirect, current_app, render_template, g
+from flask import Flask, session, request, url_for, flash, redirect, current_app, render_template, g, has_request_context
 from flask_login import LoginManager, current_user
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
@@ -37,11 +37,20 @@ limiter = Limiter(key_func=_rate_key)
 cache = Cache()
 
 _sqlite_pragmas_registered = False
+_sql_query_metrics_registered = False
 
 
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key")
+    debug_flag = (os.environ.get("FLASK_DEBUG") or "").strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        app.config["SEND_FILE_MAX_AGE_DEFAULT"] = timedelta(days=365) if not debug_flag else 0
+    except Exception:
+        pass
+    app.config["STARTUP_SCHEMA_SYNC"] = (
+        os.environ.get("CMS_STARTUP_SCHEMA_SYNC", ("1" if debug_flag else "0")).strip().lower() in {"1", "true", "yes", "on"}
+    )
     
     # Session Timeout: 10 minutes
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=10)
@@ -61,6 +70,9 @@ def create_app():
     # Feature flags
     app.config["FEES_DISABLED"] = False  # Enable Fees module visibility
     app.config["ROLLS_CONTINUOUS_PER_PROGRAM_SEM"] = (os.environ.get("ROLLS_CONTINUOUS_PER_PROGRAM_SEM", "false").lower() == "true")
+    app.config["AUTO_RELEASE_EMPTY_SEMESTER_ASSIGNMENTS"] = (
+        os.environ.get("CMS_AUTO_RELEASE_EMPTY_SEMESTER_ASSIGNMENTS", "false").strip().lower() in {"1", "true", "yes", "on"}
+    )
     # Global upload cap (can be overridden via env)
     app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_CONTENT_LENGTH", str(32 * 1024 * 1024)))
     # CSRF token TTL (seconds)
@@ -125,6 +137,48 @@ def create_app():
                     pass
             _sqlite_pragmas_registered = True
 
+    global _sql_query_metrics_registered
+    if not _sql_query_metrics_registered:
+        @event.listens_for(Engine, "before_cursor_execute")
+        def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+            try:
+                if not has_request_context():
+                    return
+            except Exception:
+                return
+            try:
+                conn.info.setdefault("_query_start_time", []).append(time.perf_counter())
+            except Exception:
+                pass
+
+        @event.listens_for(Engine, "after_cursor_execute")
+        def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+            try:
+                if not has_request_context():
+                    return
+            except Exception:
+                return
+            start = None
+            try:
+                stack = conn.info.get("_query_start_time") or []
+                if stack:
+                    start = stack.pop()
+            except Exception:
+                start = None
+            if start is None:
+                return
+            try:
+                elapsed_ms = (time.perf_counter() - float(start)) * 1000.0
+            except Exception:
+                return
+            try:
+                g._db_queries = int(getattr(g, "_db_queries", 0) or 0) + 1
+                g._db_time_ms = float(getattr(g, "_db_time_ms", 0.0) or 0.0) + float(elapsed_ms)
+            except Exception:
+                pass
+
+        _sql_query_metrics_registered = True
+
     app.config.setdefault("RATELIMIT_STORAGE_URI", "memory://")
     db.init_app(app)
     migrate.init_app(app, db)
@@ -145,6 +199,94 @@ def create_app():
 
     # Import models so they are registered with SQLAlchemy
     from . import models  # noqa: F401
+
+    @app.before_request
+    def _request_perf_start():
+        try:
+            g._req_start = time.perf_counter()
+            g._db_queries = 0
+            g._db_time_ms = 0.0
+        except Exception:
+            pass
+
+    @app.after_request
+    def _request_perf_log(response):
+        try:
+            threshold_ms = int(os.environ.get("CMS_SLOW_REQUEST_MS", "800"))
+        except Exception:
+            threshold_ms = 800
+        start = getattr(g, "_req_start", None)
+        if start is None:
+            return response
+        try:
+            total_ms = (time.perf_counter() - float(start)) * 1000.0
+        except Exception:
+            return response
+        try:
+            db_ms = float(getattr(g, "_db_time_ms", 0.0) or 0.0)
+            q = int(getattr(g, "_db_queries", 0) or 0)
+        except Exception:
+            db_ms = 0.0
+            q = 0
+        try:
+            response.headers["Server-Timing"] = f"app;dur={total_ms:.1f}, db;dur={db_ms:.1f};desc=\"q={q}\""
+        except Exception:
+            pass
+        try:
+            response.headers.setdefault("Timing-Allow-Origin", "*")
+        except Exception:
+            pass
+        try:
+            response.headers.setdefault("X-Request-Time-ms", f"{total_ms:.1f}")
+            response.headers.setdefault("X-DB-Time-ms", f"{db_ms:.1f}")
+            response.headers.setdefault("X-DB-Queries", str(q))
+        except Exception:
+            pass
+        if total_ms < float(threshold_ms):
+            return response
+        try:
+            app.logger.warning(
+                "slow_request method=%s path=%s status=%s total_ms=%.1f db_ms=%.1f db_q=%s endpoint=%s",
+                request.method,
+                request.path,
+                getattr(response, "status_code", None),
+                total_ms,
+                db_ms,
+                q,
+                request.endpoint,
+            )
+        except Exception:
+            pass
+        return response
+
+    @app.after_request
+    def _static_cache_headers(response):
+        try:
+            path = (request.path or "")
+        except Exception:
+            return response
+        if not path.startswith("/static/"):
+            return response
+        try:
+            filename = path.rsplit("/", 1)[-1]
+        except Exception:
+            filename = ""
+        try:
+            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        except Exception:
+            ext = ""
+        if filename in {"sw.js", "manifest.json", "offline.html"}:
+            try:
+                response.headers["Cache-Control"] = "no-cache"
+            except Exception:
+                pass
+            return response
+        if ext in {"css", "js", "png", "jpg", "jpeg", "webp", "gif", "svg", "woff", "woff2", "ttf", "eot", "map"}:
+            try:
+                response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+            except Exception:
+                pass
+        return response
 
     def _slugify_program(name: str) -> str:
         try:
@@ -634,8 +776,14 @@ def create_app():
         except Exception:
             pass
         lang = (session.get("lang") or "en").strip().lower()
-        tr = {
-            "gu": {
+        tr = None
+        try:
+            tr = app.extensions.get("_i18n_translations")
+        except Exception:
+            tr = None
+        if tr is None:
+            tr = {
+                "gu": {
                 "Dashboard": "ડેશબોર્ડ",
                 "Announcements": "જાહેરખબરો",
                 "Attendance": "હાજરી",
@@ -731,8 +879,12 @@ def create_app():
                 "Enrollments": "એનલોલમેન્ટ્સ",
                 "Redis Active": "રેડિસ સક્રિય",
                 "In-memory cache": "ઇન-મેમરી કૅશ",
+                }
             }
-        }
+            try:
+                app.extensions["_i18n_translations"] = tr
+            except Exception:
+                pass
         def t(s):
             s0 = s or ""
             if lang == "gu":
@@ -833,6 +985,8 @@ def create_app():
         db.create_all()
         # Minimal migration: ensure new columns exist in dev DB
         try:
+            if not app.config.get("STARTUP_SCHEMA_SYNC", True):
+                raise RuntimeError("startup schema sync disabled")
             inspector = inspect(db.engine)
             
             # 1. Users table

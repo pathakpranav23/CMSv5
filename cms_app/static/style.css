@@ -8,7 +8,7 @@ body { padding-bottom: 48px; min-height: 100vh; display: flex; flex-direction: c
 }
 /* Default UI variables */
 :root {
-  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
   --surface-bg: #f7f9fc;
   --text-color: #0f172a;
   --text-muted: #475569;
@@ -1331,7 +1331,7 @@ body[data-theme="neonlite"] .enhanced-nav {
     z-index: 1030;
   }
 
-  .app-main { position: relative; z-index: 1; margin-left: 0; width: 100%; }
+  .app-main { position: relative; margin-left: 0; width: 100%; }
   .sidebar .nav a { padding: 0.75rem 1rem; } /* Larger touch targets */
 }
 
@@ -1360,10 +1360,11 @@ body[data-theme="neonlite"] .enhanced-nav {
   .coin-btn i { font-size: 0.82rem; }
 }
 
-/* Tables: avoid horizontal scrolling by wrapping content */
-.table-responsive { overflow-x: hidden; max-width: 100%; }
+/* Tables: allow horizontal scroll to avoid broken headers on narrow screens */
+.table-responsive { overflow-x: auto; max-width: 100%; }
 .table { width: 100%; max-width: 100%; }
-.table th, .table td { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.table thead th { white-space: nowrap; }
+.table td { overflow-wrap: normal; word-break: normal; }
 body[data-theme="pastelgrid"] .table thead th {
   background: rgba(255,255,255,0.72);
   color: rgba(11, 16, 32, 0.70);
@@ -1378,8 +1379,24 @@ body[data-theme="pastelgrid"] .table tbody tr:hover {
 /* Images should never overflow their containers */
 img { max-width: 100%; height: auto; }
 
-/* Prevent any horizontal overflow on small screens */
+/* Prevent page-level horizontal overflow on small screens */
 html, body { width: 100%; overflow-x: hidden; }
+
+/* Mobile: ensure Bootstrap modals remain clickable above sticky UI layers */
+body.modal-open .sidebar,
+body.modal-open .sidebar-backdrop,
+body.modal-open .mobile-topbar {
+  pointer-events: none;
+}
+body.modal-open .modal,
+body.modal-open .modal-dialog,
+body.modal-open .modal-content {
+  pointer-events: auto;
+}
+@media (max-width: 991.98px) {
+  .modal-backdrop { z-index: 1990; }
+  .modal { z-index: 2000; }
+}
 
 /* Module cards: allow content to wrap to avoid overflow */
 .module-card .card-body { flex-wrap: wrap; }
@@ -2130,4 +2147,50 @@ body.program-bcom {
   body.role-student .fees-module .fees-item--quickpay { order: -3; }
   body.role-student .fees-module .fees-item--bank { order: -2; }
   body.role-student .fees-module .fees-item--status { order: -1; }
+}
+
+/* Performance-oriented overrides for faster dashboard paint */
+body[data-theme="aurora"],
+body[data-theme="neonlite"],
+body[data-theme="pastelgrid"],
+body[data-theme="pastelgrid"].page-login,
+body[data-theme="neonlite"].page-login {
+  background-attachment: scroll;
+}
+
+body[data-theme="aurora"]::before {
+  animation: none;
+}
+
+.sidebar,
+.mobile-topbar,
+.enhanced-nav,
+body[data-theme="obsidian"] .sidebar,
+body[data-theme="pastelgrid"] .sidebar,
+body[data-theme="pastelgrid"] .mobile-topbar,
+body[data-theme="pastelgrid"] .enhanced-nav,
+body[data-theme="neonlite"] .form-control,
+body[data-theme="neonlite"] .form-select,
+body[data-theme="neonlite"].page-login .card,
+body[data-theme="pastelgrid"].page-login .card,
+.fees-module .fees-card,
+.module-cards .module-card,
+.topbar-btn--dash,
+.topbar-btn--cmd {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.dashboard-linear {
+  animation: none;
+}
+
+@media (hover: none), (prefers-reduced-motion: reduce), (max-width: 1200px) {
+  .card,
+  .btn,
+  .coin-btn,
+  .module-card,
+  .fees-module .fees-card {
+    transition-duration: 0ms !important;
+  }
 }

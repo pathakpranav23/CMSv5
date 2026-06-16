@@ -52,8 +52,28 @@
         {% endfor %}
         </tbody>
       </table>
-      <canvas id="chartSubjects" height="160"></canvas>
-      <div id="chartSubjectsGrid" class="row row-cols-2 row-cols-md-3 g-2 mt-2"></div>
+      <div class="row row-cols-1 row-cols-md-2 g-2 mt-2">
+        {% for sid, t in totals_by_subject.items() %}
+          {% set present_pct = (((t.P or 0) + (t.L or 0)) * 100.0 / t.total) if t.total else 0 %}
+          {% set absent_pct = ((t.A or 0) * 100.0 / t.total) if t.total else 0 %}
+          <div class="col">
+            <div class="border rounded p-2 h-100">
+              <div class="d-flex justify-content-between align-items-center small fw-semibold mb-1">
+                <span>{{ t.name }}</span>
+                <span>{{ "%.1f"|format(present_pct) }}%</span>
+              </div>
+              <div class="progress" style="height: 8px;">
+                <div class="progress-bar bg-success" role="progressbar" style="width: {{ present_pct }}%" aria-valuenow="{{ present_pct|round(0, 'floor') }}" aria-valuemin="0" aria-valuemax="100"></div>
+              </div>
+              <div class="small text-muted mt-1">Absent {{ "%.1f"|format(absent_pct) }}% | {{ t.total }} entries</div>
+            </div>
+          </div>
+        {% else %}
+          <div class="col">
+            <div class="text-muted small">No subject attendance data available.</div>
+          </div>
+        {% endfor %}
+      </div>
     </div>
     <div class="col-md-6">
       <h6>Totals by Division</h6>
@@ -71,8 +91,28 @@
         {% endfor %}
         </tbody>
       </table>
-      <canvas id="chartDivisions" height="160"></canvas>
-      <div id="chartDivisionsGrid" class="row row-cols-2 row-cols-md-3 g-2 mt-2"></div>
+      <div class="row row-cols-1 row-cols-md-2 g-2 mt-2">
+        {% for did, t in totals_by_division.items() %}
+          {% set present_pct = (((t.P or 0) + (t.L or 0)) * 100.0 / t.total) if t.total else 0 %}
+          {% set absent_pct = ((t.A or 0) * 100.0 / t.total) if t.total else 0 %}
+          <div class="col">
+            <div class="border rounded p-2 h-100">
+              <div class="d-flex justify-content-between align-items-center small fw-semibold mb-1">
+                <span>{{ t.name }}</span>
+                <span>{{ "%.1f"|format(present_pct) }}%</span>
+              </div>
+              <div class="progress" style="height: 8px;">
+                <div class="progress-bar bg-primary" role="progressbar" style="width: {{ present_pct }}%" aria-valuenow="{{ present_pct|round(0, 'floor') }}" aria-valuemin="0" aria-valuemax="100"></div>
+              </div>
+              <div class="small text-muted mt-1">Absent {{ "%.1f"|format(absent_pct) }}% | {{ t.total }} entries</div>
+            </div>
+          </div>
+        {% else %}
+          <div class="col">
+            <div class="text-muted small">No division attendance data available.</div>
+          </div>
+        {% endfor %}
+      </div>
     </div>
   </div>
 
@@ -130,140 +170,6 @@
     </div>
   </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script>
-  (function(){
-    // Center label plugin for donut charts
-    const centerLabelPlugin = {
-      id: 'centerLabel',
-      afterDatasetsDraw(chart) {
-        const opts = chart.options.plugins && chart.options.plugins.centerLabel || {};
-        const text = opts.text || '';
-        if (!text) return;
-        const {ctx, chartArea:{left, right, top, bottom}} = chart;
-        const x = (left + right) / 2;
-        const y = (top + bottom) / 2;
-        ctx.save();
-        ctx.fillStyle = '#222';
-        ctx.font = '600 14px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(text, x, y);
-        ctx.restore();
-      }
-    };
-    const labelsS = JSON.parse('{{ chart_subject_labels | tojson | safe }}');
-    const dataSP = JSON.parse('{{ chart_subject_P | tojson | safe }}');
-    const dataSA = JSON.parse('{{ chart_subject_A | tojson | safe }}');
-    const dataSL = JSON.parse('{{ chart_subject_L | tojson | safe }}');
-    const ctxS = document.getElementById('chartSubjects');
-    if (ctxS) {
-      const sum = (arr)=> (arr||[]).reduce((a,b)=> a + (Number(b)||0), 0);
-      const totalP = sum(dataSP);
-      const totalA = sum(dataSA);
-      const totalL = sum(dataSL);
-      const present = totalP + totalL; // Late counts as present
-      const total = present + totalA;
-      const presentPct = total ? (present / total) * 100 : 0;
-      const absentPct = total ? (totalA / total) * 100 : 0;
-
-      new Chart(ctxS, {
-        type: 'doughnut',
-        data: {
-          labels: ['Present % (P+L)', 'Absent %'],
-          datasets: [{ data: [presentPct, absentPct], backgroundColor: ['#198754','#dc3545'] }]
-        },
-        options: {
-          responsive:true,
-          cutout: '60%',
-          plugins:{
-            legend:{position:'bottom'},
-            tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${ctx.raw.toFixed(2)}%` } },
-            centerLabel:{ text: `${presentPct.toFixed(1)}%` }
-          }
-        },
-        plugins:[centerLabelPlugin]
-      });
-
-      // Small multiples per subject (mini donuts)
-      const gridS = document.getElementById('chartSubjectsGrid');
-      if (gridS && Array.isArray(labelsS)) {
-        labelsS.forEach((label, i) => {
-          const p = (Number(dataSP[i])||0) + (Number(dataSL[i])||0);
-          const a = (Number(dataSA[i])||0);
-          const t = p + a;
-          const pp = t ? (p/t)*100 : 0;
-          const ap = t ? (a/t)*100 : 0;
-          const col = document.createElement('div');
-          col.className = 'col';
-          col.innerHTML = `<div class="card p-2"><canvas height="120"></canvas><div class="small text-muted text-center mt-1">${label}</div></div>`;
-          gridS.appendChild(col);
-          const cv = col.querySelector('canvas');
-          new Chart(cv, {
-            type: 'doughnut',
-            data: { labels: ['Present % (P+L)','Absent %'], datasets: [{ data: [pp, ap], backgroundColor: ['#198754','#dc3545'] }] },
-            options: { responsive:true, cutout:'60%', plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${ctx.raw.toFixed(2)}%` } } } }
-          });
-        });
-      }
-    }
-    const labelsD = JSON.parse('{{ chart_division_labels | tojson | safe }}');
-    const dataDP = JSON.parse('{{ chart_division_P | tojson | safe }}');
-    const dataDA = JSON.parse('{{ chart_division_A | tojson | safe }}');
-    const dataDL = JSON.parse('{{ chart_division_L | tojson | safe }}');
-  const ctxD = document.getElementById('chartDivisions');
-    if (ctxD) {
-      const sumD = (arr)=> (arr||[]).reduce((a,b)=> a + (Number(b)||0), 0);
-      const totalDP = sumD(dataDP);
-      const totalDA = sumD(dataDA);
-      const totalDL = sumD(dataDL);
-      const presentD = totalDP + totalDL; // Late counts as present
-      const totalD = presentD + totalDA;
-      const presentPctD = totalD ? (presentD / totalD) * 100 : 0;
-      const absentPctD = totalD ? (totalDA / totalD) * 100 : 0;
-
-      new Chart(ctxD, {
-        type: 'doughnut',
-        data: {
-          labels: ['Present % (P+L)', 'Absent %'],
-          datasets: [{ data: [presentPctD, absentPctD], backgroundColor: ['#198754','#dc3545'] }]
-        },
-        options: {
-          responsive:true,
-          cutout: '60%',
-          plugins:{
-            legend:{position:'bottom'},
-            tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${ctx.raw.toFixed(2)}%` } },
-            centerLabel:{ text: `${presentPctD.toFixed(1)}%` }
-          }
-        },
-        plugins:[centerLabelPlugin]
-      });
-
-      // Small multiples per division (mini donuts)
-      const gridD = document.getElementById('chartDivisionsGrid');
-      if (gridD && Array.isArray(labelsD)) {
-        labelsD.forEach((label, i) => {
-          const p = (Number(dataDP[i])||0) + (Number(dataDL[i])||0);
-          const a = (Number(dataDA[i])||0);
-          const t = p + a;
-          const pp = t ? (p/t)*100 : 0;
-          const ap = t ? (a/t)*100 : 0;
-          const col = document.createElement('div');
-          col.className = 'col';
-          col.innerHTML = `<div class="card p-2"><canvas height="120"></canvas><div class="small text-muted text-center mt-1">${label}</div></div>`;
-          gridD.appendChild(col);
-          const cv = col.querySelector('canvas');
-          new Chart(cv, {
-            type: 'doughnut',
-            data: { labels: ['Present % (P+L)','Absent %'], datasets: [{ data: [pp, ap], backgroundColor: ['#198754','#dc3545'] }] },
-            options: { responsive:true, cutout:'60%', plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(ctx)=> `${ctx.label}: ${ctx.raw.toFixed(2)}%` } } } }
-          });
-        });
-      }
-    }
-  })();
-</script>
 <script>
   // Pro Table: search by name, sort by any column, export filtered CSV
   (function(){
