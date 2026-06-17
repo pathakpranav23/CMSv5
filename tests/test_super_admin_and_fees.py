@@ -500,3 +500,51 @@ def test_programs_page_super_admin_renders_without_full_trust_institute_gets(cli
     assert response.status_code == 200
     assert "Minimal Program" in text
     assert "Programs Minimal Institute" in text
+
+
+def test_wizard_step1_renders_without_full_trust_institute_gets(client, app, monkeypatch):
+    from cms_app.wizard import routes as wizard_routes
+
+    with app.app_context():
+        trust = Trust(
+            trust_name="Trust Wizard Minimal",
+            trust_code="TRUST_WIZARD_MIN",
+            is_active=True,
+        )
+        db.session.add(trust)
+        db.session.flush()
+
+        institute = Institute(
+            trust_id_fk=trust.trust_id,
+            institute_name="Wizard Minimal Institute",
+            institute_code="WIZ_MIN_INST",
+            is_active=True,
+        )
+        super_admin = User(
+            username="sa_wizard_minimal",
+            password_hash=generate_password_hash("secret"),
+            role="admin",
+            is_super_admin=True,
+        )
+        db.session.add_all([institute, super_admin])
+        db.session.commit()
+
+        institute_id = institute.institute_id
+
+    _login(client, "sa_wizard_minimal")
+
+    original_get = wizard_routes.db.session.get
+
+    def guarded_get(entity, ident, *args, **kwargs):
+        if entity in (wizard_routes.Trust, wizard_routes.Institute):
+            raise AssertionError("Wizard step1 should not use full Trust/Institute session.get")
+        return original_get(entity, ident, *args, **kwargs)
+
+    monkeypatch.setattr(wizard_routes.db.session, "get", guarded_get)
+
+    response = client.get(f"/wizard/step1?institute_id={institute_id}")
+    text = response.data.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "Wizard Minimal Institute" in text
+    assert "Trust Wizard Minimal" in text

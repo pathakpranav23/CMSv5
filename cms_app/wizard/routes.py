@@ -3,10 +3,38 @@ from flask_login import login_required, current_user
 from . import wizard
 from .. import db
 from ..models import Trust, Institute, Program, User, Faculty
+from sqlalchemy import MetaData, Table, inspect as sa_inspect, select
 import os
 import csv
 from io import TextIOWrapper
 from werkzeug.security import generate_password_hash
+
+
+def _table_columns(table_name):
+    try:
+        return {c["name"] for c in sa_inspect(db.engine).get_columns(table_name)}
+    except Exception:
+        return set()
+
+
+def _reflected_table(table_name):
+    metadata = MetaData()
+    return Table(table_name, metadata, autoload_with=db.engine)
+
+
+def _fetch_row_mapping(table_name, pk_column, pk_value, column_names=None):
+    table = _reflected_table(table_name)
+    if pk_column not in table.c:
+        return None
+    selected_cols = []
+    for name in column_names or []:
+        if name in table.c:
+            selected_cols.append(table.c[name])
+    if not selected_cols:
+        selected_cols = [table.c[pk_column]]
+    stmt = select(*selected_cols).where(table.c[pk_column] == pk_value).limit(1)
+    row = db.session.execute(stmt).mappings().first()
+    return dict(row) if row else None
 
 @wizard.route('/step1', methods=['GET', 'POST'])
 @login_required
@@ -23,9 +51,29 @@ def step1_institute():
         session['wizard_institute_id'] = inst_id
     
     current_inst_id = session.get('wizard_institute_id')
-    
-    institute = db.session.get(Institute, current_inst_id) if current_inst_id else None
-    trust = db.session.get(Trust, institute.trust_id_fk) if institute and institute.trust_id_fk else None
+
+    institute_cols = _table_columns("institutes")
+    trust_cols = _table_columns("trusts")
+    institute = (
+        _fetch_row_mapping(
+            "institutes",
+            "institute_id",
+            current_inst_id,
+            ["institute_id", "trust_id_fk", "institute_name", "institute_code", "affiliation_body", "aicte_code"],
+        )
+        if current_inst_id
+        else None
+    )
+    trust = (
+        _fetch_row_mapping(
+            "trusts",
+            "trust_id",
+            institute.get("trust_id_fk"),
+            ["trust_id", "trust_name", "trust_code", "slogan", "vision", "mission"],
+        )
+        if institute and institute.get("trust_id_fk")
+        else None
+    )
 
     if request.method == 'POST':
         # Trust Details
@@ -41,42 +89,82 @@ def step1_institute():
         i_affil = request.form.get('affiliation_body')
         i_aicte = request.form.get('aicte_code')
         
-        if not trust:
-            trust = Trust(
-                trust_name=t_name,
-                trust_code=t_code,
-                slogan=t_slogan,
-                vision=t_vision,
-                mission=t_mission,
-            )
-            db.session.add(trust)
-        else:
-            trust.trust_name = t_name
-            trust.trust_code = t_code
-            trust.slogan = t_slogan
-            trust.vision = t_vision
-            trust.mission = t_mission
-            
-        db.session.flush() # Get trust_id if needed
+        trust_payload = {}
+        if "trust_name" in trust_cols:
+            trust_payload["trust_name"] = t_name
+        if "trust_code" in trust_cols:
+            trust_payload["trust_code"] = t_code
+        if "slogan" in trust_cols:
+            trust_payload["slogan"] = t_slogan
+        if "vision" in trust_cols:
+            trust_payload["vision"] = t_vision
+        if "mission" in trust_cols:
+            trust_payload["mission"] = t_mission
 
-        if not institute:
-            institute = Institute(
-                institute_name=i_name,
-                institute_code=i_code,
-                trust_id_fk=trust.trust_id,
-                affiliation_body=i_affil,
-                aicte_code=i_aicte,
-            )
-            db.session.add(institute)
-            db.session.flush()
-            session['wizard_institute_id'] = institute.institute_id
-        else:
-            institute.institute_name = i_name
-            institute.institute_code = i_code
-            institute.affiliation_body = i_affil
-            institute.aicte_code = i_aicte
-            
-        db.session.commit()
+        institute_payload = {}
+        if "institute_name" in institute_cols:
+            institute_payload["institute_name"] = i_name
+        if "institute_code" in institute_cols:
+            institute_payload["institute_code"] = i_code
+        if "affiliation_body" in institute_cols:
+            institute_payload["affiliation_body"] = i_affil
+        if "aicte_code" in institute_cols:
+            institute_payload["aicte_code"] = i_aicte
+
+        try:
+            trusts_table = _reflected_table("trusts")
+            if not trust:
+                result = db.session.execute(trusts_table.insert().values(**trust_payload))
+                try:
+                    trust_id = (getattr(result, "inserted_primary_key", None) or [None])[0]
+                except Exception:
+                    trust_id = None
+                if not trust_id and "trust_name" in trust_payload:
+                    trust_row = db.session.execute(
+                        select(trusts_table.c.trust_id)
+                        .where(trusts_table.c.trust_name == trust_payload["trust_name"])
+                        .order_by(trusts_table.c.trust_id.desc())
+                        .limit(1)
+                    ).first()
+                    trust_id = trust_row[0] if trust_row else None
+            else:
+                trust_id = trust.get("trust_id")
+                db.session.execute(
+                    trusts_table.update().where(trusts_table.c.trust_id == trust_id).values(**trust_payload)
+                )
+
+            if "trust_id_fk" in institute_cols:
+                institute_payload["trust_id_fk"] = trust_id
+
+            institutes_table = _reflected_table("institutes")
+            if not institute:
+                result = db.session.execute(institutes_table.insert().values(**institute_payload))
+                try:
+                    institute_id = (getattr(result, "inserted_primary_key", None) or [None])[0]
+                except Exception:
+                    institute_id = None
+                if not institute_id and "institute_name" in institute_payload:
+                    institute_row = db.session.execute(
+                        select(institutes_table.c.institute_id)
+                        .where(institutes_table.c.institute_name == institute_payload["institute_name"])
+                        .order_by(institutes_table.c.institute_id.desc())
+                        .limit(1)
+                    ).first()
+                    institute_id = institute_row[0] if institute_row else None
+                if institute_id:
+                    session['wizard_institute_id'] = institute_id
+            else:
+                institute_id = institute.get("institute_id")
+                db.session.execute(
+                    institutes_table.update().where(institutes_table.c.institute_id == institute_id).values(**institute_payload)
+                )
+
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            flash("Failed to save Step 1 details.", "danger")
+            return render_template('wizard/step1_institute.html', trust=trust, institute=institute)
+
         flash("Step 1: Institute Profile & Branding Saved!", "success")
         return redirect(url_for('wizard.step2_staff'))
 
@@ -191,20 +279,20 @@ def step3_programs():
         p_years = request.form.get('duration_years')
         
         inst_id = session.get('wizard_institute_id')
-        inst = db.session.get(Institute, inst_id) if inst_id else None
+        inst = _fetch_row_mapping("institutes", "institute_id", inst_id, ["institute_id"]) if inst_id else None
         if not inst:
             flash("Please set up an Institute first (Step 1).", "danger")
             return redirect(url_for('wizard.step1_institute'))
 
         if p_name and p_code:
-            existing = Program.query.filter_by(program_code=p_code, institute_id_fk=inst.institute_id).first()
+            existing = Program.query.filter_by(program_code=p_code, institute_id_fk=inst.get("institute_id")).first()
             if not existing:
                 new_prog = Program(
                     program_name=p_name,
                     program_code=p_code,
                     medium=p_medium,
                     program_duration_years=int(p_years or 3),
-                    institute_id_fk=inst.institute_id
+                    institute_id_fk=inst.get("institute_id")
                 )
                 db.session.add(new_prog)
                 db.session.commit()
@@ -213,8 +301,8 @@ def step3_programs():
                 flash(f"Program code '{p_code}' already exists.", "warning")
     
     inst_id = session.get('wizard_institute_id')
-    inst = db.session.get(Institute, inst_id) if inst_id else None
-    programs = Program.query.filter_by(institute_id_fk=inst.institute_id).all() if inst else []
+    inst = _fetch_row_mapping("institutes", "institute_id", inst_id, ["institute_id"]) if inst_id else None
+    programs = Program.query.filter_by(institute_id_fk=inst.get("institute_id")).all() if inst else []
     return render_template('wizard/step3_programs.html', programs=programs)
 
 @wizard.route('/step4', methods=['GET', 'POST'])
@@ -225,7 +313,7 @@ def step4_structure():
 
     # Context
     inst_id = session.get('wizard_institute_id')
-    inst = db.session.get(Institute, inst_id) if inst_id else None
+    inst = _fetch_row_mapping("institutes", "institute_id", inst_id, ["institute_id"]) if inst_id else None
     if not inst:
         flash("Please set up an Institute first (Step 1).", "danger")
         return redirect(url_for('wizard.step1_institute'))
@@ -237,7 +325,7 @@ def step4_structure():
              return redirect(url_for('wizard.step5_subjects'))
     
     # Filter programs by current institute
-    programs = Program.query.filter_by(institute_id_fk=inst.institute_id).all()
+    programs = Program.query.filter_by(institute_id_fk=inst.get("institute_id")).all()
 
     return render_template('wizard/step4_structure.html', programs=programs)
 
