@@ -24,6 +24,60 @@ _rate_test_counters = {}
 
 main_bp = Blueprint("main", __name__)
 
+
+def _fetch_institute_row(institute_id):
+    if not institute_id:
+        return None
+    row = db.session.execute(
+        select(
+            Institute.institute_id.label("institute_id"),
+            Institute.institute_name.label("institute_name"),
+            Institute.trust_id_fk.label("trust_id_fk"),
+        ).where(Institute.institute_id == institute_id)
+    ).mappings().first()
+    return dict(row) if row else None
+
+
+def _list_institutes_for_trust(trust_id):
+    if not trust_id:
+        return []
+    return [
+        dict(row)
+        for row in db.session.execute(
+            select(
+                Institute.institute_id.label("institute_id"),
+                Institute.institute_name.label("institute_name"),
+                Institute.trust_id_fk.label("trust_id_fk"),
+            )
+            .where(Institute.trust_id_fk == trust_id)
+            .order_by(Institute.institute_name.asc())
+        ).mappings().all()
+    ]
+
+
+def _fetch_trust_row(trust_id):
+    if not trust_id:
+        return None
+    row = db.session.execute(
+        select(
+            Trust.trust_id.label("trust_id"),
+            Trust.trust_name.label("trust_name"),
+        ).where(Trust.trust_id == trust_id)
+    ).mappings().first()
+    return dict(row) if row else None
+
+
+def _list_trust_rows():
+    return [
+        dict(row)
+        for row in db.session.execute(
+            select(
+                Trust.trust_id.label("trust_id"),
+                Trust.trust_name.label("trust_name"),
+            ).order_by(Trust.trust_name.asc())
+        ).mappings().all()
+    ]
+
 def role_required(*roles):
     """
     Decorator to ensure the current user has one of the allowed roles.
@@ -2604,7 +2658,6 @@ def keep_alive():
 
 @main_bp.context_processor
 def inject_trust_context():
-    from ..models import Trust, Institute
     if not current_user.is_authenticated:
         return {}
     
@@ -2620,7 +2673,7 @@ def inject_trust_context():
         except Exception:
             active_trust_id = None
     if active_trust_id:
-        active_trust_obj = db.session.get(Trust, active_trust_id)
+        active_trust_obj = _fetch_trust_row(active_trust_id)
 
     active_institute_obj = None
     if active_trust_obj:
@@ -2631,18 +2684,17 @@ def inject_trust_context():
             except Exception:
                 active_inst_id = None
         if active_inst_id:
-            active_institute_obj = db.session.get(Institute, active_inst_id)
-            if active_institute_obj and active_institute_obj.trust_id_fk != active_trust_obj.trust_id:
+            active_institute_obj = _fetch_institute_row(active_inst_id)
+            if active_institute_obj and int(active_institute_obj.get("trust_id_fk") or 0) != int(active_trust_obj.get("trust_id") or 0):
                 active_institute_obj = None
         if not active_institute_obj:
-            active_institute_obj = db.session.execute(
-                select(Institute).filter_by(trust_id_fk=active_trust_obj.trust_id).order_by(Institute.institute_id.asc())
-            ).scalars().first()
+            trust_institutes = _list_institutes_for_trust(active_trust_obj.get("trust_id"))
+            active_institute_obj = trust_institutes[0] if trust_institutes else None
             if active_institute_obj:
-                session["active_institute_id"] = active_institute_obj.institute_id
+                session["active_institute_id"] = active_institute_obj.get("institute_id")
         
     # Get all trusts for the dropdown
-    all_trusts = db.session.execute(select(Trust).order_by(Trust.trust_name)).scalars().all()
+    all_trusts = _list_trust_rows()
     
     return {
         "ctx_active_trust": active_trust_obj,
@@ -2784,20 +2836,20 @@ def set_trust_context(trust_id):
         flash("Switched to Global View", "info")
         return redirect(url_for("main.super_admin_dashboard"))
         
-    from ..models import Trust, Institute
-    trust = db.session.get(Trust, trust_id)
+    trust = _fetch_trust_row(trust_id)
     if not trust:
         flash("Trust not found", "danger")
         return redirect(url_for("main.super_admin_dashboard"))
         
     session["active_trust_id"] = trust_id
     session.pop("wizard_institute_id", None)
-    inst = db.session.execute(select(Institute).filter_by(trust_id_fk=trust_id).order_by(Institute.institute_id.asc())).scalars().first()
+    trust_institutes = _list_institutes_for_trust(trust_id)
+    inst = trust_institutes[0] if trust_institutes else None
     if inst:
-        session["active_institute_id"] = inst.institute_id
+        session["active_institute_id"] = inst.get("institute_id")
     else:
         session.pop("active_institute_id", None)
-    flash(f"Switched context to {trust.trust_name}", "success")
+    flash(f"Switched context to {trust.get('trust_name', 'Trust')}", "success")
     return redirect(url_for("main.dashboard"))
 
 @main_bp.route("/dashboard")
@@ -11859,11 +11911,8 @@ def programs_list():
     institutes = []
     q = select(Program).order_by(Program.program_name.asc())
     try:
-        from ..models import Institute
         if trust_id:
-            institutes = db.session.execute(
-                select(Institute).filter_by(trust_id_fk=trust_id).order_by(Institute.institute_name.asc())
-            ).scalars().all()
+            institutes = _list_institutes_for_trust(trust_id)
         q = q.join(Institute, Program.institute_id_fk == Institute.institute_id)
         if trust_id:
             q = q.filter(Institute.trust_id_fk == trust_id)
@@ -11872,13 +11921,24 @@ def programs_list():
     except Exception:
         pass
     programs = db.session.execute(q).scalars().all()
+    institute_map = {}
+    institute_ids = sorted({p.institute_id_fk for p in programs if getattr(p, "institute_id_fk", None)})
+    if institute_ids:
+        institute_map = {
+            row["institute_id"]: dict(row)
+            for row in db.session.execute(
+                select(
+                    Institute.institute_id.label("institute_id"),
+                    Institute.institute_name.label("institute_name"),
+                    Institute.trust_id_fk.label("trust_id_fk"),
+                )
+                .where(Institute.institute_id.in_(institute_ids))
+            ).mappings().all()
+        }
+
     rows = []
     for p in programs:
-        try:
-            from ..models import Institute
-            inst = db.session.get(Institute, p.institute_id_fk) if p.institute_id_fk else None
-        except Exception:
-            inst = None
+        inst = institute_map.get(getattr(p, "institute_id_fk", None))
         try:
             div_cnt = db.session.scalar(select(func.count()).select_from(Division).filter_by(program_id_fk=p.program_id))
             subj_cnt = db.session.scalar(select(func.count()).select_from(Subject).filter_by(program_id_fk=p.program_id))
@@ -11920,7 +11980,7 @@ def program_new():
         institute_id_fk = None
     institutes = []
     if trust_id:
-        institutes = db.session.execute(select(Institute).filter_by(trust_id_fk=trust_id).order_by(Institute.institute_name.asc())).scalars().all()
+        institutes = _list_institutes_for_trust(trust_id)
     if request.method == "POST":
         name = (request.form.get("program_name") or "").strip()
         duration_raw = (request.form.get("program_duration_years") or "").strip()
@@ -11928,8 +11988,8 @@ def program_new():
         if not institute_id_fk:
             errors.append("Institute is required.")
         else:
-            inst = db.session.get(Institute, institute_id_fk)
-            if not inst or (trust_id and inst.trust_id_fk != trust_id):
+            inst = _fetch_institute_row(institute_id_fk)
+            if not inst or (trust_id and int(getattr(inst, "trust_id_fk", inst.get("trust_id_fk", 0)) or 0) != int(trust_id)):
                 errors.append("Invalid institute selection.")
         if not name:
             errors.append("Program name is required.")
@@ -11977,11 +12037,11 @@ def program_edit(program_id: int):
     p = db.session.get(Program, program_id)
     if not p:
         abort(404)
-    inst = db.session.get(Institute, p.institute_id_fk) if p.institute_id_fk else None
-    trust_id = getattr(inst, "trust_id_fk", None)
+    inst = _fetch_institute_row(p.institute_id_fk) if p.institute_id_fk else None
+    trust_id = (inst.get("trust_id_fk") if inst else None)
     institutes = []
     if trust_id:
-        institutes = db.session.execute(select(Institute).filter_by(trust_id_fk=trust_id).order_by(Institute.institute_name.asc())).scalars().all()
+        institutes = _list_institutes_for_trust(trust_id)
     if request.method == "POST":
         name = (request.form.get("program_name") or "").strip()
         duration_raw = (request.form.get("program_duration_years") or "").strip()
@@ -12007,7 +12067,7 @@ def program_edit(program_id: int):
         except Exception:
             new_inst_id = p.institute_id_fk
         if trust_id and new_inst_id:
-            ok = any(i.institute_id == new_inst_id for i in institutes)
+            ok = any(int(i.get("institute_id") or 0) == int(new_inst_id) for i in institutes)
             if not ok:
                 errors.append("Invalid institute selection for this trust.")
         if errors:

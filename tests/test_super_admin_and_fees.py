@@ -443,3 +443,60 @@ def test_super_admin_create_trust_tolerates_missing_subscription_columns(client,
             select(trusts_table.c.trust_name).where(trusts_table.c.trust_code == "TRUST_MIN_CREATE")
         ).scalar_one_or_none()
         assert created_name == "Trust Minimal Create"
+
+
+def test_programs_page_super_admin_renders_without_full_trust_institute_gets(client, app, monkeypatch):
+    from cms_app.main import routes as main_routes
+
+    with app.app_context():
+        trust = Trust(
+            trust_name="Trust Programs Minimal",
+            trust_code="TRUST_PROGRAMS_MIN",
+            is_active=True,
+        )
+        db.session.add(trust)
+        db.session.flush()
+
+        institute = Institute(
+            trust_id_fk=trust.trust_id,
+            institute_name="Programs Minimal Institute",
+            institute_code="PROG_MIN_INST",
+            is_active=True,
+        )
+        db.session.add(institute)
+        db.session.flush()
+
+        program = Program(institute_id_fk=institute.institute_id, program_name="Minimal Program")
+        super_admin = User(
+            username="sa_programs_minimal",
+            password_hash=generate_password_hash("secret"),
+            role="admin",
+            is_super_admin=True,
+        )
+        db.session.add_all([program, super_admin])
+        db.session.commit()
+
+        trust_id = trust.trust_id
+        institute_id = institute.institute_id
+
+    csrf = _login(client, "sa_programs_minimal")
+    with client.session_transaction() as sess:
+        sess["active_trust_id"] = trust_id
+        sess["active_institute_id"] = institute_id
+        sess["csrf_token"] = csrf
+
+    original_get = main_routes.db.session.get
+
+    def guarded_get(entity, ident, *args, **kwargs):
+        if entity in (main_routes.Trust, main_routes.Institute):
+            raise AssertionError("Programs pages should not use full Trust/Institute session.get")
+        return original_get(entity, ident, *args, **kwargs)
+
+    monkeypatch.setattr(main_routes.db.session, "get", guarded_get)
+
+    response = client.get(f"/programs?trust_id={trust_id}")
+    text = response.data.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "Minimal Program" in text
+    assert "Programs Minimal Institute" in text
