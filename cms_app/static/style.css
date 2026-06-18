@@ -1848,30 +1848,54 @@ thead th, .table thead th { color: var(--text-color); font-weight: 700; }
 
 .btn-gradient-danger {
   color: #fff;
-  border: 0;
-  background-image: linear-gradient(135deg, #ef4444 0%, #dc2626 58%, #f97316 100%);
-  box-shadow: 0 8px 18px rgba(220, 38, 38, 0.22);
+  border: 1px solid rgba(127, 29, 29, 0.55);
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.08) 18%, rgba(255,255,255,0) 36%),
+    linear-gradient(135deg, #7f1d1d 0%, #b91c1c 18%, #ef4444 46%, #991b1b 76%, #450a0a 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.28),
+    inset 0 -1px 0 rgba(69, 10, 10, 0.45),
+    0 8px 18px rgba(127, 29, 29, 0.22);
+  text-shadow: 0 1px 1px rgba(69, 10, 10, 0.35);
 }
 
 .btn-gradient-danger:hover,
 .btn-gradient-danger:focus {
   color: #fff;
-  background-image: linear-gradient(135deg, #dc2626 0%, #b91c1c 58%, #ea580c 100%);
-  box-shadow: 0 10px 22px rgba(185, 28, 28, 0.26);
+  border-color: rgba(127, 29, 29, 0.72);
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.12) 18%, rgba(255,255,255,0) 40%),
+    linear-gradient(135deg, #991b1b 0%, #dc2626 18%, #f87171 46%, #b91c1c 76%, #450a0a 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.32),
+    inset 0 -1px 0 rgba(69, 10, 10, 0.5),
+    0 10px 22px rgba(127, 29, 29, 0.26);
 }
 
 .btn-gradient-success {
   color: #fff;
-  border: 0;
-  background-image: linear-gradient(135deg, #22c55e 0%, #16a34a 58%, #0f766e 100%);
-  box-shadow: 0 8px 18px rgba(22, 163, 74, 0.2);
+  border: 1px solid rgba(20, 83, 45, 0.55);
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.08) 18%, rgba(255,255,255,0) 36%),
+    linear-gradient(135deg, #14532d 0%, #15803d 18%, #22c55e 46%, #0f766e 76%, #052e16 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.28),
+    inset 0 -1px 0 rgba(5, 46, 22, 0.45),
+    0 8px 18px rgba(20, 83, 45, 0.2);
+  text-shadow: 0 1px 1px rgba(5, 46, 22, 0.35);
 }
 
 .btn-gradient-success:hover,
 .btn-gradient-success:focus {
   color: #fff;
-  background-image: linear-gradient(135deg, #16a34a 0%, #15803d 58%, #115e59 100%);
-  box-shadow: 0 10px 22px rgba(21, 128, 61, 0.24);
+  border-color: rgba(20, 83, 45, 0.72);
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.12) 18%, rgba(255,255,255,0) 40%),
+    linear-gradient(135deg, #166534 0%, #16a34a 18%, #4ade80 46%, #0f766e 76%, #052e16 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.32),
+    inset 0 -1px 0 rgba(5, 46, 22, 0.5),
+    0 10px 22px rgba(20, 83, 45, 0.24);
 }
 
 /* Link colors: subtle default with accent on hover */
