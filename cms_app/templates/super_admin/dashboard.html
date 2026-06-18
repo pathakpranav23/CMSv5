@@ -92,7 +92,7 @@
                       <td class="text-end">
                         <form action="{{ url_for('super_admin.notify_tenure', trust_id=r.trust.trust_id) }}" method="POST" class="d-inline">
                           <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token else '' }}">
-                          <button type="submit" class="btn btn-sm btn-outline-warning">Notify</button>
+                          <button type="submit" class="btn btn-sm btn-gradient-warning">Notify</button>
                         </form>
                       </td>
                     </tr>
@@ -119,7 +119,7 @@
                 <div class="small fw-semibold">{{ t.trust_name }}</div>
                 <form action="{{ url_for('super_admin.toggle_trust', trust_id=t.trust_id) }}" method="POST" class="m-0">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token else '' }}">
-                  <button type="submit" class="btn btn-sm btn-outline-success">Activate</button>
+                  <button type="submit" class="btn btn-sm btn-gradient-success">Activate</button>
                 </form>
               </div>
             {% endfor %}

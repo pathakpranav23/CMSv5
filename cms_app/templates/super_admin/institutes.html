@@ -35,9 +35,9 @@
               <form action="{{ url_for('super_admin.toggle_institute', inst_id=inst.institute_id) }}" method="POST">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {% if inst.is_active %}
-                  <button type="submit" class="btn btn-sm btn-outline-danger">Suspend</button>
+                  <button type="submit" class="btn btn-sm btn-gradient-danger">Suspend</button>
                 {% else %}
-                  <button type="submit" class="btn btn-sm btn-outline-success">Activate</button>
+                  <button type="submit" class="btn btn-sm btn-gradient-success">Activate</button>
                 {% endif %}
               </form>
             </div>
