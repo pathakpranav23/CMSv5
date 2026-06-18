@@ -7026,7 +7026,22 @@ def students():
         except Exception:
             pass
 
-    query = select(Student)
+    query = select(
+        Student.enrollment_no.label("enrollment_no"),
+        Student.user_id_fk.label("user_id_fk"),
+        Student.program_id_fk.label("program_id_fk"),
+        Student.division_id_fk.label("division_id_fk"),
+        Student.student_name.label("first_name"),
+        Student.surname.label("last_name"),
+        Student.father_name.label("father_name"),
+        Student.mobile.label("mobile"),
+        Student.roll_no.label("roll_no"),
+        Student.photo_url.label("photo_url"),
+        Student.current_semester.label("current_semester"),
+        Student.medium_tag.label("medium_tag"),
+        Student.trust_id_fk.label("trust_id_fk"),
+        Student.is_active.label("is_active"),
+    ).select_from(Student)
     if effective_trust_id:
         query = query.filter(Student.trust_id_fk == effective_trust_id)
     if role == "faculty":
@@ -7137,7 +7152,7 @@ def students():
         query
         .offset((selected_page - 1) * selected_limit)
         .limit(selected_limit)
-    ).scalars().all()
+    ).all()
     # Fetch mapping helpers
     prog_q = select(Program)
     div_q = select(Division)
@@ -7186,7 +7201,16 @@ def api_students_search():
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
     include_inactive = (request.args.get("include_inactive") or "").strip().lower() in ("1", "true", "yes")
-    query = select(Student)
+    query = select(
+        Student.enrollment_no.label("enrollment_no"),
+        Student.program_id_fk.label("program_id_fk"),
+        Student.student_name.label("first_name"),
+        Student.surname.label("last_name"),
+        Student.current_semester.label("current_semester"),
+        Student.medium_tag.label("medium_tag"),
+        Student.is_active.label("is_active"),
+        Student.trust_id_fk.label("trust_id_fk"),
+    ).select_from(Student)
     # Enforce program scoping for clerk/principal; admin can search globally
     role = (getattr(current_user, "role", "") or "").strip().lower()
     effective_trust_id = None
@@ -7252,9 +7276,9 @@ def api_students_search():
     except Exception:
         is_name_like = False
     if is_name_like:
-        rows = db.session.execute(query.order_by(Student.surname.asc(), Student.student_name.asc(), Student.enrollment_no.asc()).limit(10)).scalars().all()
+        rows = db.session.execute(query.order_by(Student.surname.asc(), Student.student_name.asc(), Student.enrollment_no.asc()).limit(10)).all()
     else:
-        rows = db.session.execute(query.order_by(Student.enrollment_no.asc()).limit(10)).scalars().all()
+        rows = db.session.execute(query.order_by(Student.enrollment_no.asc()).limit(10)).all()
     prog_q = select(Program)
     try:
         from ..models import Institute
@@ -7266,7 +7290,7 @@ def api_students_search():
     data = [
         {
             "enrollment_no": s.enrollment_no,
-            "name": f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip(),
+            "name": f"{(s.last_name or '').strip()} {(s.first_name or '').strip()}".strip(),
             "program_id": s.program_id_fk,
             "program_name": program_map.get(s.program_id_fk) or "",
             "semester": s.current_semester,

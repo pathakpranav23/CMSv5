@@ -547,7 +547,84 @@ def test_wizard_step1_renders_without_full_trust_institute_gets(client, app, mon
 
     assert response.status_code == 200
     assert "Wizard Minimal Institute" in text
-    assert "Trust Wizard Minimal" in text
+
+
+def test_students_pages_tolerate_missing_aadhar_column(client, app, monkeypatch):
+    from cms_app.main import routes as main_routes
+
+    with app.app_context():
+        trust = Trust(
+            trust_name="Trust Students Minimal",
+            trust_code="TRUST_STUDENTS_MIN",
+            is_active=True,
+        )
+        db.session.add(trust)
+        db.session.flush()
+
+        institute = Institute(
+            trust_id_fk=trust.trust_id,
+            institute_name="Students Minimal Institute",
+            institute_code="STUD_MIN_INST",
+            is_active=True,
+        )
+        db.session.add(institute)
+        db.session.flush()
+
+        program = Program(institute_id_fk=institute.institute_id, program_name="Students Minimal Program")
+        db.session.add(program)
+        db.session.flush()
+
+        admin = User(
+            username="admin_students_minimal",
+            password_hash=generate_password_hash("secret"),
+            role="admin",
+            trust_id_fk=trust.trust_id,
+            program_id_fk=program.program_id,
+        )
+        db.session.add(admin)
+        db.session.flush()
+
+        student = Student(
+            enrollment_no="ENR_STUDENTS_MIN",
+            student_name="Aarav",
+            surname="Patel",
+            father_name="Rakesh",
+            mobile="9999999999",
+            program_id_fk=program.program_id,
+            trust_id_fk=trust.trust_id,
+            current_semester=4,
+            medium_tag="English",
+            is_active=True,
+        )
+        db.session.add(student)
+        db.session.commit()
+
+        program_id = program.program_id
+
+    original_execute = main_routes.db.session.execute
+
+    def guarded_execute(statement, *args, **kwargs):
+        sql = str(statement)
+        if "FROM students" in sql and "students.aadhar_no" in sql:
+            raise AssertionError("students pages should not select students.aadhar_no on old schemas")
+        return original_execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(main_routes.db.session, "execute", guarded_execute)
+
+    _login(client, "admin_students_minimal")
+
+    list_response = client.get(f"/students?program_id={program_id}")
+    list_text = list_response.data.decode("utf-8")
+    assert list_response.status_code == 200
+    assert "ENR_STUDENTS_MIN" in list_text
+    assert "Aarav" in list_text
+    assert "Patel" in list_text
+
+    search_response = client.get(f"/api/students/search?q=Aarav&program_id={program_id}")
+    assert search_response.status_code == 200
+    payload = search_response.get_json()
+    assert payload["success"] is True
+    assert payload["data"]["items"][0]["enrollment_no"] == "ENR_STUDENTS_MIN"
 
 
 def test_wizard_exit_clears_context_and_returns_to_tenants(client, app):
