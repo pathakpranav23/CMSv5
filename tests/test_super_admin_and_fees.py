@@ -548,3 +548,27 @@ def test_wizard_step1_renders_without_full_trust_institute_gets(client, app, mon
     assert response.status_code == 200
     assert "Wizard Minimal Institute" in text
     assert "Trust Wizard Minimal" in text
+
+
+def test_wizard_exit_clears_context_and_returns_to_tenants(client, app):
+    with app.app_context():
+        super_admin = User(
+            username="sa_wizard_exit",
+            password_hash=generate_password_hash("secret"),
+            role="admin",
+            is_super_admin=True,
+        )
+        db.session.add(super_admin)
+        db.session.commit()
+
+    _login(client, "sa_wizard_exit")
+    with client.session_transaction() as sess:
+        sess["wizard_institute_id"] = 999
+
+    response = client.get("/wizard/exit", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/super-admin/tenants")
+
+    with client.session_transaction() as sess:
+        assert "wizard_institute_id" not in sess

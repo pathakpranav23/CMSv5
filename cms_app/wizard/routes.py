@@ -36,6 +36,16 @@ def _fetch_row_mapping(table_name, pk_column, pk_value, column_names=None):
     row = db.session.execute(stmt).mappings().first()
     return dict(row) if row else None
 
+
+@wizard.route('/exit')
+@login_required
+def exit_wizard():
+    session.pop('wizard_institute_id', None)
+    flash("Exited onboarding wizard.", "info")
+    if getattr(current_user, 'is_super_admin', False):
+        return redirect(url_for('super_admin.tenants'))
+    return redirect(url_for('main.dashboard'))
+
 @wizard.route('/step1', methods=['GET', 'POST'])
 @login_required
 def step1_institute():
