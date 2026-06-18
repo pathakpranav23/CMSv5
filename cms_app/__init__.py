@@ -703,6 +703,108 @@ def create_app():
         return {"breadcrumb_items": items}
 
     @app.context_processor
+    def inject_super_admin_workspace_context():
+        cached_ctx = getattr(g, "_super_admin_workspace_ctx", None)
+        if cached_ctx is not None:
+            return cached_ctx
+
+        try:
+            if not getattr(current_user, "is_authenticated", False) or not getattr(current_user, "is_super_admin", False):
+                g._super_admin_workspace_ctx = {}
+                return {}
+        except Exception:
+            g._super_admin_workspace_ctx = {}
+            return {}
+
+        from .models import Trust, Institute
+
+        def _fetch_trust_row(trust_id):
+            if not trust_id:
+                return None
+            row = db.session.execute(
+                select(
+                    Trust.trust_id.label("trust_id"),
+                    Trust.trust_name.label("trust_name"),
+                ).where(Trust.trust_id == trust_id)
+            ).mappings().first()
+            return dict(row) if row else None
+
+        def _fetch_institute_row(institute_id):
+            if not institute_id:
+                return None
+            row = db.session.execute(
+                select(
+                    Institute.institute_id.label("institute_id"),
+                    Institute.institute_name.label("institute_name"),
+                    Institute.trust_id_fk.label("trust_id_fk"),
+                ).where(Institute.institute_id == institute_id)
+            ).mappings().first()
+            return dict(row) if row else None
+
+        def _list_institutes_for_trust(trust_id):
+            if not trust_id:
+                return []
+            return [
+                dict(row)
+                for row in db.session.execute(
+                    select(
+                        Institute.institute_id.label("institute_id"),
+                        Institute.institute_name.label("institute_name"),
+                        Institute.trust_id_fk.label("trust_id_fk"),
+                    )
+                    .where(Institute.trust_id_fk == trust_id)
+                    .order_by(Institute.institute_name.asc())
+                ).mappings().all()
+            ]
+
+        def _list_trust_rows():
+            return [
+                dict(row)
+                for row in db.session.execute(
+                    select(
+                        Trust.trust_id.label("trust_id"),
+                        Trust.trust_name.label("trust_name"),
+                    ).order_by(Trust.trust_name.asc())
+                ).mappings().all()
+            ]
+
+        active_trust_id = session.get("active_trust_id")
+        active_trust_obj = None
+        if active_trust_id:
+            try:
+                active_trust_id = int(active_trust_id)
+            except Exception:
+                active_trust_id = None
+        if active_trust_id:
+            active_trust_obj = _fetch_trust_row(active_trust_id)
+
+        active_institute_obj = None
+        if active_trust_obj:
+            active_inst_id = session.get("active_institute_id")
+            if active_inst_id:
+                try:
+                    active_inst_id = int(active_inst_id)
+                except Exception:
+                    active_inst_id = None
+            if active_inst_id:
+                active_institute_obj = _fetch_institute_row(active_inst_id)
+                if active_institute_obj and int(active_institute_obj.get("trust_id_fk") or 0) != int(active_trust_obj.get("trust_id") or 0):
+                    active_institute_obj = None
+            if not active_institute_obj:
+                trust_institutes = _list_institutes_for_trust(active_trust_obj.get("trust_id"))
+                active_institute_obj = trust_institutes[0] if trust_institutes else None
+                if active_institute_obj:
+                    session["active_institute_id"] = active_institute_obj.get("institute_id")
+
+        ctx = {
+            "ctx_active_trust": active_trust_obj,
+            "ctx_active_institute": active_institute_obj,
+            "ctx_all_trusts": _list_trust_rows(),
+        }
+        g._super_admin_workspace_ctx = ctx
+        return ctx
+
+    @app.context_processor
     def inject_command_palette():
         from werkzeug.routing import BuildError
 

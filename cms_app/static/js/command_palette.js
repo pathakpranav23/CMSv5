@@ -1,9 +1,11 @@
-document.addEventListener('DOMContentLoaded', function() {
+function initCommandPalette() {
+  if (window.__commandPaletteInitialized) return;
   const modalEl = document.getElementById('commandPaletteModal');
   const inputEl = document.getElementById('commandPaletteInput');
   const resultsEl = document.getElementById('commandPaletteResults');
   const dataEl = document.getElementById('commandPaletteActions');
   if (!modalEl || !inputEl || !resultsEl || !dataEl) return;
+  window.__commandPaletteInitialized = true;
 
   let modal = null;
   try {
@@ -238,4 +240,10 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
   });
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initCommandPalette, { once: true });
+} else {
+  initCommandPalette();
+}

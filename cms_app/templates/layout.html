@@ -189,6 +189,31 @@
           <span class="fw-bold brand-title">CodeP-CloudEMS</span>
           <div class="d-flex align-items-center gap-2">
             <a class="coin-btn topbar-btn--dash" href="{{ url_for('main.dashboard') }}" aria-label="Dashboard" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Dashboard"><i class="bi bi-house"></i></a>
+            {% if current_user.is_authenticated and current_user.is_super_admin %}
+            <div class="dropdown">
+              <button class="coin-btn dropdown-toggle" type="button" id="mobileTrustContextDropdown" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Workspace" title="{{ ctx_active_trust.trust_name if ctx_active_trust else 'Global View' }}">
+                {% if ctx_active_trust %}
+                  <i class="bi bi-shield-lock-fill"></i>
+                {% else %}
+                  <i class="bi bi-globe"></i>
+                {% endif %}
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end shadow" aria-labelledby="mobileTrustContextDropdown">
+                <li><h6 class="dropdown-header">Select Workspace</h6></li>
+                <li><a class="dropdown-item {% if not ctx_active_trust %}active{% endif %}" href="{{ url_for('main.set_trust_context', trust_id=0) }}">
+                  <i class="bi bi-globe me-2"></i> Global View
+                </a></li>
+                {% if ctx_all_trusts %}
+                <li><hr class="dropdown-divider"></li>
+                {% for t in (ctx_all_trusts or []) %}
+                <li><a class="dropdown-item {% if ctx_active_trust and ctx_active_trust.trust_id == t.trust_id %}active{% endif %}" href="{{ url_for('main.set_trust_context', trust_id=t.trust_id) }}">
+                  <i class="bi bi-building me-2"></i> {{ t.trust_name }}
+                </a></li>
+                {% endfor %}
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
             <button class="coin-btn topbar-btn--cmd" type="button" data-action="open-command-palette" aria-label="Command Palette" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Command Palette"><i class="bi bi-search"></i></button>
           </div>
         </div>
@@ -377,7 +402,7 @@
       }
 
       function ensureCommandPalette(callback) {
-        loadScriptOnce('command-palette', "{{ url_for('static', filename='js/command_palette.js', v=2) }}", function () {
+        loadScriptOnce('command-palette', "{{ url_for('static', filename='js/command_palette.js', v=3) }}", function () {
           if (callback) callback();
         });
       }
