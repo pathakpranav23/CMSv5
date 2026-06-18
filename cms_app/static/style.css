@@ -1846,6 +1846,34 @@ thead th, .table thead th { color: var(--text-color); font-weight: 700; }
   border-color: #9ca3af;
 }
 
+.btn-gradient-danger {
+  color: #fff;
+  border: 0;
+  background-image: linear-gradient(135deg, #ef4444 0%, #dc2626 58%, #f97316 100%);
+  box-shadow: 0 8px 18px rgba(220, 38, 38, 0.22);
+}
+
+.btn-gradient-danger:hover,
+.btn-gradient-danger:focus {
+  color: #fff;
+  background-image: linear-gradient(135deg, #dc2626 0%, #b91c1c 58%, #ea580c 100%);
+  box-shadow: 0 10px 22px rgba(185, 28, 28, 0.26);
+}
+
+.btn-gradient-success {
+  color: #fff;
+  border: 0;
+  background-image: linear-gradient(135deg, #22c55e 0%, #16a34a 58%, #0f766e 100%);
+  box-shadow: 0 8px 18px rgba(22, 163, 74, 0.2);
+}
+
+.btn-gradient-success:hover,
+.btn-gradient-success:focus {
+  color: #fff;
+  background-image: linear-gradient(135deg, #16a34a 0%, #15803d 58%, #115e59 100%);
+  box-shadow: 0 10px 22px rgba(21, 128, 61, 0.24);
+}
+
 /* Link colors: subtle default with accent on hover */
 a { color: #1f2937; text-decoration-color: #cbd5e1; }
 a:hover { color: #111827; text-decoration-color: var(--accent-primary); }

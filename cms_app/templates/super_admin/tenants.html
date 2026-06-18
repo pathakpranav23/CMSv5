@@ -56,9 +56,9 @@
               <form action="{{ url_for('super_admin.toggle_trust', trust_id=trust.trust_id) }}" method="POST">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {% if m and m.is_active %}
-                <button type="submit" class="btn btn-danger btn-sm">Suspend</button>
+                <button type="submit" class="btn btn-gradient-danger btn-sm">Suspend</button>
                 {% else %}
-                <button type="submit" class="btn btn-success btn-sm">Activate</button>
+                <button type="submit" class="btn btn-gradient-success btn-sm">Activate</button>
                 {% endif %}
               </form>
               <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.programs_list', trust_id=trust.trust_id) }}">Programs</a>
@@ -106,9 +106,9 @@
                             <form action="{{ url_for('super_admin.toggle_institute', inst_id=inst.institute_id) }}" method="POST">
                               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                               {% if inst.is_active %}
-                                <button type="submit" class="btn btn-sm btn-outline-danger">Suspend</button>
+                                <button type="submit" class="btn btn-sm btn-gradient-danger">Suspend</button>
                               {% else %}
-                                <button type="submit" class="btn btn-sm btn-outline-success">Activate</button>
+                                <button type="submit" class="btn btn-sm btn-gradient-success">Activate</button>
                               {% endif %}
                             </form>
                           </div>
