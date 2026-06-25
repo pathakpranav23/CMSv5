@@ -1172,16 +1172,93 @@ def test_faculty_pages_tolerate_missing_optional_faculty_columns(client, app, mo
             is_active=True,
         )
         db.session.add(faculty)
+        db.session.flush()
+
+        division = Division(
+            program_id_fk=program.program_id,
+            semester=4,
+            division_code="A",
+        )
+        db.session.add(division)
+        db.session.flush()
+
+        subject_type = SubjectType(type_code="TH_FAC", type_name="Theory")
+        db.session.add(subject_type)
+        db.session.flush()
+
+        subject = Subject(
+            program_id_fk=program.program_id,
+            semester=4,
+            subject_name="Algorithms",
+            subject_code="ALG401",
+            paper_code="ALG-401",
+            subject_type_id_fk=subject_type.type_id,
+            is_active=True,
+        )
+        db.session.add(subject)
+        db.session.flush()
+
+        assignment = CourseAssignment(
+            faculty_id_fk=faculty_user.user_id,
+            subject_id_fk=subject.subject_id,
+            division_id_fk=division.division_id,
+            is_active=True,
+        )
+        db.session.add(assignment)
+
+        student = Student(
+            enrollment_no="ENR_FAC_DASH_1",
+            student_name="Ria",
+            surname="Shah",
+            email="ria@example.com",
+            gender="Female",
+            program_id_fk=program.program_id,
+            division_id_fk=division.division_id,
+            trust_id_fk=trust.trust_id,
+            is_active=True,
+        )
+        db.session.add(student)
+        db.session.flush()
+
+        for idx in range(1, 3):
+            db.session.add(
+                Attendance(
+                    student_id_fk=student.enrollment_no,
+                    subject_id_fk=subject.subject_id,
+                    division_id_fk=division.division_id,
+                    date_marked=datetime.now(timezone.utc).date(),
+                    period_no=idx,
+                    status="P",
+                )
+            )
+
         db.session.commit()
 
         faculty_id = faculty.faculty_id
 
     original_main_get = main_routes.db.session.get
+    original_execute = main_routes.db.session.execute
 
     def guarded_main_get(entity, ident, *args, **kwargs):
         if entity is main_routes.Faculty:
             raise AssertionError("faculty workflow should not use full Faculty session.get on legacy schemas")
         return original_main_get(entity, ident, *args, **kwargs)
+
+    def guarded_execute(statement, *args, **kwargs):
+        sql = str(statement)
+        if "FROM students" in sql and "students.aadhar_no" in sql:
+            raise AssertionError("faculty dashboard should not select students.aadhar_no on legacy schemas")
+        if "FROM subjects" in sql and any(
+            field in sql
+            for field in (
+                "subjects.is_elective",
+                "subjects.capacity",
+                "subjects.elective_group_id",
+                "subjects.medium_tag",
+            )
+        ):
+            raise AssertionError("faculty pages should not select optional subject columns on legacy schemas")
+        return original_execute(statement, *args, **kwargs)
 
     def legacy_fetch_faculty(faculty_id_value):
         reflected = main_routes._reflected_table("faculty")
@@ -1226,6 +1303,7 @@ def test_faculty_pages_tolerate_missing_optional_faculty_columns(client, app, mo
         return data
 
     monkeypatch.setattr(main_routes.db.session, "get", guarded_main_get)
+    monkeypatch.setattr(main_routes.db.session, "execute", guarded_execute)
     monkeypatch.setattr(main_routes, "_fetch_faculty_mapping", legacy_fetch_faculty)
     monkeypatch.setattr(main_routes, "_fetch_faculty_by_user_id_mapping", legacy_fetch_faculty_by_user_id)
     monkeypatch.setattr(faculty_routes, "_fetch_faculty_by_user_id_mapping", legacy_fetch_faculty_by_user_id)

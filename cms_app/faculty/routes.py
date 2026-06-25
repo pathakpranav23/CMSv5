@@ -4,19 +4,27 @@ from .. import db
 from ..models import Faculty, CourseAssignment, Subject, Division, Program, TimetableSlot, TimetableSettings, Attendance, Student
 from ..decorators import role_required
 from . import faculty_bp
-from sqlalchemy import and_, func, case, distinct
+from sqlalchemy import and_, func, case, distinct, select, or_
 from datetime import datetime, timedelta, date
-from ..main.routes import _auto_release_empty_semester_course_assignments
+from types import SimpleNamespace
+from ..main.routes import (
+    _auto_release_empty_semester_course_assignments,
+    _fetch_faculty_by_user_id_mapping,
+    _faculty_namespace,
+    _student_projection_select,
+    _student_namespace,
+)
 
 @faculty_bp.route("/dashboard")
 @login_required
 @role_required("faculty")
 def dashboard():
     # 1. Fetch Faculty Profile
-    faculty = Faculty.query.filter_by(user_id_fk=current_user.user_id).first()
-    if not faculty:
+    faculty_row = _fetch_faculty_by_user_id_mapping(getattr(current_user, "user_id", None))
+    if not faculty_row:
         flash("Faculty profile not found.", "danger")
         return redirect(url_for("main.index"))
+    faculty = _faculty_namespace(faculty_row)
 
     try:
         _auto_release_empty_semester_course_assignments(getattr(current_user, "trust_id_fk", None))
@@ -24,15 +32,51 @@ def dashboard():
         pass
         
     # 2. Fetch Active Course Assignments
-    assignments = (
-        db.session.query(CourseAssignment, Subject, Division, Program)
+    assignment_rows = db.session.execute(
+        select(
+            CourseAssignment.subject_id_fk.label("assignment_subject_id_fk"),
+            CourseAssignment.division_id_fk.label("assignment_division_id_fk"),
+            Subject.subject_id.label("subject_id"),
+            Subject.subject_name.label("subject_name"),
+            Subject.subject_code.label("subject_code"),
+            Division.division_id.label("division_id"),
+            Division.division_code.label("division_code"),
+            Division.semester.label("semester"),
+            Program.program_id.label("program_id"),
+            Program.program_code.label("program_code"),
+            Program.program_name.label("program_name"),
+        )
         .join(Subject, Subject.subject_id == CourseAssignment.subject_id_fk)
         .join(Division, Division.division_id == CourseAssignment.division_id_fk)
         .join(Program, Program.program_id == Division.program_id_fk)
-        .filter(CourseAssignment.faculty_id_fk == current_user.user_id)
-        .filter(CourseAssignment.is_active == True)
-        .all()
-    )
+        .where(CourseAssignment.faculty_id_fk == current_user.user_id)
+        .where(CourseAssignment.is_active.is_(True))
+    ).mappings().all()
+    assignments = []
+    for row in assignment_rows:
+        assignments.append(
+            (
+                SimpleNamespace(
+                    subject_id_fk=row["assignment_subject_id_fk"],
+                    division_id_fk=row["assignment_division_id_fk"],
+                ),
+                SimpleNamespace(
+                    subject_id=row["subject_id"],
+                    subject_name=row["subject_name"],
+                    subject_code=row["subject_code"],
+                ),
+                SimpleNamespace(
+                    division_id=row["division_id"],
+                    division_code=row["division_code"],
+                    semester=row["semester"],
+                ),
+                SimpleNamespace(
+                    program_id=row["program_id"],
+                    program_code=row["program_code"],
+                    program_name=row["program_name"],
+                ),
+            )
+        )
     
     # 3. Calculate Lecture Stats (Week/Month/Semester)
     # We need to count unique (date, period, subject, division) combinations for this faculty's assignments
@@ -61,7 +105,6 @@ def dashboard():
         ]
         
         if conditions:
-            from sqlalchemy import or_
             base_q = db.session.query(
                 Attendance.date_marked, 
                 Attendance.period_no, 
@@ -117,13 +160,26 @@ def dashboard():
         # So first, get all students in these divisions.
         division_ids = {did for _, did in assigned_pairs}
         
-        students_in_divs = db.session.query(Student).filter(Student.division_id_fk.in_(division_ids)).all()
-        student_map = {s.enrollment_no: s for s in students_in_divs}
+        student_table, student_stmt = _student_projection_select(
+            [
+                "enrollment_no",
+                "division_id_fk",
+                "student_name",
+                "surname",
+                "email",
+                "gender",
+            ]
+        )
+        students_in_divs = [
+            _student_namespace(dict(row))
+            for row in db.session.execute(
+                student_stmt.where(student_table.c.division_id_fk.in_(division_ids))
+            ).mappings().all()
+        ]
         
         # Now query attendance for these students in relevant subjects
         # We aggregate by student, subject, division
         
-        from sqlalchemy import or_
         att_conditions = [
             and_(
                 Attendance.subject_id_fk == sid,
@@ -241,10 +297,11 @@ def dashboard():
 @role_required("faculty")
 def my_timetable():
     # 1. Fetch Faculty Profile
-    faculty = Faculty.query.filter_by(user_id_fk=current_user.user_id).first()
-    if not faculty:
+    faculty_row = _fetch_faculty_by_user_id_mapping(getattr(current_user, "user_id", None))
+    if not faculty_row:
         flash("Faculty profile not found.", "danger")
         return redirect(url_for("main.index"))
+    faculty = _faculty_namespace(faculty_row)
 
     # 2. Fetch Timetable Slots for this Faculty
     # We find slots where the subject/division matches an active assignment for this faculty
@@ -281,28 +338,40 @@ def my_timetable():
             ))
             
         if conditions:
-            from sqlalchemy import or_
-            slots_query = (
-                db.session.query(TimetableSlot, Subject, Division, Program)
+            slot_rows = db.session.execute(
+                select(
+                    TimetableSlot.day_of_week.label("day_of_week"),
+                    TimetableSlot.period_no.label("period_no"),
+                    TimetableSlot.room_no.label("room_no"),
+                    TimetableSlot.slot_id.label("slot_id"),
+                    Subject.subject_name.label("subject_name"),
+                    Subject.subject_code.label("subject_code"),
+                    Division.division_code.label("division_code"),
+                    Division.semester.label("semester"),
+                    Program.program_code.label("program_code"),
+                )
                 .join(Subject, Subject.subject_id == TimetableSlot.subject_id_fk)
                 .join(Division, Division.division_id == TimetableSlot.division_id_fk)
                 .join(Program, Program.program_id == Division.program_id_fk)
-                .filter(or_(*conditions))
-            )
-            
-            slots = slots_query.all()
-            
-            for s, sub, div, prog in slots:
-                key = f"{s.day_of_week}_{s.period_no}"
+                .where(or_(*conditions))
+            ).mappings().all()
+
+            for row in slot_rows:
+                key = f"{row['day_of_week']}_{row['period_no']}"
                 # Handle potential conflict (multiple slots same time?) - unlikely for one faculty unless data error
                 # If multiple, just overwrite or append.
                 slots_data[key] = {
-                    "slot": s,
-                    "subject_name": sub.subject_name,
-                    "subject_code": sub.subject_code,
-                    "division_code": div.division_code,
-                    "program_code": prog.program_code,
-                    "semester": div.semester
+                    "slot": SimpleNamespace(
+                        day_of_week=row["day_of_week"],
+                        period_no=row["period_no"],
+                        room_no=row["room_no"],
+                        slot_id=row["slot_id"],
+                    ),
+                    "subject_name": row["subject_name"],
+                    "subject_code": row["subject_code"],
+                    "division_code": row["division_code"],
+                    "program_code": row["program_code"],
+                    "semester": row["semester"],
                 }
 
     # Prepare Grid
