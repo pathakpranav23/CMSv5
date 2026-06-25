@@ -3,7 +3,7 @@ from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
 import os
 import csv
-from sqlalchemy import or_, select, and_, cast, Integer, false, update
+from sqlalchemy import or_, select, and_, cast, Integer, false, update, MetaData, Table, inspect as sa_inspect
 from sqlalchemy.orm import selectinload
 from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification
 from .. import db, csrf_required, limiter, cache
@@ -19,6 +19,7 @@ import math
 from io import BytesIO
 import time
 import secrets
+from types import SimpleNamespace
 
 _rate_test_counters = {}
 
@@ -73,10 +74,410 @@ def _list_trust_rows():
         for row in db.session.execute(
             select(
                 Trust.trust_id.label("trust_id"),
-                Trust.trust_name.label("trust_name"),
-            ).order_by(Trust.trust_name.asc())
-        ).mappings().all()
+            Trust.trust_name.label("trust_name"),
+        ).order_by(Trust.trust_name.asc())
+    ).mappings().all()
     ]
+
+
+def _table_columns_present(table_name):
+    cache_key = f"main_table_columns:{table_name}"
+    try:
+        cached = cache.get(cache_key)
+    except Exception:
+        cached = None
+    if cached:
+        try:
+            return set(cached)
+        except Exception:
+            pass
+    try:
+        cols = {c["name"] for c in sa_inspect(db.engine).get_columns(table_name)}
+    except Exception:
+        cols = set()
+    try:
+        cache.set(cache_key, sorted(cols), timeout=300)
+    except Exception:
+        pass
+    return cols
+
+
+def _reflected_table(table_name):
+    metadata = MetaData()
+    return Table(table_name, metadata, autoload_with=db.engine)
+
+
+_STUDENT_FIELD_NAMES = [
+    "enrollment_no",
+    "user_id_fk",
+    "program_id_fk",
+    "division_id_fk",
+    "student_name",
+    "surname",
+    "father_name",
+    "date_of_birth",
+    "email",
+    "mobile",
+    "roll_no",
+    "gender",
+    "photo_url",
+    "permanent_address",
+    "current_semester",
+    "medium_tag",
+    "aadhar_no",
+    "category",
+    "trust_id_fk",
+    "is_active",
+]
+
+_FACULTY_FIELD_NAMES = [
+    "faculty_id",
+    "user_id_fk",
+    "program_id_fk",
+    "full_name",
+    "email",
+    "mobile",
+    "designation",
+    "department",
+    "photo_url",
+    "emp_id",
+    "date_of_joining",
+    "highest_qualification",
+    "experience_years",
+    "specialization",
+    "medium_expertise",
+    "extra_data",
+    "trust_id_fk",
+    "is_active",
+]
+
+_SUBJECT_FIELD_NAMES = [
+    "subject_id",
+    "program_id_fk",
+    "subject_type_id_fk",
+    "subject_name",
+    "subject_code",
+    "paper_code",
+    "semester",
+    "is_elective",
+    "capacity",
+    "elective_group_id",
+    "medium_tag",
+    "is_active",
+]
+
+
+def _student_present_columns():
+    return _table_columns_present("students")
+
+
+def _normalize_student_mapping(row):
+    data = {name: None for name in _STUDENT_FIELD_NAMES}
+    for name in _STUDENT_FIELD_NAMES:
+        if row and name in row:
+            data[name] = row.get(name)
+    data["first_name"] = data.get("student_name")
+    data["last_name"] = data.get("surname")
+    data["full_name"] = f"{data.get('student_name') or ''} {data.get('surname') or ''}".strip()
+    return data
+
+
+def _normalize_faculty_mapping(row):
+    data = {name: None for name in _FACULTY_FIELD_NAMES}
+    for name in _FACULTY_FIELD_NAMES:
+        if row and name in row:
+            data[name] = row.get(name)
+    return data
+
+
+def _normalize_subject_mapping(row):
+    data = {name: None for name in _SUBJECT_FIELD_NAMES}
+    for name in _SUBJECT_FIELD_NAMES:
+        if row and name in row:
+            data[name] = row.get(name)
+    return data
+
+
+def _student_namespace(row):
+    return SimpleNamespace(**_normalize_student_mapping(row or {}))
+
+
+def _student_row_value(row, key, default=None):
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    return getattr(row, key, default)
+
+
+def _faculty_namespace(row):
+    return SimpleNamespace(**_normalize_faculty_mapping(row or {}))
+
+
+def _subject_namespace(row):
+    return SimpleNamespace(**_normalize_subject_mapping(row or {}))
+
+
+def _fetch_student_mapping(enrollment_no):
+    if not enrollment_no:
+        return None
+    table = _reflected_table("students")
+    if "enrollment_no" not in table.c:
+        return None
+    present_cols = _student_present_columns()
+    selected = [table.c[name] for name in _STUDENT_FIELD_NAMES if name in table.c and name in present_cols]
+    if not selected:
+        selected = [table.c.enrollment_no]
+    stmt = select(*selected).where(table.c.enrollment_no == enrollment_no).limit(1)
+    row = db.session.execute(stmt).mappings().first()
+    return _normalize_student_mapping(dict(row)) if row else None
+
+
+def _fetch_student_by_user_id_mapping(user_id):
+    if not user_id:
+        return None
+    table = _reflected_table("students")
+    if "user_id_fk" not in table.c:
+        return None
+    present_cols = _student_present_columns()
+    selected = [table.c[name] for name in _STUDENT_FIELD_NAMES if name in table.c and name in present_cols]
+    if not selected:
+        selected = [table.c.user_id_fk]
+    stmt = select(*selected).where(table.c.user_id_fk == user_id).limit(1)
+    row = db.session.execute(stmt).mappings().first()
+    return _normalize_student_mapping(dict(row)) if row else None
+
+
+def _fetch_students_mapping_map(enrollment_nos):
+    enrollment_nos = [enr for enr in (enrollment_nos or []) if enr]
+    if not enrollment_nos:
+        return {}
+    table = _reflected_table("students")
+    if "enrollment_no" not in table.c:
+        return {}
+    present_cols = _student_present_columns()
+    selected = [table.c[name] for name in _STUDENT_FIELD_NAMES if name in table.c and name in present_cols]
+    if not selected:
+        selected = [table.c.enrollment_no]
+    stmt = select(*selected).where(table.c.enrollment_no.in_(enrollment_nos))
+    return {
+        row_dict.get("enrollment_no"): _normalize_student_mapping(row_dict)
+        for row_dict in (dict(row) for row in db.session.execute(stmt).mappings().all())
+        if row_dict.get("enrollment_no")
+    }
+
+
+def _student_projection_select(required_names=None):
+    table = _reflected_table("students")
+    present_cols = _student_present_columns()
+    names = []
+    if required_names:
+        for name in required_names:
+            if name in table.c and name in present_cols:
+                names.append(name)
+    else:
+        names = [name for name in _STUDENT_FIELD_NAMES if name in table.c and name in present_cols]
+    if not names:
+        fallback = "enrollment_no" if "enrollment_no" in table.c else next(iter(table.c.keys()))
+        names = [fallback]
+    stmt = select(*(table.c[name].label(name) for name in names))
+    return table, stmt
+
+
+def _student_roll_map(student_rows):
+    student_rows = [row for row in (student_rows or []) if _student_row_value(row, "enrollment_no")]
+    if not student_rows:
+        return {}
+    student_table = _reflected_table("students")
+    present_cols = _student_present_columns()
+    roll_map = {}
+    try:
+        continuous = bool(current_app.config.get("ROLLS_CONTINUOUS_PER_PROGRAM_SEM", False))
+        selected = [student_table.c.enrollment_no]
+        for name in ("program_id_fk", "current_semester", "division_id_fk"):
+            if name in student_table.c and name in present_cols:
+                selected.append(student_table.c[name])
+        if continuous:
+            cohort_keys = {
+                (_student_row_value(row, "program_id_fk"), _student_row_value(row, "current_semester"))
+                for row in student_rows
+                if _student_row_value(row, "program_id_fk") and _student_row_value(row, "current_semester")
+            }
+            for pid, sem in cohort_keys:
+                cohort_rows = db.session.execute(
+                    select(*selected)
+                    .where(student_table.c.program_id_fk == pid)
+                    .where(student_table.c.current_semester == sem)
+                    .order_by(student_table.c.enrollment_no.asc())
+                ).mappings().all()
+                for idx, row in enumerate(cohort_rows, start=1):
+                    roll_map[row.get("enrollment_no")] = idx
+        else:
+            div_ids = {
+                _student_row_value(row, "division_id_fk")
+                for row in student_rows
+                if _student_row_value(row, "division_id_fk")
+            }
+            for did in div_ids:
+                div_rows = db.session.execute(
+                    select(*selected)
+                    .where(student_table.c.division_id_fk == did)
+                    .order_by(student_table.c.enrollment_no.asc())
+                ).mappings().all()
+                for idx, row in enumerate(div_rows, start=1):
+                    roll_map[row.get("enrollment_no")] = idx
+    except Exception:
+        return {}
+    return roll_map
+
+
+def _student_exists(enrollment_no):
+    table = _reflected_table("students")
+    if "enrollment_no" not in table.c:
+        return False
+    stmt = select(table.c.enrollment_no).where(table.c.enrollment_no == enrollment_no).limit(1)
+    return db.session.execute(stmt).first() is not None
+
+
+def _faculty_present_columns():
+    return _table_columns_present("faculty")
+
+
+def _subject_present_columns():
+    return _table_columns_present("subjects")
+
+
+def _fetch_faculty_mapping(faculty_id):
+    if not faculty_id:
+        return None
+    table = _reflected_table("faculty")
+    if "faculty_id" not in table.c:
+        return None
+    present_cols = _faculty_present_columns()
+    selected = [table.c[name] for name in _FACULTY_FIELD_NAMES if name in table.c and name in present_cols]
+    if not selected:
+        selected = [table.c.faculty_id]
+    stmt = select(*selected).where(table.c.faculty_id == faculty_id).limit(1)
+    row = db.session.execute(stmt).mappings().first()
+    return _normalize_faculty_mapping(dict(row)) if row else None
+
+
+def _fetch_faculty_by_user_id_mapping(user_id):
+    if not user_id:
+        return None
+    table = _reflected_table("faculty")
+    if "user_id_fk" not in table.c:
+        return None
+    present_cols = _faculty_present_columns()
+    selected = [table.c[name] for name in _FACULTY_FIELD_NAMES if name in table.c and name in present_cols]
+    if not selected:
+        selected = [table.c.user_id_fk]
+    stmt = select(*selected).where(table.c.user_id_fk == user_id).limit(1)
+    row = db.session.execute(stmt).mappings().first()
+    return _normalize_faculty_mapping(dict(row)) if row else None
+
+
+def _faculty_payload_for_present_columns(values):
+    cols = _faculty_present_columns()
+    return {key: value for key, value in values.items() if key in cols}
+
+
+def _insert_faculty_row(values):
+    table = _reflected_table("faculty")
+    payload = _faculty_payload_for_present_columns(values)
+    result = db.session.execute(table.insert().values(**payload))
+    return int(getattr(result, "inserted_primary_key", [None])[0] or 0) or None
+
+
+def _update_faculty_row(faculty_id, values):
+    table = _reflected_table("faculty")
+    payload = _faculty_payload_for_present_columns(values)
+    if not payload:
+        return
+    db.session.execute(
+        update(table)
+        .where(table.c.faculty_id == faculty_id)
+        .values(**payload)
+    )
+
+
+def _delete_faculty_row(faculty_id):
+    table = _reflected_table("faculty")
+    db.session.execute(table.delete().where(table.c.faculty_id == faculty_id))
+
+
+def _fetch_subject_mapping(subject_id):
+    if not subject_id:
+        return None
+    table = _reflected_table("subjects")
+    if "subject_id" not in table.c:
+        return None
+    present_cols = _subject_present_columns()
+    selected = [table.c[name] for name in _SUBJECT_FIELD_NAMES if name in table.c and name in present_cols]
+    if not selected:
+        selected = [table.c.subject_id]
+    stmt = select(*selected).where(table.c.subject_id == subject_id).limit(1)
+    row = db.session.execute(stmt).mappings().first()
+    return _normalize_subject_mapping(dict(row)) if row else None
+
+
+def _subject_payload_for_present_columns(values):
+    cols = _subject_present_columns()
+    return {key: value for key, value in values.items() if key in cols}
+
+
+def _insert_subject_row(values):
+    table = _reflected_table("subjects")
+    payload = _subject_payload_for_present_columns(values)
+    result = db.session.execute(table.insert().values(**payload))
+    return int(getattr(result, "inserted_primary_key", [None])[0] or 0) or None
+
+
+def _update_subject_row(subject_id, values):
+    table = _reflected_table("subjects")
+    payload = _subject_payload_for_present_columns(values)
+    if not payload:
+        return
+    db.session.execute(
+        update(table)
+        .where(table.c.subject_id == subject_id)
+        .values(**payload)
+    )
+
+
+def _delete_subject_row(subject_id):
+    table = _reflected_table("subjects")
+    db.session.execute(table.delete().where(table.c.subject_id == subject_id))
+
+
+def _student_payload_for_present_columns(values):
+    cols = _student_present_columns()
+    return {key: value for key, value in values.items() if key in cols}
+
+
+def _insert_student_row(values):
+    table = _reflected_table("students")
+    payload = _student_payload_for_present_columns(values)
+    if "enrollment_no" not in payload:
+        raise ValueError("Student enrollment_no is required for insert.")
+    db.session.execute(table.insert().values(**payload))
+
+
+def _update_student_row(enrollment_no, values):
+    table = _reflected_table("students")
+    payload = _student_payload_for_present_columns(values)
+    if not payload:
+        return
+    db.session.execute(
+        update(table)
+        .where(table.c.enrollment_no == enrollment_no)
+        .values(**payload)
+    )
+
+
+def _delete_student_row(enrollment_no):
+    table = _reflected_table("students")
+    db.session.execute(table.delete().where(table.c.enrollment_no == enrollment_no))
 
 def role_required(*roles):
     """
@@ -1161,9 +1562,9 @@ def fees_receipt_semester():
 
     programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
     # Optional student context for name display on receipt
-    from ..models import Student
     enr_raw = (request.args.get("enrollment_no") or "").strip()
-    student = db.session.get(Student, enr_raw) if enr_raw else None
+    student_row = _fetch_student_mapping(enr_raw) if enr_raw else None
+    student = _student_namespace(student_row) if student_row else None
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     mode = (request.args.get("mode") or "frozen").strip().lower()  # frozen | preview
@@ -1186,7 +1587,8 @@ def fees_receipt_semester():
     if role == "student":
         # Resolve the logged-in student's profile and force context to that student/program
         try:
-            me = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
+            me_row = _fetch_student_by_user_id_mapping(current_user.user_id)
+            me = _student_namespace(me_row) if me_row else None
         except Exception:
             me = None
         if not me:
@@ -1364,7 +1766,7 @@ def fees_payment_status():
     # Any logged-in role can view this page
     role = (getattr(current_user, "role", "") or "").strip().lower()
 
-    from ..models import Program, Student, FeePayment
+    from ..models import Program, FeePayment
 
     programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
 
@@ -1385,16 +1787,29 @@ def fees_payment_status():
             medium = medium_raw.strip().capitalize()
 
     # Base student scope: program and semester
-    students_q = select(Student)
+    student_table = _reflected_table("students")
+    present_cols = _student_present_columns()
+    student_selected = [
+        student_table.c[name]
+        for name in _STUDENT_FIELD_NAMES
+        if name in student_table.c and name in present_cols
+    ]
+    if not student_selected:
+        student_selected = [student_table.c.enrollment_no]
+    students_q = select(*student_selected)
     if selected_program:
-        students_q = students_q.filter_by(program_id_fk=selected_program.program_id)
+        students_q = students_q.where(student_table.c.program_id_fk == selected_program.program_id)
     if semester:
-        students_q = students_q.filter(Student.current_semester == semester)
+        students_q = students_q.where(student_table.c.current_semester == semester)
     if show_medium and medium:
         # Proper column comparison for medium
-        students_q = students_q.filter(Student.medium_tag == medium)
-    students_q = students_q.order_by(Student.enrollment_no.asc())
-    students_all = db.session.execute(students_q).scalars().all()
+        if "medium_tag" in student_table.c and "medium_tag" in present_cols:
+            students_q = students_q.where(student_table.c.medium_tag == medium)
+    students_q = students_q.order_by(student_table.c.enrollment_no.asc())
+    students_all = [
+        _student_namespace(row)
+        for row in db.session.execute(students_q).mappings().all()
+    ]
 
     # Compute required fee total for the selected scope (frozen rows, medium-aware)
     required_total = 0.0
@@ -1546,15 +1961,17 @@ def fees_payment(enrollment_no):
 
     # Roles: students can view their own page; admin/clerk can view any
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    from ..models import Student, Program, FeeStructure
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    from ..models import Program, FeeStructure
+    student_row = _fetch_student_mapping(enrollment_no)
+    s = _student_namespace(student_row) if student_row else None
+    if not student_row:
         flash("Student not found.", "danger")
         return redirect(url_for("main.students"))
     if role == "student":
         try:
             # Ensure the logged in student matches the enrollment
-            me = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
+            me_row = _fetch_student_by_user_id_mapping(current_user.user_id)
+            me = _student_namespace(me_row) if me_row else None
             if not me or (me.enrollment_no != s.enrollment_no):
                 flash("You are not authorized to view this payment page.", "danger")
                 return redirect(url_for("main.dashboard"))
@@ -1709,14 +2126,16 @@ def fees_payment_mark_paid(enrollment_no):
     if role not in ("student", "admin", "clerk"):
         flash("Not authorized to submit payment.", "danger")
         return redirect(url_for("main.dashboard"))
-    from ..models import Student, Program, FeePayment
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    from ..models import Program, FeePayment
+    student_row = _fetch_student_mapping(enrollment_no)
+    s = _student_namespace(student_row) if student_row else None
+    if not student_row:
         flash("Student not found.", "danger")
         return redirect(url_for("main.students"))
     if role == "student":
         try:
-            me = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
+            me_row = _fetch_student_by_user_id_mapping(current_user.user_id)
+            me = _student_namespace(me_row) if me_row else None
             if not me or (me.enrollment_no != s.enrollment_no):
                 flash("You can only submit your own payment.", "danger")
                 return redirect(url_for("main.dashboard"))
@@ -1819,12 +2238,15 @@ def fees_payments_queue():
     if not _user_is_admin_or_clerk():
         flash("Not authorized to view verification queue.", "danger")
         return redirect(url_for("main.dashboard"))
-    from ..models import FeePayment, Student, Program
+    from ..models import FeePayment, Program
     q = select(FeePayment).filter_by(status="submitted").order_by(FeePayment.created_at.asc())
     q = _apply_fee_payment_trust_scope(q)
     payments = db.session.execute(q).scalars().all()
     # Preload related student/program maps for display
-    students = {s.enrollment_no: s for s in db.session.execute(select(Student).filter(Student.enrollment_no.in_([p.enrollment_no for p in payments]))).scalars().all()} if payments else {}
+    students = {
+        enr: _student_namespace(row)
+        for enr, row in _fetch_students_mapping_map([p.enrollment_no for p in payments]).items()
+    } if payments else {}
     prog_ids = sorted({p.program_id_fk for p in payments if p.program_id_fk})
     programs = {p.program_id: p for p in db.session.execute(select(Program).filter(Program.program_id.in_(prog_ids))).scalars().all()} if prog_ids else {}
     return render_template("fees_verification_queue.html", payments=payments, students=students, programs=programs)
@@ -1837,7 +2259,7 @@ def fees_payment_verify(payment_id):
     if not _user_is_admin_or_clerk():
         flash("Not authorized to verify payments.", "danger")
         return redirect(url_for("main.dashboard"))
-    from ..models import FeePayment, Student, User
+    from ..models import FeePayment, User
     fp = db.session.get(FeePayment, payment_id)
     if not fp:
         flash("Payment not found.", "danger")
@@ -1884,9 +2306,9 @@ def fees_payment_verify(payment_id):
         db.session.commit()
         # Dashboard notification (persistent)
         try:
-            from ..models import Notification, Student
-            s = db.session.get(Student, fp.enrollment_no)
-            if s:
+            from ..models import Notification
+            student_row = _fetch_student_mapping(fp.enrollment_no)
+            if student_row:
                 import json as _json
                 payload = {
                     "program_id": fp.program_id_fk,
@@ -1910,8 +2332,8 @@ def fees_payment_verify(payment_id):
             pass
         # Email notification
         try:
-            s = db.session.get(Student, fp.enrollment_no)
-            user_id = getattr(s, "user_id_fk", None) if s else None
+            student_row = _fetch_student_mapping(fp.enrollment_no)
+            user_id = (student_row or {}).get("user_id_fk") if student_row else None
             user = db.session.get(User, user_id) if user_id else None
             to = getattr(user, "username", None) or None
             if to:
@@ -1934,7 +2356,7 @@ def fees_payment_reject(payment_id):
     if not _user_is_admin_or_clerk():
         flash("Not authorized to reject payments.", "danger")
         return redirect(url_for("main.dashboard"))
-    from ..models import FeePayment, Student, User
+    from ..models import FeePayment, User
     fp = db.session.get(FeePayment, payment_id)
     if not fp:
         flash("Payment not found.", "danger")
@@ -1951,9 +2373,9 @@ def fees_payment_reject(payment_id):
         db.session.commit()
         # Dashboard notification (persistent)
         try:
-            from ..models import Notification, Student
-            s = db.session.get(Student, fp.enrollment_no)
-            if s:
+            from ..models import Notification
+            student_row = _fetch_student_mapping(fp.enrollment_no)
+            if student_row:
                 import json as _json
                 payload = {
                     "program_id": fp.program_id_fk,
@@ -1977,8 +2399,8 @@ def fees_payment_reject(payment_id):
             pass
         # Email notification
         try:
-            s = db.session.get(Student, fp.enrollment_no)
-            user_id = getattr(s, "user_id_fk", None) if s else None
+            student_row = _fetch_student_mapping(fp.enrollment_no)
+            user_id = (student_row or {}).get("user_id_fk") if student_row else None
             user = db.session.get(User, user_id) if user_id else None
             to = getattr(user, "username", None) or None
             if to:
@@ -6056,10 +6478,11 @@ def faculty_list():
     else:
         effective_trust_id = getattr(current_user, "trust_id_fk", None)
 
+    faculty_table = _reflected_table("faculty")
     query = (
         select(User)
         .filter(func.lower(func.trim(User.role)).in_(allowed_roles))
-        .outerjoin(Faculty, Faculty.user_id_fk == User.user_id)
+        .outerjoin(faculty_table, faculty_table.c.user_id_fk == User.user_id)
     )
     
     if effective_trust_id:
@@ -6072,8 +6495,8 @@ def faculty_list():
         query = query.filter(
             or_(
                 User.username.ilike(f"%{q}%"),
-                Faculty.full_name.ilike(f"%{q}%"),
-                Faculty.mobile.ilike(f"%{q}%"),
+                faculty_table.c.full_name.ilike(f"%{q}%"),
+                faculty_table.c.mobile.ilike(f"%{q}%"),
             )
         )
 
@@ -6084,6 +6507,21 @@ def faculty_list():
 
     users = db.session.execute(query.distinct().order_by(User.username.asc())).scalars().all()
     program_list = _ctx.get("program_list", [])
+    user_ids = [u.user_id for u in users if getattr(u, "user_id", None)]
+    faculty_rows = {}
+    if user_ids:
+        faculty_rows = {
+            row.get("user_id_fk"): row
+            for row in db.session.execute(
+                select(
+                    faculty_table.c.faculty_id,
+                    faculty_table.c.user_id_fk,
+                    faculty_table.c.full_name,
+                    faculty_table.c.email,
+                    faculty_table.c.mobile,
+                ).where(faculty_table.c.user_id_fk.in_(user_ids))
+            ).mappings().all()
+        }
 
     rows = []
     for u in users:
@@ -6095,18 +6533,13 @@ def faculty_list():
             program_name = ""
 
         # Try to display Faculty profile details if linked
-        fac = None
-        try:
-            fac = db.session.execute(select(Faculty).filter_by(user_id_fk=u.user_id)).scalars().first()
-        except Exception:
-            fac = None
-
-        name = getattr(fac, "full_name", None) or u.username
-        email = getattr(fac, "email", None) or (u.username if "@" in (u.username or "") else "")
-        mobile = getattr(fac, "mobile", None) or ""
+        fac = faculty_rows.get(u.user_id) or {}
+        name = fac.get("full_name") or u.username
+        email = fac.get("email") or (u.username if "@" in (u.username or "") else "")
+        mobile = fac.get("mobile") or ""
         rows.append({
             "user_id": u.user_id,
-            "faculty_id": getattr(fac, "faculty_id", None),
+            "faculty_id": fac.get("faculty_id"),
             "name": name,
             "email": email,
             "mobile": mobile,
@@ -6120,9 +6553,10 @@ def faculty_list():
 def faculty_profile(faculty_id):
     import json
     import re
-    f = db.session.get(Faculty, faculty_id)
-    if not f:
+    faculty_row = _fetch_faculty_mapping(faculty_id)
+    if not faculty_row:
         abort(404)
+    f = _faculty_namespace(faculty_row)
 
     # Security: Trust Isolation
     effective_trust_id = None
@@ -7378,7 +7812,7 @@ def students_new():
             errors.append("Category is required.")
 
         # Validate uniqueness
-        if enrollment_no and db.session.get(Student, enrollment_no):
+        if enrollment_no and _student_exists(enrollment_no):
             errors.append("Enrollment No already exists.")
 
         # Parse integers
@@ -7495,33 +7929,29 @@ def students_new():
                 },
             )
 
+        program_row = None
+        try:
+            if program_id_fk:
+                program_row = db.session.execute(
+                    select(
+                        Program.program_id.label("program_id"),
+                        Program.program_name.label("program_name"),
+                        Program.institute_id_fk.label("institute_id_fk"),
+                    ).where(Program.program_id == program_id_fk)
+                ).mappings().first()
+        except Exception:
+            program_row = None
+
         # If program is BCom and medium not provided, default to General
         try:
-            prog = db.session.get(Program, program_id_fk) if program_id_fk else None
-            if prog and ((prog.program_name or "").replace(".", "").replace(" ", "").upper() == "BCOM") and not medium_tag:
+            prog_name = (program_row.get("program_name") if program_row else "") or ""
+            if prog_name.replace(".", "").replace(" ", "").upper() == "BCOM" and not medium_tag:
                 medium_tag = "General"
         except Exception:
             pass
 
-        # Create and persist student
-        s = Student(
-            enrollment_no=enrollment_no,
-            program_id_fk=program_id_fk,
-            division_id_fk=division_id_fk,
-            surname=surname,
-            student_name=student_name,
-            father_name=father_name,
-            date_of_birth=date_of_birth,
-            mobile=mobile,
-            gender=gender or None,
-            medium_tag=medium_tag or None,
-            photo_url=photo_url or None,
-            permanent_address=permanent_address or None,
-            current_semester=current_semester,
-            category=category or None,
-            aadhar_no=aadhar_no or None,
-        )
-        db.session.add(s)
+        linked_user_id = None
+        trust_id = None
 
         # Create User for Student (Mobile/Mobile strategy)
         try:
@@ -7547,13 +7977,12 @@ def students_new():
             existing_u = db.session.execute(select(User).filter_by(username=user_username)).scalars().first()
             if not existing_u:
                 # Resolve Trust ID from Program -> Institute
-                trust_id = None
                 try:
-                    prog = db.session.get(Program, program_id_fk)
-                    if prog and prog.institute:
-                        trust_id = prog.institute.trust_id_fk
-                except:
-                    pass
+                    if program_row and program_row.get("institute_id_fk"):
+                        institute_row = _fetch_institute_row(program_row.get("institute_id_fk"))
+                        trust_id = institute_row.get("trust_id_fk") if institute_row else None
+                except Exception:
+                    trust_id = None
 
                 new_u = User(
                     username=user_username,
@@ -7567,20 +7996,51 @@ def students_new():
                 )
                 db.session.add(new_u)
                 db.session.flush()
-                s.user_id_fk = new_u.user_id
+                linked_user_id = new_u.user_id
             else:
                 # If user exists, link it (assuming it's the same person)
                 # But strictly, if username=mobile, it might be claimed.
                 # If username=enrollment, it's unique.
                 # For safety, if user exists, we don't overwrite password, just link if role matches
                 if existing_u.role == "student":
-                    s.user_id_fk = existing_u.user_id
+                    linked_user_id = existing_u.user_id
         except Exception as e:
             # Log error but don't fail student creation? 
             # Or better, fail to ensure consistency.
             # For now, let's allow student creation but flash warning if user creation fails
             print(f"Failed to create user for student {enrollment_no}: {e}")
             pass
+
+        if trust_id is None:
+            try:
+                if program_row and program_row.get("institute_id_fk"):
+                    institute_row = _fetch_institute_row(program_row.get("institute_id_fk"))
+                    trust_id = institute_row.get("trust_id_fk") if institute_row else None
+            except Exception:
+                trust_id = None
+
+        _insert_student_row(
+            {
+                "enrollment_no": enrollment_no,
+                "user_id_fk": linked_user_id,
+                "program_id_fk": program_id_fk,
+                "division_id_fk": division_id_fk,
+                "surname": surname or None,
+                "student_name": student_name or None,
+                "father_name": father_name or None,
+                "date_of_birth": date_of_birth,
+                "mobile": mobile or None,
+                "gender": gender or None,
+                "medium_tag": medium_tag or None,
+                "photo_url": photo_url or None,
+                "permanent_address": permanent_address or None,
+                "current_semester": current_semester,
+                "category": category or None,
+                "aadhar_no": aadhar_no or None,
+                "trust_id_fk": trust_id,
+                "is_active": True,
+            }
+        )
 
         db.session.commit()
         flash(f"Student {enrollment_no} created successfully.", "success")
@@ -7612,16 +8072,17 @@ def students_new():
 @login_required
 @role_required("admin", "principal", "clerk")
 def students_edit(enrollment_no):
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    student_row = _fetch_student_mapping(enrollment_no)
+    if not student_row:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
+    student = _student_namespace(student_row)
+    user_role = (getattr(current_user, "role", "") or "").strip().lower()
+    principal_program = getattr(current_user, "program_id_fk", None)
 
     # Scope restriction: principals/clerks only within assigned program
     try:
-        user_role = (getattr(current_user, "role", "") or "").strip().lower()
-        principal_program = getattr(current_user, "program_id_fk", None)
-        if user_role in ("principal", "clerk") and principal_program and s.program_id_fk != principal_program:
+        if user_role in ("principal", "clerk") and principal_program and student.program_id_fk != principal_program:
             flash("You are not authorized to manage students outside your program.", "danger")
             return redirect(url_for("main.students"))
     except Exception:
@@ -7645,6 +8106,7 @@ def students_edit(enrollment_no):
         photo_file = request.files.get("photo_file")
         remove_photo = form.get("remove_photo")
         permanent_address = (form.get("permanent_address") or "").strip()
+        photo_url = student.photo_url
 
         errors = []
         if not program_id_fk_raw:
@@ -7656,29 +8118,33 @@ def students_edit(enrollment_no):
 
         # Parse integers
         try:
-            s.program_id_fk = int(program_id_fk_raw) if program_id_fk_raw else None
+            program_id_fk = int(program_id_fk_raw) if program_id_fk_raw else None
         except ValueError:
             errors.append("Program selection is invalid.")
+            program_id_fk = student.program_id_fk
         try:
-            s.current_semester = int(current_semester_raw) if current_semester_raw else None
+            current_semester = int(current_semester_raw) if current_semester_raw else None
         except ValueError:
             errors.append("Semester selection is invalid.")
+            current_semester = student.current_semester
         try:
-            s.division_id_fk = int(division_id_fk_raw) if division_id_fk_raw else None
+            division_id_fk = int(division_id_fk_raw) if division_id_fk_raw else None
         except ValueError:
             errors.append("Division selection is invalid.")
+            division_id_fk = student.division_id_fk
 
         # Parse DOB
         if dob_raw:
             try:
-                s.date_of_birth = datetime.strptime(dob_raw, "%Y-%m-%d").date()
+                date_of_birth = datetime.strptime(dob_raw, "%Y-%m-%d").date()
             except ValueError:
                 errors.append("Date of Birth format is invalid.")
+                date_of_birth = student.date_of_birth
         else:
-            s.date_of_birth = None
+            date_of_birth = None
 
         # Basic range checks
-        if s.current_semester is not None and (s.current_semester < 1 or s.current_semester > 12):
+        if current_semester is not None and (current_semester < 1 or current_semester > 12):
             errors.append("Semester must be between 1 and 12.")
 
         # Validate new fields
@@ -7704,53 +8170,39 @@ def students_edit(enrollment_no):
             else:
                 photo_dir = os.path.join(current_app.static_folder, "student_photos")
                 os.makedirs(photo_dir, exist_ok=True)
-                filename = secure_filename(f"{s.enrollment_no}.{ext}")
+                filename = secure_filename(f"{student.enrollment_no}.{ext}")
                 file_path = os.path.join(photo_dir, filename)
                 try:
                     photo_file.save(file_path)
-                    s.photo_url = f"/static/student_photos/{filename}"
+                    photo_url = f"/static/student_photos/{filename}"
                 except Exception:
                     errors.append("Failed to save photo. Please try again.")
+                    photo_url = student.photo_url
 
         # Remove photo if requested
         if remove_photo:
             try:
-                if s.photo_url and s.photo_url.startswith("/static/student_photos/"):
-                    photo_path = os.path.join(current_app.root_path, s.photo_url.lstrip("/"))
+                if student.photo_url and student.photo_url.startswith("/static/student_photos/"):
+                    photo_path = os.path.join(current_app.root_path, student.photo_url.lstrip("/"))
                     if os.path.exists(photo_path):
                         os.remove(photo_path)
             except Exception:
                 # Non-fatal; if delete fails, just clear the URL
                 pass
-            s.photo_url = None
+            photo_url = None
 
         # Principal/Clerk scope restriction on program edits
         try:
-            user_role = (getattr(current_user, "role", "") or "").strip().lower()
-            principal_program = getattr(current_user, "program_id_fk", None)
-            if user_role in ("principal", "clerk") and principal_program and s.program_id_fk and s.program_id_fk != principal_program:
+            if user_role in ("principal", "clerk") and principal_program and program_id_fk and program_id_fk != principal_program:
                 errors.append("Program cannot be changed outside your scope.")
         except Exception:
             pass
-
-        # Assign simple fields
-        s.surname = surname or None
-        s.student_name = student_name or None
-        s.father_name = father_name or None
-        s.mobile = mobile or None
-        s.gender = gender or None
-        s.medium_tag = medium_tag or None
-        s.permanent_address = permanent_address or None
-        s.category = category or None
-        s.aadhar_no = aadhar_no or None
 
         if errors:
             flash("Please fix the highlighted errors before submission.", "danger")
             programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
             # Scope restriction: principals/clerks only see their assigned program
             try:
-                user_role = (getattr(current_user, "role", "") or "").strip().lower()
-                principal_program = getattr(current_user, "program_id_fk", None)
                 if user_role in ("principal", "clerk") and principal_program:
                     programs = [p for p in programs if p.program_id == principal_program]
             except Exception:
@@ -7765,7 +8217,7 @@ def students_edit(enrollment_no):
                 divisions=divisions,
                 errors=errors,
                 form_data={
-                    "enrollment_no": s.enrollment_no,
+                    "enrollment_no": student.enrollment_no,
                     "program_id_fk": program_id_fk_raw,
                     "division_id_fk": division_id_fk_raw,
                     "surname": surname,
@@ -7779,20 +8231,45 @@ def students_edit(enrollment_no):
                     "aadhar_no": aadhar_no,
                     "permanent_address": permanent_address,
                     "current_semester": current_semester_raw,
-                    "photo_url": s.photo_url or "",
+                    "photo_url": photo_url or "",
                 },
             )
 
         # If program is BCom and medium not provided, default to General
         try:
-            prog = db.session.get(Program, s.program_id_fk) if s.program_id_fk else None
-            if prog and ((prog.program_name or "").replace(".", "").replace(" ", "").upper() == "BCOM") and not (s.medium_tag or "").strip():
-                s.medium_tag = "General"
+            prog_row = None
+            if program_id_fk:
+                prog_row = db.session.execute(
+                    select(Program.program_name.label("program_name")).where(Program.program_id == program_id_fk)
+                ).mappings().first()
+            prog_name = (prog_row.get("program_name") if prog_row else "") or ""
+            if prog_name.replace(".", "").replace(" ", "").upper() == "BCOM" and not (medium_tag or "").strip():
+                medium_tag = "General"
         except Exception:
             pass
 
+        _update_student_row(
+            enrollment_no,
+            {
+                "program_id_fk": program_id_fk,
+                "division_id_fk": division_id_fk,
+                "surname": surname or None,
+                "student_name": student_name or None,
+                "father_name": father_name or None,
+                "date_of_birth": date_of_birth,
+                "mobile": mobile or None,
+                "gender": gender or None,
+                "medium_tag": medium_tag or None,
+                "photo_url": photo_url or None,
+                "permanent_address": permanent_address or None,
+                "current_semester": current_semester,
+                "category": category or None,
+                "aadhar_no": aadhar_no or None,
+            },
+        )
+
         db.session.commit()
-        flash(f"Student {s.enrollment_no} updated successfully.", "success")
+        flash(f"Student {student.enrollment_no} updated successfully.", "success")
         return redirect(url_for("main.students"))
 
     # GET: render form with existing values
@@ -7815,31 +8292,36 @@ def students_edit(enrollment_no):
         pass
     divisions = db.session.execute(divisions_q).scalars().all()
     form_data = {
-        "enrollment_no": s.enrollment_no,
-        "program_id_fk": s.program_id_fk,
-        "division_id_fk": s.division_id_fk,
-        "surname": s.surname or "",
-        "student_name": s.student_name or "",
-        "father_name": s.father_name or "",
-        "date_of_birth": s.date_of_birth.strftime("%Y-%m-%d") if s.date_of_birth else "",
-        "mobile": s.mobile or "",
-        "gender": s.gender or "",
-        "medium_tag": s.medium_tag or "",
-        "category": s.category or "",
-        "aadhar_no": s.aadhar_no or "",
-        "permanent_address": s.permanent_address or "",
-        "current_semester": s.current_semester or "",
-        "photo_url": s.photo_url or "",
+        "enrollment_no": student.enrollment_no,
+        "program_id_fk": student.program_id_fk,
+        "division_id_fk": student.division_id_fk,
+        "surname": student.surname or "",
+        "student_name": student.student_name or "",
+        "father_name": student.father_name or "",
+        "date_of_birth": (
+            student.date_of_birth.strftime("%Y-%m-%d")
+            if hasattr(student.date_of_birth, "strftime")
+            else (student.date_of_birth or "")
+        ),
+        "mobile": student.mobile or "",
+        "gender": student.gender or "",
+        "medium_tag": student.medium_tag or "",
+        "category": student.category or "",
+        "aadhar_no": student.aadhar_no or "",
+        "permanent_address": student.permanent_address or "",
+        "current_semester": student.current_semester or "",
+        "photo_url": student.photo_url or "",
     }
     return render_template("students_edit.html", programs=programs, divisions=divisions, errors=[], form_data=form_data)
 
 
 @main_bp.route("/students/<enrollment_no>")
 def students_show(enrollment_no):
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    student_row = _fetch_student_mapping(enrollment_no)
+    if not student_row:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
+    student = _student_namespace(student_row)
 
     role = (getattr(current_user, "role", "") or "").strip().lower()
     if role == "faculty":
@@ -7857,11 +8339,11 @@ def students_show(enrollment_no):
                 for sub in subs:
                     if sub.semester:
                         sems.add(sub.semester)
-            if prog_ids and s.program_id_fk in prog_ids:
+            if prog_ids and student.program_id_fk in prog_ids:
                 allowed = True
-            if div_ids and s.division_id_fk in div_ids:
+            if div_ids and student.division_id_fk in div_ids:
                 allowed = True
-            if sems and s.current_semester in sems:
+            if sems and student.current_semester in sems:
                 allowed = True
         except Exception:
             allowed = False
@@ -7869,8 +8351,8 @@ def students_show(enrollment_no):
             flash("You are not authorized to view this student.", "danger")
             return redirect(url_for("main.students"))
 
-    program = db.session.get(Program, s.program_id_fk) if s.program_id_fk else None
-    division = db.session.get(Division, s.division_id_fk) if s.division_id_fk else None
+    program = db.session.get(Program, student.program_id_fk) if student.program_id_fk else None
+    division = db.session.get(Division, student.division_id_fk) if student.division_id_fk else None
 
     # Filters for attendance
     def _parse_date(val):
@@ -8044,7 +8526,7 @@ def students_show(enrollment_no):
 
     return render_template(
             "students_show.html",
-            student=s,
+            student=student,
             program=program,
             division=division,
             attendance_summary={
@@ -8079,10 +8561,11 @@ def students_show(enrollment_no):
 
 @main_bp.route("/students/<enrollment_no>/attendance")
 def students_attendance(enrollment_no):
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    student_row = _fetch_student_mapping(enrollment_no)
+    if not student_row:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
+    student = _student_namespace(student_row)
     a_start = request.args.get("a_start") or ""
     a_end = request.args.get("a_end") or ""
     a_sem_raw = request.args.get("a_sem") or ""
@@ -8130,7 +8613,7 @@ def students_attendance(enrollment_no):
         subject_map = {sub.subject_id: sub.subject_name for sub in subs}
     return render_template(
         "students_attendance.html",
-        student=s,
+        student=student,
         rows=rows,
         total=total,
         subject_map=subject_map,
@@ -8140,8 +8623,7 @@ def students_attendance(enrollment_no):
 
 @main_bp.route("/students/<enrollment_no>/attendance/export")
 def students_attendance_export(enrollment_no):
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    if not _fetch_student_mapping(enrollment_no):
         return Response("Student not found", status=404)
     a_start = request.args.get("a_start") or ""
     a_end = request.args.get("a_end") or ""
@@ -8190,10 +8672,11 @@ def students_attendance_export(enrollment_no):
 
 @main_bp.route("/students/<enrollment_no>/grades")
 def students_grades(enrollment_no):
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    student_row = _fetch_student_mapping(enrollment_no)
+    if not student_row:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
+    student = _student_namespace(student_row)
     g_sem_raw = request.args.get("g_sem") or ""
     g_subject_raw = request.args.get("subject_id") or ""
     g_page = int(request.args.get("g_page") or 1)
@@ -8230,7 +8713,7 @@ def students_grades(enrollment_no):
         subject_map = {sub.subject_id: sub.subject_name for sub in subs}
     return render_template(
         "students_grades.html",
-        student=s,
+        student=student,
         rows=rows,
         total=total,
         subject_map=subject_map,
@@ -8240,8 +8723,7 @@ def students_grades(enrollment_no):
 
 @main_bp.route("/students/<enrollment_no>/grades/export")
 def students_grades_export(enrollment_no):
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    if not _fetch_student_mapping(enrollment_no):
         return Response("Student not found", status=404)
     g_sem_raw = request.args.get("g_sem") or ""
     g_subject_raw = request.args.get("subject_id") or ""
@@ -8281,16 +8763,17 @@ def students_grades_export(enrollment_no):
 @login_required
 @role_required("admin", "principal", "clerk")
 def students_delete(enrollment_no):
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    student_row = _fetch_student_mapping(enrollment_no)
+    if not student_row:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.students"))
+    student = _student_namespace(student_row)
 
     # Principal scope restriction: only allow delete within assigned program
     try:
         user_role = (getattr(current_user, "role", "") or "").strip().lower()
         principal_program = getattr(current_user, "program_id_fk", None)
-        if user_role == "principal" and principal_program and s.program_id_fk != principal_program:
+        if user_role == "principal" and principal_program and student.program_id_fk != principal_program:
             flash("You are not authorized to delete students outside your program.", "danger")
             return redirect(url_for("main.students"))
     except Exception:
@@ -8314,8 +8797,8 @@ def students_delete(enrollment_no):
 
     # Safe to delete: remove photo file if present
     try:
-        if s.photo_url and s.photo_url.startswith("/static/student_photos/"):
-            photo_path = os.path.join(current_app.root_path, s.photo_url.lstrip("/"))
+        if student.photo_url and student.photo_url.startswith("/static/student_photos/"):
+            photo_path = os.path.join(current_app.root_path, student.photo_url.lstrip("/"))
             if os.path.exists(photo_path):
                 os.remove(photo_path)
     except Exception:
@@ -8323,7 +8806,7 @@ def students_delete(enrollment_no):
         pass
 
     try:
-        db.session.delete(s)
+        _delete_student_row(enrollment_no)
         db.session.commit()
         flash(f"Student {enrollment_no} deleted.", "success")
     except Exception as e:
@@ -8336,8 +8819,8 @@ def students_delete(enrollment_no):
 @login_required
 @role_required("admin", "principal", "clerk")
 def students_link_user(enrollment_no):
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    student_row = _fetch_student_mapping(enrollment_no)
+    if not student_row:
         abort(404)
     username = (request.form.get("username") or "").strip()
     if not username:
@@ -8348,7 +8831,7 @@ def students_link_user(enrollment_no):
         if not target_user:
             flash("No user found with that username/email.", "danger")
             return redirect(url_for("main.students_show", enrollment_no=enrollment_no))
-        s.user_id_fk = target_user.user_id
+        _update_student_row(enrollment_no, {"user_id_fk": target_user.user_id})
         db.session.commit()
         flash("Linked student to user successfully.", "success")
     except Exception:
@@ -8360,11 +8843,11 @@ def students_link_user(enrollment_no):
 @login_required
 @role_required("admin", "principal", "clerk")
 def students_unlink_user(enrollment_no):
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    student_row = _fetch_student_mapping(enrollment_no)
+    if not student_row:
         abort(404)
     try:
-        s.user_id_fk = None
+        _update_student_row(enrollment_no, {"user_id_fk": None})
         db.session.commit()
         flash("Unlinked student from user account.", "success")
     except Exception:
@@ -8410,21 +8893,34 @@ def subjects_list():
     rows = []
     total_count = 0
     if selected_program and semester:
-        q = select(Subject).filter_by(program_id_fk=selected_program.program_id, semester=semester)
-        if selected_medium:
-            q = q.filter(Subject.medium_tag == selected_medium)
-        total_count = db.session.scalar(select(func.count()).select_from(q.subquery()))
+        subject_table = _reflected_table("subjects")
+        q = select(
+            subject_table.c.subject_id,
+            subject_table.c.subject_code,
+            subject_table.c.paper_code,
+            subject_table.c.subject_name,
+            subject_table.c.subject_type_id_fk,
+            subject_table.c.semester,
+            *([subject_table.c.medium_tag] if "medium_tag" in subject_table.c else []),
+            *([subject_table.c.is_elective] if "is_elective" in subject_table.c else []),
+        ).where(
+            subject_table.c.program_id_fk == selected_program.program_id,
+            subject_table.c.semester == semester,
+        )
+        if selected_medium and "medium_tag" in subject_table.c:
+            q = q.filter(subject_table.c.medium_tag == selected_medium)
+        total_count = db.session.scalar(select(func.count()).select_from(q.subquery())) or 0
         subs = db.session.execute(
-            q.order_by(Subject.subject_name)
+            q.order_by(subject_table.c.subject_name.asc())
             .offset((selected_page - 1) * selected_limit)
             .limit(selected_limit)
-        ).scalars().all()
+        ).mappings().all()
         st_map = {st.type_id: st.type_code for st in db.session.execute(select(SubjectType)).scalars().all()}
         now = datetime.now()
         start_year = now.year if now.month >= 6 else (now.year - 1)
         end_year_short = str((start_year + 1))[-2:]
         academic_year = f"{start_year}-{end_year_short}"
-        subject_ids = [s.subject_id for s in subs]
+        subject_ids = [s.get("subject_id") for s in subs if s.get("subject_id") is not None]
         assignments_map = {}
         if subject_ids:
             assignment_counts = db.session.execute(
@@ -8438,25 +8934,26 @@ def subjects_list():
             ).all()
             assignments_map = {sid: cnt for sid, cnt in assignment_counts}
         for s in subs:
-            cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=s.subject_id)).scalars().first()
+            subject_id = s.get("subject_id")
+            cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=subject_id)).scalars().first()
             enrolled_count = db.session.scalar(select(func.count()).select_from(StudentSubjectEnrollment).filter_by(
-                subject_id_fk=s.subject_id,
+                subject_id_fk=subject_id,
                 academic_year=academic_year,
                 is_active=True,
             ))
             rows.append({
-                "subject_id": s.subject_id,
-                "subject_code": s.subject_code or "",
-                "paper_code": s.paper_code or "",
-                "subject_name": s.subject_name,
-                "type_code": st_map.get(s.subject_type_id_fk, ""),
+                "subject_id": subject_id,
+                "subject_code": s.get("subject_code") or "",
+                "paper_code": s.get("paper_code") or "",
+                "subject_name": s.get("subject_name") or "",
+                "type_code": st_map.get(s.get("subject_type_id_fk"), ""),
                 "theory_credits": (cs.theory_credits if cs else 0),
                 "practical_credits": (cs.practical_credits if cs else 0),
                 "total_credits": (cs.total_credits if cs else ((cs.theory_credits if cs else 0) + (cs.practical_credits if cs else 0))),
                 "enrolled_count": enrolled_count,
-                "is_elective": bool(getattr(s, "is_elective", False)),
-                "medium_tag": (s.medium_tag or ""),
-                "has_assignment": bool(assignments_map.get(s.subject_id, 0)),
+                "is_elective": bool(s.get("is_elective", False)),
+                "medium_tag": (s.get("medium_tag") or ""),
+                "has_assignment": bool(assignments_map.get(subject_id, 0)),
             })
 
     return render_template(
@@ -8501,34 +8998,43 @@ def subjects_export_csv():
                 effective_trust_id = None
         else:
             effective_trust_id = getattr(current_user, "trust_id_fk", None)
-    q = select(Subject)
+    subject_table = _reflected_table("subjects")
+    q = select(
+        subject_table.c.subject_id,
+        subject_table.c.subject_code,
+        subject_table.c.paper_code,
+        subject_table.c.subject_name,
+        subject_table.c.subject_type_id_fk,
+        subject_table.c.semester,
+        *([subject_table.c.medium_tag] if "medium_tag" in subject_table.c else []),
+    )
     if effective_trust_id:
         try:
             from ..models import Institute
-            q = q.join(Program, Subject.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+            q = q.join(Program, subject_table.c.program_id_fk == Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
         except Exception:
             pass
     if program_id:
-        q = q.filter(Subject.program_id_fk == program_id)
+        q = q.filter(subject_table.c.program_id_fk == program_id)
     if semester:
-        q = q.filter(Subject.semester == semester)
-    if selected_medium:
-        q = q.filter(Subject.medium_tag == selected_medium)
-    subs = db.session.execute(q.order_by(Subject.subject_name.asc()).limit(5000)).scalars().all()
+        q = q.filter(subject_table.c.semester == semester)
+    if selected_medium and "medium_tag" in subject_table.c:
+        q = q.filter(subject_table.c.medium_tag == selected_medium)
+    subs = db.session.execute(q.order_by(subject_table.c.subject_name.asc()).limit(5000)).mappings().all()
     st_map = {st.type_id: st.type_code for st in db.session.execute(select(SubjectType)).scalars().all()}
     import io, csv as _csv
     buf = io.StringIO()
     w = _csv.writer(buf)
     w.writerow(["SubjectCode", "PaperCode", "SubjectName", "Type", "Semester", "Medium", "Theory", "Practical", "Total"]) 
     for s in subs:
-        cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=s.subject_id)).scalars().first()
+        cs = db.session.execute(select(CreditStructure).filter_by(subject_id_fk=s.get("subject_id"))).scalars().first()
         w.writerow([
-            s.subject_code or "",
-            s.paper_code or "",
-            s.subject_name or "",
-            st_map.get(s.subject_type_id_fk, ""),
-            s.semester or "",
-            s.medium_tag or "",
+            s.get("subject_code") or "",
+            s.get("paper_code") or "",
+            s.get("subject_name") or "",
+            st_map.get(s.get("subject_type_id_fk"), ""),
+            s.get("semester") or "",
+            s.get("medium_tag") or "",
             (cs.theory_credits if cs else 0),
             (cs.practical_credits if cs else 0),
             (cs.total_credits if cs else ((cs.theory_credits if cs else 0) + (cs.practical_credits if cs else 0))),
@@ -9633,24 +10139,44 @@ def students_semester_promotion():
     total_eligible = 0
     preview_students = []
     if selected_program and from_semester is not None and to_semester is not None:
-        base_query = select(Student).filter(
-            Student.program_id_fk == selected_program.program_id,
-            Student.current_semester == from_semester,
-        )
+        student_table = _reflected_table("students")
+        base_filters = [
+            student_table.c.program_id_fk == selected_program.program_id,
+            student_table.c.current_semester == from_semester,
+        ]
         if effective_trust_id:
-            base_query = base_query.filter(Student.trust_id_fk == effective_trust_id)
+            base_filters.append(student_table.c.trust_id_fk == effective_trust_id)
         total_eligible = db.session.scalar(
-            select(func.count()).select_from(base_query.subquery())
+            select(func.count()).select_from(
+                select(student_table.c.enrollment_no).where(*base_filters).subquery()
+            )
         ) or 0
-        preview_students = db.session.execute(
-            base_query.order_by(Student.enrollment_no).limit(25)
-        ).scalars().all()
+        preview_students = [
+            _student_namespace(row)
+            for row in db.session.execute(
+                select(
+                    student_table.c.enrollment_no,
+                    student_table.c.student_name,
+                    student_table.c.surname,
+                    student_table.c.father_name,
+                    student_table.c.current_semester,
+                )
+                .where(*base_filters)
+                .order_by(student_table.c.enrollment_no.asc())
+                .limit(25)
+            ).mappings().all()
+        ]
         if request.method == "POST" and action == "confirm" and total_eligible:
-            rows = db.session.execute(base_query).scalars().all()
-            updated = 0
-            for s in rows:
-                s.current_semester = to_semester
-                updated += 1
+            updated = int(
+                getattr(
+                    db.session.execute(
+                        student_table.update().where(*base_filters).values(current_semester=to_semester)
+                    ),
+                    "rowcount",
+                    0,
+                )
+                or 0
+            )
             try:
                 db.session.commit()
                 _rebalance_program_divisions_for_semester(selected_program, to_semester)
@@ -9682,9 +10208,10 @@ def students_semester_promotion():
 @login_required
 @role_required("admin", "principal", "clerk")
 def subject_delete(subject_id: int):
-    subj = db.session.get(Subject, subject_id)
-    if not subj:
+    subject_row = _fetch_subject_mapping(subject_id)
+    if not subject_row:
         abort(404)
+    subj = _subject_namespace(subject_row)
     # Scope restriction: principals/clerks can only delete within assigned program
     try:
         user_role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -9718,7 +10245,7 @@ def subject_delete(subject_id: int):
     try:
         if cs:
             db.session.delete(cs)
-        db.session.delete(subj)
+        _delete_subject_row(subject_id)
         db.session.commit()
         flash("Subject deleted successfully.", "success")
     except Exception:
@@ -9730,9 +10257,10 @@ def subject_delete(subject_id: int):
 @login_required
 @role_required("admin", "principal", "clerk")
 def subject_toggle_elective(subject_id: int):
-    s = db.session.get(Subject, subject_id)
-    if not s:
+    subject_row = _fetch_subject_mapping(subject_id)
+    if not subject_row:
         abort(404)
+    s = _subject_namespace(subject_row)
     # Principals/clerks can only act within their program
     role_lower = (getattr(current_user, "role", "") or "").strip().lower()
     if role_lower in ("principal", "clerk"):
@@ -9747,13 +10275,14 @@ def subject_toggle_elective(subject_id: int):
     action = (request.form.get("action") or "").strip().lower()
     try:
         if action == "make_elective":
-            s.is_elective = True
+            next_is_elective = True
         elif action == "make_core":
-            s.is_elective = False
+            next_is_elective = False
         else:
-            s.is_elective = not bool(getattr(s, "is_elective", False))
+            next_is_elective = not bool(getattr(s, "is_elective", False))
+        _update_subject_row(subject_id, {"is_elective": next_is_elective})
         db.session.commit()
-        flash(f"Updated '{s.subject_name}' to {'elective' if s.is_elective else 'core' }.", "success")
+        flash(f"Updated '{s.subject_name}' to {'elective' if next_is_elective else 'core' }.", "success")
     except Exception:
         db.session.rollback()
         flash("Failed to update elective status.", "danger")
@@ -10243,7 +10772,8 @@ def attendance_mark():
             pass
 
     # Resolve current faculty (by user) and their active assignments
-    faculty = db.session.execute(select(Faculty).filter_by(user_id_fk=current_user.user_id)).scalars().first()
+    faculty_row = _fetch_faculty_by_user_id_mapping(current_user.user_id)
+    faculty = _faculty_namespace(faculty_row) if faculty_row else None
     assignments = []
     if faculty and role == 'faculty': # Strict check: admins/principals shouldn't see assignments unless they act as faculty
         assignments = db.session.execute(
@@ -10425,35 +10955,55 @@ def attendance_mark():
         ).scalars().all()
         student_ids = [r.student_id_fk for r in enr_rows]
         if student_ids:
-            students = db.session.execute(
-                select(Student).filter(Student.enrollment_no.in_(student_ids)).filter(Student.is_active == True)
-            ).scalars().all()
-            for stu in students:
+            student_table = _reflected_table("students")
+            present_cols = _student_present_columns()
+            selected = [
+                student_table.c[name]
+                for name in _STUDENT_FIELD_NAMES
+                if name in student_table.c and name in present_cols
+            ]
+            if not selected:
+                selected = [student_table.c.enrollment_no]
+            student_stmt = select(*selected).where(student_table.c.enrollment_no.in_(student_ids))
+            if "is_active" in student_table.c and "is_active" in present_cols:
+                student_stmt = student_stmt.where(student_table.c.is_active == True)
+            student_rows = db.session.execute(student_stmt).mappings().all()
+            for stu in student_rows:
                 # If a division is selected, include only students currently in that division
-                if selected_division_id and stu.division_id_fk != selected_division_id:
+                if selected_division_id and stu.get("division_id_fk") != selected_division_id:
                     continue
                 roster.append({
-                    "enrollment_no": stu.enrollment_no,
-                    "name": f"{stu.surname or ''} {stu.student_name or ''} {stu.father_name or ''}".strip(),
-                    "first_name": stu.student_name,
-                    "last_name": stu.surname,
-                    "father_name": stu.father_name,
-                    "division_id": stu.division_id_fk,
-                    "roll_no": stu.roll_no,
+                    "enrollment_no": stu.get("enrollment_no"),
+                    "name": f"{stu.get('surname') or ''} {stu.get('student_name') or ''} {stu.get('father_name') or ''}".strip(),
+                    "first_name": stu.get("student_name"),
+                    "last_name": stu.get("surname"),
+                    "father_name": stu.get("father_name"),
+                    "division_id": stu.get("division_id_fk"),
+                    "roll_no": stu.get("roll_no"),
                 })
     elif selected_division_id:
         # Fallback: all students in division
-        stu_rows = db.session.execute(
-            select(Student).filter_by(division_id_fk=selected_division_id).filter(Student.is_active == True)
-        ).scalars().all()
+        student_table = _reflected_table("students")
+        present_cols = _student_present_columns()
+        selected = [
+            student_table.c[name]
+            for name in _STUDENT_FIELD_NAMES
+            if name in student_table.c and name in present_cols
+        ]
+        if not selected:
+            selected = [student_table.c.enrollment_no]
+        stmt = select(*selected).where(student_table.c.division_id_fk == selected_division_id)
+        if "is_active" in student_table.c and "is_active" in present_cols:
+            stmt = stmt.where(student_table.c.is_active == True)
+        stu_rows = db.session.execute(stmt).mappings().all()
         roster = [{
-            "enrollment_no": s.enrollment_no, 
-            "name": f"{s.surname or ''} {s.student_name or ''} {s.father_name or ''}".strip(),
-            "first_name": s.student_name,
-            "last_name": s.surname,
-            "father_name": s.father_name,
-            "division_id": s.division_id_fk,
-            "roll_no": s.roll_no
+            "enrollment_no": s.get("enrollment_no"),
+            "name": f"{s.get('surname') or ''} {s.get('student_name') or ''} {s.get('father_name') or ''}".strip(),
+            "first_name": s.get("student_name"),
+            "last_name": s.get("surname"),
+            "father_name": s.get("father_name"),
+            "division_id": s.get("division_id_fk"),
+            "roll_no": s.get("roll_no")
         } for s in stu_rows]
 
     # Sort Roster: Roll No (numeric) > Name > Enrollment No
@@ -10614,14 +11164,17 @@ def attendance_mark():
     try:
         if selected_subject_id and selected_division_id and selected_year:
             # Current students in the selected division, scoped to relevant semester
-            div_students_q = select(Student).filter_by(division_id_fk=selected_division_id)
+            student_table = _reflected_table("students")
+            div_students_q = select(student_table.c.enrollment_no)
+            if "division_id_fk" in student_table.c:
+                div_students_q = div_students_q.where(student_table.c.division_id_fk == selected_division_id)
             sem_val = (division.semester if division else (subject.semester if subject else None))
-            if sem_val:
-                div_students_q = div_students_q.filter(Student.current_semester == sem_val)
+            if sem_val and "current_semester" in student_table.c:
+                div_students_q = div_students_q.where(student_table.c.current_semester == sem_val)
             # Total students currently in division
             total_students_in_div = db.session.scalar(select(func.count()).select_from(div_students_q.subquery()))
             # Active enrollments for selected subject/year among these students
-            stu_ids = [enr for (enr,) in db.session.execute(div_students_q.with_only_columns(Student.enrollment_no)).all()]
+            stu_ids = list(db.session.execute(div_students_q).scalars().all())
             enrolled_count = 0
             if stu_ids:
                 enrolled_count = db.session.scalar(
@@ -10677,7 +11230,8 @@ def attendance_show():
 
     # Optional student filter for personal daily report
     q_enr = (request.args.get("enrollment_no") or "").strip()
-    student = db.session.get(Student, q_enr) if q_enr else None
+    student_row = _fetch_student_mapping(q_enr) if q_enr else None
+    student = _student_namespace(student_row) if student_row else None
     # Compute student's Roll No
     # BCA: per-program+semester stable mapping 1..200, does not reset on division change
     # Others: fallback to per-division sequential numbering
@@ -10687,20 +11241,26 @@ def attendance_show():
             prog = db.session.get(Program, student.program_id_fk)
             is_bca = bool(prog and ((prog.program_name or "").strip().upper() == "BCA"))
             if is_bca and student.current_semester:
+                student_table = _reflected_table("students")
                 rows = db.session.execute(
-                    select(Student)
-                    .filter_by(program_id_fk=student.program_id_fk)
-                    .filter_by(current_semester=student.current_semester)
-                    .order_by(Student.enrollment_no.asc())
+                    select(student_table.c.enrollment_no)
+                    .where(student_table.c.program_id_fk == student.program_id_fk)
+                    .where(student_table.c.current_semester == student.current_semester)
+                    .order_by(student_table.c.enrollment_no.asc())
                 ).scalars().all()
-                for idx, s in enumerate(rows, start=1):
-                    if s.enrollment_no == student.enrollment_no:
+                for idx, enrollment in enumerate(rows, start=1):
+                    if enrollment == student.enrollment_no:
                         student_roll_no = (idx if idx <= 200 else 200)
                         break
             elif student.division_id_fk:
-                div_students = db.session.execute(select(Student).filter_by(division_id_fk=student.division_id_fk).order_by(Student.enrollment_no)).scalars().all()
-                for idx, s in enumerate(div_students, start=1):
-                    if s.enrollment_no == student.enrollment_no:
+                student_table = _reflected_table("students")
+                div_students = db.session.execute(
+                    select(student_table.c.enrollment_no)
+                    .where(student_table.c.division_id_fk == student.division_id_fk)
+                    .order_by(student_table.c.enrollment_no.asc())
+                ).scalars().all()
+                for idx, enrollment in enumerate(div_students, start=1):
+                    if enrollment == student.enrollment_no:
                         student_roll_no = idx
                         break
         except Exception:
@@ -11024,7 +11584,11 @@ def attendance_report_admin():
     if export_raw == "csv":
         # Build student name map for readability
         stu_ids = {r.student_id_fk for r in rows}
-        stu_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in db.session.execute(select(Student).filter(Student.enrollment_no.in_(list(stu_ids)))).scalars().all()}
+        stu_rows = _fetch_students_mapping_map(list(stu_ids))
+        stu_map = {
+            enr: f"{(row.get('surname') or '').strip()} {(row.get('student_name') or '').strip()}".strip()
+            for enr, row in stu_rows.items()
+        }
         import csv
         from io import StringIO
         buf = StringIO()
@@ -11076,47 +11640,12 @@ def attendance_report_admin():
             ps["total"] += 1
         # Build student name map and compute percentages
         stu_ids = list(per_student.keys())
-        students_for_roll = db.session.execute(select(Student).filter(Student.enrollment_no.in_(stu_ids))).scalars().all() if stu_ids else []
-        stu_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in students_for_roll} if students_for_roll else {}
-        # Compute roll numbers
-        # Continuous policy (flagged): per-program+semester mapping 1..N
-        # Fallback: per-division sequential numbering
-        roll_map = {}
-        try:
-            continuous = bool(current_app.config.get("ROLLS_CONTINUOUS_PER_PROGRAM_SEM", False))
-            cont_cache = {}
-            div_cache = {}
-            for s in students_for_roll:
-                pid = getattr(s, "program_id_fk", None)
-                sem = getattr(s, "current_semester", None)
-                if continuous and pid and sem:
-                    key = (pid, sem)
-                    if key not in cont_cache:
-                        rows = (
-                            db.session.execute(
-                                select(Student)
-                                .filter_by(program_id_fk=pid)
-                                .filter_by(current_semester=sem)
-                                .order_by(Student.enrollment_no.asc())
-                            ).scalars().all()
-                        )
-                        m = {}
-                        for idx, ss in enumerate(rows, start=1):
-                            m[ss.enrollment_no] = idx
-                        cont_cache[key] = m
-                    roll_map[s.enrollment_no] = cont_cache.get(key, {}).get(s.enrollment_no)
-                else:
-                    did = s.division_id_fk
-                    if did and (did not in div_cache):
-                        rows = db.session.execute(select(Student).filter_by(division_id_fk=did).order_by(Student.enrollment_no)).scalars().all()
-                        m2 = {}
-                        for idx, ss in enumerate(rows, start=1):
-                            m2[ss.enrollment_no] = idx
-                        div_cache[did] = m2
-                    if did:
-                        roll_map[s.enrollment_no] = div_cache.get(did, {}).get(s.enrollment_no)
-        except Exception:
-            roll_map = {}
+        student_rows = _fetch_students_mapping_map(stu_ids)
+        stu_map = {
+            enr: f"{(row.get('surname') or '').strip()} {(row.get('student_name') or '').strip()}".strip()
+            for enr, row in student_rows.items()
+        } if student_rows else {}
+        roll_map = _student_roll_map(list(student_rows.values()))
         for enr, c in per_student.items():
             total = int(c.get("total", 0))
             p = int(c.get("P", 0))
@@ -11291,7 +11820,11 @@ def attendance_report_faculty():
 
     if export_raw == "csv":
         stu_ids = {r.student_id_fk for r in rows}
-        stu_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in db.session.execute(select(Student).filter(Student.enrollment_no.in_(list(stu_ids)))).scalars().all()}
+        stu_rows = _fetch_students_mapping_map(list(stu_ids))
+        stu_map = {
+            enr: f"{(row.get('surname') or '').strip()} {(row.get('student_name') or '').strip()}".strip()
+            for enr, row in stu_rows.items()
+        }
         import csv
         from io import StringIO
         buf = StringIO()
@@ -11331,36 +11864,12 @@ def attendance_report_faculty():
             ps[s] += 1
         ps["total"] += 1
     stu_ids = list(per_student.keys())
-    students_for_roll = db.session.execute(select(Student).filter(Student.enrollment_no.in_(stu_ids))).scalars().all() if stu_ids else []
-    stu_name_map = {s.enrollment_no: f"{(s.surname or '').strip()} {(s.student_name or '').strip()}".strip() for s in students_for_roll}
-    stu_div_map = {s.enrollment_no: s.division_id_fk for s in students_for_roll}
-    # Compute roll numbers based on policy
-    roll_map = {}
-    try:
-        continuous = bool(current_app.config.get("ROLLS_CONTINUOUS_PER_PROGRAM_SEM", False))
-        if continuous:
-            # Build per-program+semester mapping for the involved cohort
-            cohort_keys = {(getattr(s, "program_id_fk", None), getattr(s, "current_semester", None)) for s in students_for_roll}
-            for key in cohort_keys:
-                pid, sem = key
-                if pid and sem:
-                    rows2 = db.session.execute(
-                        select(Student)
-                        .filter_by(program_id_fk=pid)
-                        .filter_by(current_semester=sem)
-                        .order_by(Student.enrollment_no)
-                    ).scalars().all()
-                    for idx, ss in enumerate(rows2, start=1):
-                        roll_map[ss.enrollment_no] = idx
-        else:
-            # Per-division sequential as fallback
-            div_set = {d for d in stu_div_map.values() if d}
-            for did in div_set:
-                all_stu = db.session.execute(select(Student).filter_by(division_id_fk=did).order_by(Student.enrollment_no)).scalars().all()
-                for idx, ss in enumerate(all_stu, start=1):
-                    roll_map[ss.enrollment_no] = idx
-    except Exception:
-        roll_map = {}
+    student_rows = _fetch_students_mapping_map(stu_ids)
+    stu_name_map = {
+        enr: f"{(row.get('surname') or '').strip()} {(row.get('student_name') or '').strip()}".strip()
+        for enr, row in student_rows.items()
+    }
+    roll_map = _student_roll_map(list(student_rows.values()))
     students_metrics = []
     for enr, c in per_student.items():
         total = int(c.get("total", 0))
@@ -11618,13 +12127,26 @@ def attendance_search():
     students = []
     if q:
         try:
-            students = db.session.execute(select(Student).filter(
-                or_(
-                    Student.enrollment_no.ilike(f"%{q}%"),
-                    Student.student_name.ilike(f"%{q}%"),
-                    Student.surname.ilike(f"%{q}%"),
+            student_table, sq = _student_projection_select(
+                (
+                    "enrollment_no",
+                    "student_name",
+                    "surname",
+                    "division_id_fk",
+                    "current_semester",
+                    "program_id_fk",
+                    "medium_tag",
+                    "trust_id_fk",
                 )
-            ).order_by(Student.enrollment_no.asc())).scalars().all()
+            )
+            sq = sq.where(
+                or_(
+                    student_table.c.enrollment_no.ilike(f"%{q}%"),
+                    student_table.c.student_name.ilike(f"%{q}%"),
+                    student_table.c.surname.ilike(f"%{q}%"),
+                )
+            ).order_by(student_table.c.enrollment_no.asc())
+            students = [_student_namespace(row) for row in db.session.execute(sq).mappings().all()]
         except Exception:
             students = []
 
@@ -12946,8 +13468,8 @@ def fees_new():
         semester_raw = (request.form.get("semester") or "").strip()
 
         # Validate student
-        s = db.session.get(Student, enrollment_no) if enrollment_no else None
-        if not s:
+        student_row = _fetch_student_mapping(enrollment_no) if enrollment_no else None
+        if not student_row:
             errors.append("Student not found.")
 
         # Parse numbers
@@ -13030,17 +13552,18 @@ def fees_student(enrollment_no):
     except Exception:
         return redirect(url_for("main.dashboard"))
     from ..models import FeesRecord, Student
-    s = db.session.get(Student, enrollment_no)
-    if not s:
+    student_row = _fetch_student_mapping(enrollment_no)
+    if not student_row:
         flash(f"Student {enrollment_no} not found.", "danger")
         return redirect(url_for("main.fees_list"))
+    student = _student_namespace(student_row)
     rows = db.session.execute(select(FeesRecord).filter_by(student_id_fk=enrollment_no).order_by(FeesRecord.date_paid.desc())).scalars().all()
     total_due = sum([(r.amount_due or 0.0) for r in rows])
     total_paid = sum([(r.amount_paid or 0.0) for r in rows])
     balance = total_due - total_paid
     return render_template(
         "fees_student.html",
-        student=s,
+        student=student,
         rows=rows,
         totals={"due": total_due, "paid": total_paid, "balance": balance},
     )
@@ -14861,47 +15384,76 @@ def students_export_csv():
     q_enrollment_no = (request.args.get("enrollment_no") or "").strip()
     q_name = (request.args.get("name") or "").strip()
     selected_medium = (request.args.get("medium") or "").strip().lower()
-    query = select(Student)
+    student_table = _reflected_table("students")
+    query = select(
+        student_table.c.enrollment_no,
+        student_table.c.surname,
+        student_table.c.student_name,
+        student_table.c.father_name,
+        student_table.c.program_id_fk,
+        student_table.c.division_id_fk,
+        student_table.c.current_semester,
+        student_table.c.medium_tag,
+        student_table.c.mobile,
+    )
     if program_id_raw:
         try:
             pid = int(program_id_raw)
-            query = query.filter(Student.program_id_fk == pid)
+            query = query.filter(student_table.c.program_id_fk == pid)
         except ValueError:
             pass
     if selected_semester not in ("all", ""):
         try:
             sem_int = int(selected_semester)
-            query = query.filter(Student.current_semester == sem_int)
+            query = query.filter(student_table.c.current_semester == sem_int)
         except ValueError:
             pass
     medium_map = {"english": "English", "gujarati": "Gujarati", "general": "General"}
     if selected_medium and selected_medium not in ("", "all"):
         mv = medium_map.get(selected_medium)
         if mv:
-            query = query.filter(Student.medium_tag == mv)
+            query = query.filter(student_table.c.medium_tag == mv)
     if q_enrollment_no:
-        query = query.filter(Student.enrollment_no.ilike(f"%{q_enrollment_no}%"))
+        query = query.filter(student_table.c.enrollment_no.ilike(f"%{q_enrollment_no}%"))
     if q_name:
-        query = query.filter(or_(Student.student_name.ilike(f"%{q_name}%"), Student.surname.ilike(f"%{q_name}%")))
-    rows = db.session.execute(query.order_by(Student.enrollment_no.asc()).limit(5000)).scalars().all()
+        query = query.filter(
+            or_(
+                student_table.c.student_name.ilike(f"%{q_name}%"),
+                student_table.c.surname.ilike(f"%{q_name}%"),
+            )
+        )
+    rows = db.session.execute(query.order_by(student_table.c.enrollment_no.asc()).limit(5000)).mappings().all()
     program_map = {p.program_id: p.program_name for p in db.session.execute(select(Program)).scalars().all()}
+    division_ids = {
+        row["division_id_fk"]
+        for row in rows
+        if row.get("division_id_fk")
+    }
+    divisions = (
+        {
+            d.division_id: d
+            for d in db.session.execute(select(Division).filter(Division.division_id.in_(list(division_ids)))).scalars().all()
+        }
+        if division_ids
+        else {}
+    )
     import io
     import csv as _csv
     buf = io.StringIO()
     writer = _csv.writer(buf)
     writer.writerow(["EnrollmentNo", "Surname", "StudentName", "FatherName", "Program", "Semester", "Division", "Medium", "Mobile"])
-    for s in rows:
-        div = db.session.get(Division, s.division_id_fk)
+    for row in rows:
+        div = divisions.get(row.get("division_id_fk"))
         writer.writerow([
-            s.enrollment_no or "",
-            s.surname or "",
-            s.student_name or "",
-            s.father_name or "",
-            program_map.get(s.program_id_fk) or "",
-            (div.semester if div else s.current_semester) or "",
+            row.get("enrollment_no") or "",
+            row.get("surname") or "",
+            row.get("student_name") or "",
+            row.get("father_name") or "",
+            program_map.get(row.get("program_id_fk")) or "",
+            (div.semester if div else row.get("current_semester")) or "",
             (div.division_code if div else "") or "",
-            s.medium_tag or "",
-            s.mobile or "",
+            row.get("medium_tag") or "",
+            row.get("mobile") or "",
         ])
     data = buf.getvalue().encode("utf-8")
     return Response(data, headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=students_export.csv"})
@@ -15229,21 +15781,25 @@ def student_lifecycle():
             semester = int(semester_raw)
         except Exception:
             semester = None
+    student_table = _reflected_table("students")
+
+    def _scope_student_filters():
+        filters = []
+        if trust_id:
+            filters.append(student_table.c.trust_id_fk == trust_id)
+        if program_id:
+            filters.append(student_table.c.program_id_fk == program_id)
+        if semester is not None:
+            filters.append(student_table.c.current_semester == semester)
+        if not include_inactive:
+            filters.append(student_table.c.is_active == True)
+        return filters
 
     def _scope_students_query():
-        q = select(Student)
-        if trust_id:
-            q = q.filter(Student.trust_id_fk == trust_id)
-        if program_id:
-            q = q.filter(Student.program_id_fk == program_id)
-        if semester is not None:
-            q = q.filter(Student.current_semester == semester)
-        if not include_inactive:
-            q = q.filter(Student.is_active == True)
-        return q
+        return select(student_table).where(*_scope_student_filters())
 
     def _get_target_enrollments():
-        q = _scope_students_query().with_only_columns(Student.enrollment_no).order_by(Student.enrollment_no.asc())
+        q = _scope_students_query().with_only_columns(student_table.c.enrollment_no).order_by(student_table.c.enrollment_no.asc())
         return [enr for (enr,) in db.session.execute(q).all()]
 
     def _selection_key():
@@ -15258,13 +15814,21 @@ def student_lifecycle():
         )
 
     def _write_csv_from_query(zf, filename, model, q):
-        cols = [c.name for c in model.__table__.columns]
+        if model is Student:
+            cols = list(student_table.c.keys())
+            rows = db.session.execute(q).mappings().all()
+        else:
+            cols = [c.name for c in model.__table__.columns]
+            rows = db.session.execute(q).scalars().all()
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow(cols)
-        rows = db.session.execute(q).scalars().all()
-        for obj in rows:
-            w.writerow([getattr(obj, c, "") for c in cols])
+        if model is Student:
+            for row in rows:
+                w.writerow([row.get(c, "") for c in cols])
+        else:
+            for obj in rows:
+                w.writerow([getattr(obj, c, "") for c in cols])
         zf.writestr(filename, buf.getvalue().encode("utf-8"))
 
     def _backup_zip(enrollments):
@@ -15274,7 +15838,7 @@ def student_lifecycle():
                 zf,
                 "students.csv",
                 Student,
-                select(Student).filter(Student.enrollment_no.in_(enrollments)).order_by(Student.enrollment_no.asc()),
+                select(student_table).where(student_table.c.enrollment_no.in_(enrollments)).order_by(student_table.c.enrollment_no.asc()),
             )
             _write_csv_from_query(
                 zf,
@@ -15401,7 +15965,7 @@ def student_lifecycle():
         programs = db.session.execute(q).scalars().all()
 
     try:
-        sem_rows = db.session.execute(_scope_students_query().with_only_columns(func.distinct(Student.current_semester))).all()
+        sem_rows = db.session.execute(_scope_students_query().with_only_columns(func.distinct(student_table.c.current_semester))).all()
         semester_options = sorted([int(r[0]) for r in sem_rows if r and r[0]])
     except Exception:
         semester_options = [1, 2, 3, 4, 5, 6]
@@ -15440,10 +16004,11 @@ def student_lifecycle():
                 return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
             current_ay = current_academic_year()
             try:
-                st_q = select(Student).filter(Student.enrollment_no.in_(enrollments))
-                students = db.session.execute(st_q).scalars().all()
-                for s in students:
-                    s.is_active = True
+                db.session.execute(
+                    student_table.update()
+                    .where(student_table.c.enrollment_no.in_(enrollments))
+                    .values(is_active=True)
+                )
 
                 alumni_removed = Alumni.query.filter(Alumni.enrollment_no.in_(enrollments)).delete(synchronize_session=False)
 
@@ -15568,7 +16133,16 @@ def student_lifecycle():
                     deleted["credit_log"] += StudentCreditLog.query.filter(StudentCreditLog.student_id_fk.in_(chunk)).delete(synchronize_session=False)
                     deleted["notifications"] += Notification.query.filter(Notification.student_id_fk.in_(chunk)).delete(synchronize_session=False)
                     deleted["alumni"] += Alumni.query.filter(Alumni.enrollment_no.in_(chunk)).delete(synchronize_session=False)
-                    deleted["students"] += Student.query.filter(Student.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                    deleted["students"] += int(
+                        getattr(
+                            db.session.execute(
+                                student_table.delete().where(student_table.c.enrollment_no.in_(chunk))
+                            ),
+                            "rowcount",
+                            0,
+                        )
+                        or 0
+                    )
                 counts.update(deleted)
                 req.status = "purged"
                 req.executed_at = now
@@ -15589,10 +16163,11 @@ def student_lifecycle():
                 flash("Type SCHEDULE to confirm.", "danger")
                 return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
             try:
-                st_q = select(Student).filter(Student.enrollment_no.in_(enrollments))
-                students = db.session.execute(st_q).scalars().all()
-                for s in students:
-                    s.is_active = False
+                db.session.execute(
+                    student_table.update()
+                    .where(student_table.c.enrollment_no.in_(enrollments))
+                    .values(is_active=False)
+                )
                 db.session.execute(
                     StudentSubjectEnrollment.__table__.update()
                     .where(StudentSubjectEnrollment.student_id_fk.in_(enrollments))
@@ -15624,10 +16199,11 @@ def student_lifecycle():
             if confirm != "ARCHIVE":
                 flash("Type ARCHIVE to confirm.", "danger")
                 return redirect(url_for("main.student_lifecycle", program_id=(program_id or ""), semester=(semester_raw or "all"), include_inactive=("1" if include_inactive else "")))
-            st_q = select(Student).filter(Student.enrollment_no.in_(enrollments))
-            students = db.session.execute(st_q).scalars().all()
-            for s in students:
-                s.is_active = False
+            db.session.execute(
+                student_table.update()
+                .where(student_table.c.enrollment_no.in_(enrollments))
+                .values(is_active=False)
+            )
             db.session.execute(
                 StudentSubjectEnrollment.__table__.update()
                 .where(StudentSubjectEnrollment.student_id_fk.in_(enrollments))
@@ -15656,35 +16232,47 @@ def student_lifecycle():
                     trust_ids = {tid for (tid,) in db.session.execute(select(Trust.trust_id)).all()}
                     today = datetime.utcnow().date()
 
-                    students = db.session.execute(select(Student).filter(Student.enrollment_no.in_(enrollments))).scalars().all()
+                    students = db.session.execute(
+                        select(
+                            student_table.c.enrollment_no,
+                            student_table.c.program_id_fk,
+                            student_table.c.current_semester,
+                            student_table.c.trust_id_fk,
+                        ).where(student_table.c.enrollment_no.in_(enrollments))
+                    ).mappings().all()
                     existing_rows = db.session.execute(select(Alumni).filter(Alumni.enrollment_no.in_(enrollments))).scalars().all()
                     existing_by_enr = {a.enrollment_no: a for a in existing_rows if a and a.enrollment_no}
 
                     upserts = 0
                     for s in students:
-                        s.is_active = False
-                        tval = getattr(s, "trust_id_fk", None)
+                        tval = s.get("trust_id_fk")
                         if tval not in trust_ids:
                             tval = None
-                        row = existing_by_enr.get(s.enrollment_no)
+                        row = existing_by_enr.get(s.get("enrollment_no"))
                         if row:
                             row.alumni_since = row.alumni_since or today
                             row.note = note or row.note
-                            row.program_id_fk = s.program_id_fk
-                            row.last_semester = s.current_semester
+                            row.program_id_fk = s.get("program_id_fk")
+                            row.last_semester = s.get("current_semester")
                             row.trust_id_fk = tval
                         else:
                             db.session.add(
                                 Alumni(
-                                    enrollment_no=s.enrollment_no,
-                                    program_id_fk=s.program_id_fk,
-                                    last_semester=s.current_semester,
+                                    enrollment_no=s.get("enrollment_no"),
+                                    program_id_fk=s.get("program_id_fk"),
+                                    last_semester=s.get("current_semester"),
                                     trust_id_fk=tval,
                                     alumni_since=today,
                                     note=note or None,
                                 )
                             )
                         upserts += 1
+
+                    db.session.execute(
+                        student_table.update()
+                        .where(student_table.c.enrollment_no.in_(enrollments))
+                        .values(is_active=False)
+                    )
 
                     db.session.execute(
                         StudentSubjectEnrollment.__table__.update()
@@ -15761,7 +16349,16 @@ def student_lifecycle():
                     deleted["credit_log"] += StudentCreditLog.query.filter(StudentCreditLog.student_id_fk.in_(chunk)).delete(synchronize_session=False)
                     deleted["notifications"] += Notification.query.filter(Notification.student_id_fk.in_(chunk)).delete(synchronize_session=False)
                     deleted["alumni"] += Alumni.query.filter(Alumni.enrollment_no.in_(chunk)).delete(synchronize_session=False)
-                    deleted["students"] += Student.query.filter(Student.enrollment_no.in_(chunk)).delete(synchronize_session=False)
+                    deleted["students"] += int(
+                        getattr(
+                            db.session.execute(
+                                student_table.delete().where(student_table.c.enrollment_no.in_(chunk))
+                            ),
+                            "rowcount",
+                            0,
+                        )
+                        or 0
+                    )
                 counts.update(deleted)
                 _audit("hard_delete", counts, {"note": note})
                 db.session.commit()
@@ -16176,7 +16773,9 @@ def api_reports_enrollment_summary():
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
     medium_raw = (request.args.get("medium") or "").strip().lower()
-    q = select(Student)
+    student_table, q = _student_projection_select(
+        ("enrollment_no", "program_id_fk", "current_semester", "medium_tag", "trust_id_fk")
+    )
     effective_trust_id = None
     if getattr(current_user, "is_authenticated", False):
         if getattr(current_user, "is_super_admin", False):
@@ -16186,51 +16785,38 @@ def api_reports_enrollment_summary():
                 effective_trust_id = None
         else:
             effective_trust_id = getattr(current_user, "trust_id_fk", None)
-    if effective_trust_id:
-        q = q.filter(Student.trust_id_fk == effective_trust_id)
+    if effective_trust_id and "trust_id_fk" in student_table.c:
+        q = q.where(student_table.c.trust_id_fk == effective_trust_id)
     try:
         pid = int(program_id_raw) if program_id_raw else None
     except ValueError:
         pid = None
-    if pid:
-        q = q.filter(Student.program_id_fk == pid)
+    if pid and "program_id_fk" in student_table.c:
+        q = q.where(student_table.c.program_id_fk == pid)
     try:
         sem = int(semester_raw) if semester_raw else None
     except ValueError:
         sem = None
-    if sem:
-        q = q.filter(Student.current_semester == sem)
+    if sem and "current_semester" in student_table.c:
+        q = q.where(student_table.c.current_semester == sem)
     if medium_raw:
         mv = {"english": "English", "gujarati": "Gujarati"}.get(medium_raw)
-        if mv:
-            q = q.filter(Student.medium_tag == mv)
+        if mv and "medium_tag" in student_table.c:
+            q = q.where(student_table.c.medium_tag == mv)
     total = db.session.scalar(select(func.count()).select_from(q.subquery()))
-    # Group by semester
     try:
         subq = q.subquery()
-        sem_counts = (
-            db.session.execute(
-                select(subq.c.current_semester, func.count("*"))
-                .group_by(subq.c.current_semester)
-            ).all()
-        )
+        rows = db.session.execute(
+            select(subq.c.current_semester, func.count("*"))
+            .group_by(subq.c.current_semester)
+            .order_by(subq.c.current_semester)
+        ).all()
+        by_semester = [{"semester": int(r[0] or 0), "count": int(r[1] or 0)} for r in rows]
     except Exception:
-        sem_counts = []
-    try:
-        # Fallback: manual aggregation when above fails
-        rows = (
-            db.session.execute(
-                q.with_only_columns(Student.current_semester, func.count("*").label("c"))
-                .group_by(Student.current_semester)
-                .order_by(Student.current_semester)
-            ).all()
-        )
-        by_semester = [{"semester": (r[0] or 0), "count": int(r[1] or 0)} for r in rows]
-    except Exception:
-        students = db.session.execute(q).scalars().all()
+        students = db.session.execute(q).mappings().all()
         m = {}
         for s in students:
-            v = int(getattr(s, "current_semester", 0) or 0)
+            v = int((s.get("current_semester") or 0))
             m[v] = m.get(v, 0) + 1
         by_semester = [{"semester": k, "count": v} for k, v in sorted(m.items())]
     return api_success({"total": total, "by_semester": by_semester}, {"program_id": pid, "semester": sem, "medium": medium_raw})
@@ -16345,14 +16931,16 @@ def api_reports_fees_program_status():
     if not pid:
         return api_success({"summary": {"program_id": None, "program_name": "Select Program", "semester": sem, "medium": med or "All"}, "items": []})
     prog = db.session.get(Program, pid)
-    sq = select(Student)
-    if effective_trust_id:
-        sq = sq.filter(Student.trust_id_fk == effective_trust_id)
-    if pid:
-        sq = sq.filter(Student.program_id_fk == pid)
-    if sem:
-        sq = sq.filter(Student.current_semester == sem)
-    students = db.session.execute(sq).scalars().all()
+    student_table, sq = _student_projection_select(
+        ("enrollment_no", "student_name", "surname", "program_id_fk", "current_semester", "medium_tag", "trust_id_fk")
+    )
+    if effective_trust_id and "trust_id_fk" in student_table.c:
+        sq = sq.where(student_table.c.trust_id_fk == effective_trust_id)
+    if pid and "program_id_fk" in student_table.c:
+        sq = sq.where(student_table.c.program_id_fk == pid)
+    if sem and "current_semester" in student_table.c:
+        sq = sq.where(student_table.c.current_semester == sem)
+    students = [_student_namespace(row) for row in db.session.execute(sq).mappings().all()]
     st_index = {s.enrollment_no: s for s in students}
     # Preload fee structure components and compute common + per-medium sums
     fsq = select(FeeStructure)
@@ -16488,14 +17076,16 @@ def fees_program_status_export_csv():
         prog = db.session.get(Program, pid)
     if pid and not prog:
         return Response(b"", headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=fees_program_status.csv"})
-    sq = select(Student)
-    if effective_trust_id:
-        sq = sq.filter(Student.trust_id_fk == effective_trust_id)
-    if pid:
-        sq = sq.filter(Student.program_id_fk == pid)
-    if sem:
-        sq = sq.filter(Student.current_semester == sem)
-    students = db.session.execute(sq).scalars().all()
+    student_table, sq = _student_projection_select(
+        ("enrollment_no", "student_name", "surname", "program_id_fk", "current_semester", "medium_tag", "trust_id_fk")
+    )
+    if effective_trust_id and "trust_id_fk" in student_table.c:
+        sq = sq.where(student_table.c.trust_id_fk == effective_trust_id)
+    if pid and "program_id_fk" in student_table.c:
+        sq = sq.where(student_table.c.program_id_fk == pid)
+    if sem and "current_semester" in student_table.c:
+        sq = sq.where(student_table.c.current_semester == sem)
+    students = [_student_namespace(row) for row in db.session.execute(sq).mappings().all()]
     fsq = select(FeeStructure)
     if pid:
         fsq = fsq.filter(FeeStructure.program_id_fk == pid)
@@ -16649,15 +17239,14 @@ def api_reports_subject_lectures():
     if dt:
         aq = aq.filter(Attendance.date_marked <= dt)
     if pid or sem:
-        sq = select(Student)
-        if effective_trust_id:
-            sq = sq.filter(Student.trust_id_fk == effective_trust_id)
-        if pid:
-            sq = sq.filter(Student.program_id_fk == pid)
-        if sem:
-            sq = sq.filter(Student.current_semester == sem)
-        srows = db.session.execute(sq).scalars().all()
-        sids = [getattr(s, "enrollment_no", None) for s in srows]
+        student_table, sq = _student_projection_select(("enrollment_no", "program_id_fk", "current_semester", "trust_id_fk"))
+        if effective_trust_id and "trust_id_fk" in student_table.c:
+            sq = sq.where(student_table.c.trust_id_fk == effective_trust_id)
+        if pid and "program_id_fk" in student_table.c:
+            sq = sq.where(student_table.c.program_id_fk == pid)
+        if sem and "current_semester" in student_table.c:
+            sq = sq.where(student_table.c.current_semester == sem)
+        sids = [row.get("enrollment_no") for row in db.session.execute(sq).mappings().all() if row.get("enrollment_no")]
         if sids:
             aq = aq.filter(Attendance.student_id_fk.in_(sids))
     recs = db.session.execute(aq).scalars().all()
@@ -16780,15 +17369,14 @@ def subject_lectures_export_csv():
     if dt:
         aq = aq.filter(Attendance.date_marked <= dt)
     if pid or sem:
-        sq = select(Student)
-        if effective_trust_id:
-            sq = sq.filter(Student.trust_id_fk == effective_trust_id)
-        if pid:
-            sq = sq.filter(Student.program_id_fk == pid)
-        if sem:
-            sq = sq.filter(Student.current_semester == sem)
-        srows = db.session.execute(sq).scalars().all()
-        sids = [getattr(s, "enrollment_no", None) for s in srows]
+        student_table, sq = _student_projection_select(("enrollment_no", "program_id_fk", "current_semester", "trust_id_fk"))
+        if effective_trust_id and "trust_id_fk" in student_table.c:
+            sq = sq.where(student_table.c.trust_id_fk == effective_trust_id)
+        if pid and "program_id_fk" in student_table.c:
+            sq = sq.where(student_table.c.program_id_fk == pid)
+        if sem and "current_semester" in student_table.c:
+            sq = sq.where(student_table.c.current_semester == sem)
+        sids = [row.get("enrollment_no") for row in db.session.execute(sq).mappings().all() if row.get("enrollment_no")]
         if sids:
             aq = aq.filter(Attendance.student_id_fk.in_(sids))
     recs = db.session.execute(aq).scalars().all()
@@ -17108,15 +17696,16 @@ def api_reports_absentees():
         if status == "A":
             key = getattr(a, "student_id_fk", None)
             counts[key] = counts.get(key, 0) + 1
+    student_rows = _fetch_students_mapping_map(list(counts.keys()))
     items = []
     for sid_fk, c in counts.items():
-        st = db.session.get(Student, sid_fk) if sid_fk else None
-        if effective_trust_id and st and getattr(st, "trust_id_fk", None) != effective_trust_id:
+        st = student_rows.get(sid_fk)
+        if effective_trust_id and st and st.get("trust_id_fk") != effective_trust_id:
             continue
         items.append({
             "student_id": sid_fk,
-            "enrollment_no": getattr(st, "enrollment_no", None),
-            "name": ((getattr(st, "student_name", "") or "") + " " + (getattr(st, "surname", "") or "")).strip(),
+            "enrollment_no": st.get("enrollment_no") if st else None,
+            "name": (((st.get("student_name", "") or "") + " " + (st.get("surname", "") or "")).strip()) if st else "",
             "absences": c,
         })
     items.sort(key=lambda x: x.get("absences", 0), reverse=True)
@@ -17184,9 +17773,15 @@ def absentees_export_csv():
     buf = io.StringIO()
     w = _csv.writer(buf)
     w.writerow(["StudentID", "EnrollmentNo", "Name", "Absences"])
+    student_rows = _fetch_students_mapping_map(list(counts.keys()))
     for sid_fk, c in sorted(counts.items(), key=lambda kv: kv[1], reverse=True):
-        st = db.session.get(Student, sid_fk) if sid_fk else None
-        w.writerow([sid_fk or "", getattr(st, "enrollment_no", "") or "", (((getattr(st, "student_name", "") or "") + " " + (getattr(st, "surname", "") or "")).strip()), c])
+        st = student_rows.get(sid_fk)
+        w.writerow([
+            sid_fk or "",
+            (st.get("enrollment_no", "") if st else "") or "",
+            (((st.get("student_name", "") or "") + " " + (st.get("surname", "") or "")).strip()) if st else "",
+            c,
+        ])
     data = buf.getvalue().encode("utf-8")
     return Response(data, headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=absentees.csv"})
 
@@ -17224,15 +17819,17 @@ def api_reports_attendance_students():
         thr = max(0, min(100, int(threshold_raw)))
     except ValueError:
         thr = 50
-    sq = select(Student)
-    if effective_trust_id:
-        sq = sq.filter(Student.trust_id_fk == effective_trust_id)
-    if pid:
-        sq = sq.filter(Student.program_id_fk == pid)
-    if sem:
-        sq = sq.filter(Student.current_semester == sem)
-    students = db.session.execute(sq).scalars().all()
-    st_index = {getattr(s, 'enrollment_no', None): s for s in students}
+    student_table, sq = _student_projection_select(
+        ("enrollment_no", "student_name", "surname", "program_id_fk", "current_semester", "medium_tag", "trust_id_fk")
+    )
+    if effective_trust_id and "trust_id_fk" in student_table.c:
+        sq = sq.where(student_table.c.trust_id_fk == effective_trust_id)
+    if pid and "program_id_fk" in student_table.c:
+        sq = sq.where(student_table.c.program_id_fk == pid)
+    if sem and "current_semester" in student_table.c:
+        sq = sq.where(student_table.c.current_semester == sem)
+    students = [_student_namespace(row) for row in db.session.execute(sq).mappings().all()]
+    st_index = {getattr(s, "enrollment_no", None): s for s in students}
     st_ids = list(st_index.keys())
     aq = select(Attendance)
     if st_ids:
@@ -17331,7 +17928,11 @@ def nep_exit_report():
                         selected_program = None
             if selected_program:
                 # 1. Fetch all students for this program
-                students = db.session.execute(select(Student).filter_by(program_id_fk=pid).order_by(Student.enrollment_no.asc())).scalars().all()
+                student_table, sq = _student_projection_select(
+                    ("enrollment_no", "student_name", "surname", "program_id_fk", "current_semester", "medium_tag", "trust_id_fk")
+                )
+                sq = sq.where(student_table.c.program_id_fk == pid).order_by(student_table.c.enrollment_no.asc())
+                students = [_student_namespace(row) for row in db.session.execute(sq).mappings().all()]
                 
                 # 2. Bulk fetch Credit Structure for all subjects in this program
                 # Map subject_id -> total_credits
@@ -17346,7 +17947,7 @@ def nep_exit_report():
                         subject_credits[s.subject_id] = 4
                 
                 # 3. Bulk fetch Grades for these students
-                student_ids = [s.enrollment_no for s in students]
+                    student_ids = [s.enrollment_no for s in students]
                 if student_ids:
                     # We want all grades for these students where they 'passed'
                     # Assuming GPA >= 4.0 is pass for now
@@ -17408,12 +18009,25 @@ def attendance_students_export_csv():
         thr = max(0, min(100, int(threshold_raw)))
     except ValueError:
         thr = 50
-    sq = select(Student)
-    if pid:
-        sq = sq.filter(Student.program_id_fk == pid)
-    if sem:
-        sq = sq.filter(Student.current_semester == sem)
-    students = db.session.execute(sq).scalars().all()
+    effective_trust_id = None
+    if getattr(current_user, "is_authenticated", False):
+        if getattr(current_user, "is_super_admin", False):
+            try:
+                effective_trust_id = int(session.get("active_trust_id") or 0) or None
+            except Exception:
+                effective_trust_id = None
+        else:
+            effective_trust_id = getattr(current_user, "trust_id_fk", None)
+    student_table, sq = _student_projection_select(
+        ("enrollment_no", "student_name", "surname", "program_id_fk", "current_semester", "medium_tag", "trust_id_fk")
+    )
+    if effective_trust_id and "trust_id_fk" in student_table.c:
+        sq = sq.where(student_table.c.trust_id_fk == effective_trust_id)
+    if pid and "program_id_fk" in student_table.c:
+        sq = sq.where(student_table.c.program_id_fk == pid)
+    if sem and "current_semester" in student_table.c:
+        sq = sq.where(student_table.c.current_semester == sem)
+    students = [_student_namespace(row) for row in db.session.execute(sq).mappings().all()]
     st_index = {getattr(s, 'enrollment_no', None): s for s in students}
     st_ids = list(st_index.keys())
     aq = select(Attendance)
@@ -18244,6 +18858,7 @@ def student_subject_allocation():
     enrolled_student_ids = set()
     subject = None
     available_mediums = ["Gujarati", "English"]
+    student_table = _reflected_table("students")
 
     # Conversions
     sel_prog_id = int(program_id) if program_id and program_id.isdigit() else None
@@ -18260,16 +18875,30 @@ def student_subject_allocation():
         ).scalars().all()
 
         # Fetch Students
-        q_stu = select(Student).filter_by(
-            program_id_fk=sel_prog_id, 
-            current_semester=sel_sem, 
-            is_active=True
-        ).order_by(Student.enrollment_no)
+        q_stu = (
+            select(
+                student_table.c.enrollment_no,
+                student_table.c.student_name,
+                student_table.c.surname,
+                student_table.c.father_name,
+                student_table.c.program_id_fk,
+                student_table.c.current_semester,
+                student_table.c.medium_tag,
+                student_table.c.division_id_fk,
+                student_table.c.is_active,
+            )
+            .where(
+                student_table.c.program_id_fk == sel_prog_id,
+                student_table.c.current_semester == sel_sem,
+                student_table.c.is_active == True,
+            )
+            .order_by(student_table.c.enrollment_no.asc())
+        )
         
         if sel_med:
-            q_stu = q_stu.filter(Student.medium_tag == sel_med)
+            q_stu = q_stu.filter(student_table.c.medium_tag == sel_med)
             
-        students = db.session.execute(q_stu).scalars().all()
+        students = [_student_namespace(row) for row in db.session.execute(q_stu).mappings().all()]
 
         # If subject selected, fetch enrollments
         if sel_subj_id:
@@ -18398,6 +19027,7 @@ def student_subject_allocation_bulk_csv():
              return redirect(request.referrer)
              
         target_sid = int(subject_id) if subject_id else None
+        student_table = _reflected_table("students")
         
         # Determine Academic Year
         today = datetime.today()
@@ -18414,8 +19044,20 @@ def student_subject_allocation_bulk_csv():
             if not enrollment_no:
                 continue
                 
-            student = db.session.get(Student, enrollment_no)
-            if not student:
+            student_row = db.session.execute(
+                select(
+                    student_table.c.enrollment_no,
+                    student_table.c.program_id_fk,
+                    student_table.c.current_semester,
+                ).where(student_table.c.enrollment_no == enrollment_no)
+            ).mappings().first()
+            if not student_row:
+                errors += 1
+                continue
+            if program_id and str(student_row.get("program_id_fk") or "") != str(program_id):
+                errors += 1
+                continue
+            if semester and str(student_row.get("current_semester") or "") != str(semester):
                 errors += 1
                 continue
                 

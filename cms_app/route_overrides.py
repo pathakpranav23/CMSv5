@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import func, select
+from sqlalchemy import MetaData, Table, func, select
 
 from . import csrf_required, db
 from .decorators import super_admin_required
@@ -11,6 +11,37 @@ from .email_utils import send_email
 
 
 route_overrides_bp = Blueprint("route_overrides", __name__)
+
+_OVERRIDE_STUDENT_FIELDS = [
+    "enrollment_no",
+    "user_id_fk",
+    "student_name",
+    "surname",
+    "trust_id_fk",
+]
+
+
+def _student_table():
+    metadata = MetaData()
+    return Table("students", metadata, autoload_with=db.engine)
+
+
+def _fetch_students_map(enrollment_nos):
+    enrollment_nos = [enr for enr in (enrollment_nos or []) if enr]
+    if not enrollment_nos:
+        return {}
+    table = _student_table()
+    cols = [table.c[name].label(name) for name in _OVERRIDE_STUDENT_FIELDS if name in table.c]
+    if not cols:
+        cols = [table.c.enrollment_no]
+    rows = db.session.execute(select(*cols).where(table.c.enrollment_no.in_(enrollment_nos))).mappings().all()
+    return {row.get("enrollment_no"): dict(row) for row in rows if row.get("enrollment_no")}
+
+
+def _fetch_student_map(enrollment_no):
+    if not enrollment_no:
+        return None
+    return _fetch_students_map([enrollment_no]).get(enrollment_no)
 
 
 def _user_is_admin_or_clerk():
@@ -25,14 +56,16 @@ def _effective_trust_id():
 
 
 def _queue_query():
-    from .models import FeePayment, Student
+    from .models import FeePayment
 
     query = select(FeePayment).filter_by(status="submitted")
     trust_id = _effective_trust_id()
     if trust_id:
-        query = query.join(Student, Student.enrollment_no == FeePayment.enrollment_no).where(
-            Student.trust_id_fk == trust_id
-        )
+        student_table = _student_table()
+        if "trust_id_fk" in student_table.c:
+            query = query.join(student_table, student_table.c.enrollment_no == FeePayment.enrollment_no).where(
+                student_table.c.trust_id_fk == trust_id
+            )
     return query.order_by(FeePayment.created_at.asc())
 
 
@@ -41,10 +74,8 @@ def _fee_payment_accessible(payment):
     if trust_id is None:
         return True
     try:
-        from .models import Student
-
-        student = db.session.get(Student, payment.enrollment_no)
-        return getattr(student, "trust_id_fk", None) == trust_id
+        student = _fetch_student_map(payment.enrollment_no)
+        return (student or {}).get("trust_id_fk") == trust_id
     except Exception:
         return False
 
@@ -76,20 +107,11 @@ def fees_payments_queue():
         flash("Not authorized to view verification queue.", "danger")
         return redirect(url_for("main.dashboard"))
 
-    from .models import FeePayment, Program, Student
+    from .models import FeePayment, Program
 
     payments = db.session.execute(_queue_query()).scalars().all()
     student_ids = [payment.enrollment_no for payment in payments]
-    students = (
-        {
-            student.enrollment_no: student
-            for student in db.session.execute(
-                select(Student).filter(Student.enrollment_no.in_(student_ids))
-            ).scalars().all()
-        }
-        if student_ids
-        else {}
-    )
+    students = _fetch_students_map(student_ids) if student_ids else {}
     program_ids = sorted({payment.program_id_fk for payment in payments if payment.program_id_fk})
     programs = (
         {
@@ -112,7 +134,7 @@ def fees_payment_verify(payment_id):
         flash("Not authorized to verify payments.", "danger")
         return redirect(url_for("main.dashboard"))
 
-    from .models import FeePayment, Notification, Student, User
+    from .models import FeePayment, Notification, User
 
     payment = db.session.get(FeePayment, payment_id)
     if not payment:
@@ -166,7 +188,7 @@ def fees_payment_verify(payment_id):
         db.session.commit()
 
         try:
-            student = db.session.get(Student, payment.enrollment_no)
+            student = _fetch_student_map(payment.enrollment_no)
             if student:
                 notification = Notification(
                     student_id_fk=payment.enrollment_no,
@@ -182,8 +204,8 @@ def fees_payment_verify(payment_id):
             pass
 
         try:
-            student = db.session.get(Student, payment.enrollment_no)
-            user_id = getattr(student, "user_id_fk", None) if student else None
+            student = _fetch_student_map(payment.enrollment_no)
+            user_id = (student or {}).get("user_id_fk")
             user = db.session.get(User, user_id) if user_id else None
             to_address = getattr(user, "username", None) or None
             if to_address:
@@ -206,7 +228,7 @@ def fees_payment_reject(payment_id):
         flash("Not authorized to reject payments.", "danger")
         return redirect(url_for("main.dashboard"))
 
-    from .models import FeePayment, Notification, Student, User
+    from .models import FeePayment, Notification, User
 
     payment = db.session.get(FeePayment, payment_id)
     if not payment:
@@ -225,7 +247,7 @@ def fees_payment_reject(payment_id):
         db.session.commit()
 
         try:
-            student = db.session.get(Student, payment.enrollment_no)
+            student = _fetch_student_map(payment.enrollment_no)
             if student:
                 message = "Your fee submission was rejected." + (f" Reason: {remarks}." if remarks else "")
                 notification = Notification(
@@ -242,8 +264,8 @@ def fees_payment_reject(payment_id):
             pass
 
         try:
-            student = db.session.get(Student, payment.enrollment_no)
-            user_id = getattr(student, "user_id_fk", None) if student else None
+            student = _fetch_student_map(payment.enrollment_no)
+            user_id = (student or {}).get("user_id_fk")
             user = db.session.get(User, user_id) if user_id else None
             to_address = getattr(user, "username", None) or None
             if to_address:
