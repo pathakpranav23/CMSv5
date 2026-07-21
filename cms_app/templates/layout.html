@@ -91,7 +91,7 @@
             <li><a href="{{ url_for('main.module_announcements') }}"><span class="module-icon"><i class="bi bi-megaphone text-primary"></i></span><span class="label">{{ t('Announcements') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.module_attendance') }}"><span class="module-icon"><i class="bi bi-calendar-check text-primary"></i></span><span class="label">{{ t('Attendance') }}</span></a><br class="nav-break"></li>
             <li><a href="{{ url_for('main.materials_hub') }}"><span class="module-icon"><i class="bi bi-folder2 text-primary"></i></span><span class="label">{{ t('Materials') }}</span></a><br class="nav-break"></li>
-            {% if (current_user.role|lower) in ['admin','principal','clerk','faculty'] or current_user.is_super_admin %}
+            {% if exams_enabled and ((current_user.role|lower) in ['admin','principal','clerk','faculty'] or current_user.is_super_admin) %}
               <li><a href="{{ url_for('exams.dashboard') }}"><span class="module-icon"><i class="bi bi-mortarboard text-primary"></i></span><span class="label">{{ t('Exams') }}</span></a><br class="nav-break"></li>
             {% endif %}
             <li>

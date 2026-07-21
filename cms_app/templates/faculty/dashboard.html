@@ -236,9 +236,11 @@
                 <div class="card-body">
                     <p class="text-muted small">System notifications and alerts will appear here.</p>
                     <!-- Placeholder for future alerts -->
+                    {% if exams_enabled %}
                     <div class="alert alert-info small mb-2">
                         <i class="bi bi-info-circle-fill me-1"></i> Exam marks entry deadline is approaching.
                     </div>
+                    {% endif %}
                 </div>
             </div>
             <div class="card shadow-sm mb-4">
@@ -249,9 +251,11 @@
                     <a href="{{ url_for('main.materials_hub') }}" class="list-group-item list-group-item-action">
                         <i class="bi bi-upload me-2 text-secondary"></i> Upload Material
                     </a>
+                    {% if exams_enabled %}
                     <a href="{{ url_for('exams.dashboard') }}" class="list-group-item list-group-item-action">
                          <i class="bi bi-graph-up me-2 text-secondary"></i> View Results
                     </a>
+                    {% endif %}
                 </div>
             </div>
             <div class="card shadow-sm mb-4">

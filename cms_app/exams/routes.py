@@ -1,4 +1,4 @@
-from flask import render_template, request, flash, redirect, url_for, session
+from flask import render_template, request, flash, redirect, url_for, session, current_app
 import json
 from flask_login import login_required, current_user
 from sqlalchemy import select, func, and_, or_, case, cast
@@ -9,6 +9,18 @@ from ..main.routes import academic_year_options, current_academic_year, _program
 from ..decorators import role_required
 from .services import resolve_exam_limits, calculate_exam_results
 from datetime import datetime, timedelta
+
+@exams_bp.before_request
+def _block_when_exams_disabled():
+    if current_app.config.get("EXAMS_ENABLED", False):
+        return None
+    if not getattr(current_user, "is_authenticated", False):
+        return redirect(url_for("main.login"))
+    try:
+        flash("Exam module is disabled for MVP.", "info")
+    except Exception:
+        pass
+    return redirect(url_for("main.dashboard"))
 
 def _effective_trust_id():
     if not getattr(current_user, "is_authenticated", False):

@@ -14,6 +14,7 @@ def _login(client, username, password):
 
 
 def test_exam_scheme_freeze_unlock_and_flip_flag(client, app):
+    app.config["EXAMS_ENABLED"] = True
     with app.app_context():
         t = Trust(trust_name="T_EXAM", trust_code="T_EXAM", is_active=True)
         db.session.add(t)
@@ -102,3 +103,22 @@ def test_exam_scheme_freeze_unlock_and_flip_flag(client, app):
                 found = True
                 break
         assert found is True
+
+
+def test_exam_dashboard_redirects_when_disabled(client, app):
+    app.config["EXAMS_ENABLED"] = False
+    with app.app_context():
+        user = User(
+            username="principal_disabled_exam",
+            password_hash=generate_password_hash("secret"),
+            role="principal",
+            is_active=True,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+    csrf = _login(client, "principal_disabled_exam", "secret")
+    assert csrf
+    response = client.get("/academics/exams", follow_redirects=False)
+    assert response.status_code in (301, 302)
+    assert "/dashboard" in (response.headers.get("Location") or "")

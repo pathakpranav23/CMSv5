@@ -69,6 +69,9 @@ def create_app():
         pass
     # Feature flags
     app.config["FEES_DISABLED"] = False  # Enable Fees module visibility
+    app.config["EXAMS_ENABLED"] = (
+        os.environ.get("EXAMS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    )
     app.config["ROLLS_CONTINUOUS_PER_PROGRAM_SEM"] = (os.environ.get("ROLLS_CONTINUOUS_PER_PROGRAM_SEM", "false").lower() == "true")
     app.config["AUTO_RELEASE_EMPTY_SEMESTER_ASSIGNMENTS"] = (
         os.environ.get("CMS_AUTO_RELEASE_EMPTY_SEMESTER_ASSIGNMENTS", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -580,6 +583,7 @@ def create_app():
         ctx = {
             "info_hints_enabled": app.config.get("INFO_HINTS_ENABLED", False),
             "fees_disabled": app.config.get("FEES_DISABLED", False),
+            "exams_enabled": app.config.get("EXAMS_ENABLED", False),
             "system_messages": [],
         }
 
