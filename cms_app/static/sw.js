@@ -1,5 +1,5 @@
-// Service Worker for Parekh Colleges CMS
-const CACHE_NAME = 'cms-cache-v38';
+// Service Worker for CodeP-CloudEMS
+const CACHE_NAME = 'cms-cache-v39';
 const URLS_TO_CACHE = [
   '/',
   '/static/style.css',

@@ -1075,7 +1075,7 @@ body[data-theme="obsidian"] .mobile-topbar {
   border-bottom: 1px solid rgba(33,230,255,0.10);
 }
 .sidebar .brand { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.5rem; margin-bottom: 0.75rem; }
-.sidebar .brand img { height: 40px; width: auto; }
+.sidebar .brand img { width: auto; }
 .sidebar .brand .program-badge { margin-left: auto; background: rgba(255,255,255,0.12); color: var(--nav-fg); border-radius: 999px; padding: 0.125rem 0.5rem; font-size: 0.75rem; }
 .sidebar .nav { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .sidebar .nav li { width: 100%; }
@@ -1241,6 +1241,110 @@ body[data-theme="neonlite"] .enhanced-nav {
 .enhanced-nav .nav-breadcrumb .btn,
 .enhanced-nav .nav-breadcrumb .coin-btn { margin-right: 0.25rem; }
 
+.app-brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.8rem;
+  min-width: 0;
+}
+.app-brand-lockup__icon {
+  width: auto;
+  display: block;
+  flex: 0 0 auto;
+}
+.app-brand-lockup__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.app-brand-lockup__name {
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+.app-brand-lockup__tagline {
+  font-size: 0.76rem;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  opacity: 0.9;
+}
+
+.app-brand-lockup--sidebar {
+  width: 100%;
+  align-items: center;
+  gap: 0.7rem;
+}
+.app-brand-lockup--sidebar .app-brand-lockup__icon {
+  height: 38px;
+}
+.app-brand-lockup--sidebar .app-brand-lockup__name {
+  color: var(--nav-fg);
+  font-size: 1.02rem;
+}
+.app-brand-lockup--sidebar .app-brand-lockup__tagline {
+  color: rgba(255,255,255,0.72);
+  max-width: 12rem;
+}
+
+.app-brand-lockup--hero .app-brand-lockup__icon {
+  height: 56px;
+}
+.app-brand-lockup--hero .app-brand-lockup__name {
+  font-size: clamp(1.8rem, 3vw, 2.3rem);
+  background: linear-gradient(90deg, #0f172a 0%, #2563eb 40%, #06b6d4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.app-brand-lockup--hero .app-brand-lockup__tagline {
+  font-size: 0.95rem;
+  color: rgba(15, 23, 42, 0.68);
+}
+
+.app-brand-lockup--topbar {
+  gap: 0.45rem;
+}
+.app-brand-lockup--topbar .app-brand-lockup__icon {
+  height: 24px;
+}
+.app-brand-lockup--topbar .app-brand-lockup__name {
+  font-size: 0.98rem;
+}
+
+.app-brand-lockup--login {
+  gap: 1rem;
+}
+.app-brand-lockup--login .app-brand-lockup__icon {
+  height: 74px;
+}
+.app-brand-lockup--login .app-brand-lockup__name {
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  background: linear-gradient(90deg, #0b2f78 0%, #0f5dd7 45%, #0cc9e8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 14px 34px rgba(14, 165, 233, 0.18);
+}
+.app-brand-lockup--login .app-brand-lockup__tagline {
+  font-size: 1rem;
+  color: rgba(255,255,255,0.88);
+  text-transform: none;
+}
+
+.app-brand-lockup--footer {
+  gap: 0.7rem;
+}
+.app-brand-lockup--footer .app-brand-lockup__icon {
+  height: 42px;
+}
+.app-brand-lockup--footer .app-brand-lockup__name {
+  color: #fff;
+  font-size: 1.15rem;
+}
+.app-brand-lockup--footer .app-brand-lockup__tagline {
+  color: rgba(255,255,255,0.74);
+}
+
 /* Topbar brand + greeting: more striking than normal text */
 .brand-title {
   letter-spacing: 0.01em;
@@ -1341,6 +1445,7 @@ body[data-theme="neonlite"] .enhanced-nav {
   .mobile-topbar .btn i { font-size: 0.95em; }
   .mobile-topbar .btn-group .btn { padding: 0.2rem 0.4rem; font-size: 0.78rem; }
   .mobile-topbar .brand-title { font-size: 0.95rem; }
+  .mobile-topbar .app-brand-lockup--topbar .app-brand-lockup__tagline { display: none; }
   .mobile-topbar .greet { max-width: 40vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mobile-topbar .gap-2 { gap: 0.4rem !important; }
   .mobile-topbar { flex-direction: column; align-items: stretch; }
@@ -1356,6 +1461,7 @@ body[data-theme="neonlite"] .enhanced-nav {
 @media (max-width: 360px) {
   .mobile-topbar-sub { display: none; }
   .mobile-topbar .brand-title { font-size: 0.9rem; }
+  .mobile-topbar .app-brand-lockup--topbar .app-brand-lockup__icon { height: 22px; }
   .coin-btn { width: 22px; height: 22px; min-width: 22px; }
   .coin-btn i { font-size: 0.82rem; }
 }
@@ -1439,7 +1545,7 @@ body.modal-open .modal-content {
   margin-top: auto;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
-.app-footer .footer-logo { height: 40px; width: auto; opacity: 0.98; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.12)); }
+.app-footer .footer-logo { width: auto; opacity: 0.98; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.12)); }
 @media (prefers-color-scheme: dark) {
   .app-footer { border-color: #1f2937; background-color: rgba(255, 255, 255, 0.04); }
   .app-footer .footer-logo { opacity: 1; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4)); }
@@ -2132,9 +2238,10 @@ body::after {
 /* Login title block styled with role-based gradients (matching navbar theme) */
 .login-title {
   color: #fff;
-  padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  padding: 1rem 1.2rem;
+  border-radius: 1rem;
+  box-shadow: 0 20px 44px rgba(11, 16, 32, 0.16);
+  border: 1px solid rgba(255,255,255,0.16);
 }
 .login-title .brand-title-main { font-weight: 700; font-size: 1.1rem; }
 .login-title .brand-title-sub  { font-weight: 500; font-size: 0.9rem; opacity: 0.95; }
@@ -2147,6 +2254,26 @@ body.role-clerk .login-title      { background-image: linear-gradient(90deg, #41
 body.role-student .login-title    { background-image: linear-gradient(90deg, #4B0082, #8000FF); }
 body.role-guest .login-title,
 body:not([class*="role-"]) .login-title { background-image: linear-gradient(90deg, #2F4F4F, #0A0A0A, #444444); }
+
+body[data-theme="pastelgrid"] .app-brand-lockup--hero .app-brand-lockup__name,
+body[data-theme="pastelgrid"] .app-brand-lockup--login .app-brand-lockup__name {
+  background: linear-gradient(90deg, #0f172a 0%, #2563eb 40%, #06b6d4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+body[data-theme="obsidian"] .app-brand-lockup--hero .app-brand-lockup__tagline,
+body[data-theme="obsidian"] .app-brand-lockup--topbar .app-brand-lockup__tagline,
+body[data-theme="neonlite"] .app-brand-lockup--hero .app-brand-lockup__tagline {
+  color: rgba(234,240,255,0.84);
+}
+body[data-theme="obsidian"] .app-brand-lockup--hero .app-brand-lockup__name,
+body[data-theme="neonlite"] .app-brand-lockup--hero .app-brand-lockup__name {
+  background: linear-gradient(90deg, rgba(255,255,255,0.98) 0%, rgba(191,219,254,0.98) 24%, rgba(34,211,238,0.98) 58%, rgba(52,211,153,0.94) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 
 /* Program-specific overrides: fine-tune gradients and accents per program identity */
 /* BBA: warm orange → deep orange accent */
