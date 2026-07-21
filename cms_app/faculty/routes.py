@@ -1,4 +1,4 @@
-from flask import render_template, flash, redirect, url_for, request
+from flask import render_template, flash, redirect, url_for, request, current_app
 from flask_login import login_required, current_user
 from .. import db
 from ..models import Faculty, CourseAssignment, Subject, Division, Program, TimetableSlot, TimetableSettings, Attendance, Student
@@ -27,7 +27,8 @@ def dashboard():
     faculty = _faculty_namespace(faculty_row)
 
     try:
-        _auto_release_empty_semester_course_assignments(getattr(current_user, "trust_id_fk", None))
+        if current_app.config.get("AUTO_RELEASE_EMPTY_SEMESTER_ASSIGNMENTS", False):
+            _auto_release_empty_semester_course_assignments(getattr(current_user, "trust_id_fk", None))
     except Exception:
         pass
         
@@ -77,7 +78,6 @@ def dashboard():
                 ),
             )
         )
-    
     # 3. Calculate Lecture Stats (Week/Month/Semester)
     # We need to count unique (date, period, subject, division) combinations for this faculty's assignments
     lecture_stats = {
@@ -87,7 +87,7 @@ def dashboard():
     }
     
     # Build list of (subject_id, division_id) for filtering
-    assigned_pairs = [(a.CourseAssignment.subject_id_fk, a.CourseAssignment.division_id_fk) for a in assignments]
+    assigned_pairs = [(assignment.subject_id_fk, assignment.division_id_fk) for assignment, _, _, _ in assignments]
     
     if assigned_pairs:
         # Define date ranges
@@ -235,11 +235,9 @@ def dashboard():
                             "total": total_lectures
                         })
         div_info = {}
-        for a in assignments:
-            div_id = a.Division.division_id
+        for _, _, div, prog in assignments:
+            div_id = div.division_id
             if div_id not in div_info:
-                prog = a.Program
-                div = a.Division
                 div_info[div_id] = {
                     "program_code": prog.program_code or prog.program_name,
                     "semester": div.semester,
