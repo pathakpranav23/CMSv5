@@ -229,7 +229,7 @@
       {% if breadcrumb_items and breadcrumb_items|length > 0 %}
       <div class="d-lg-none px-3 py-2 border-bottom" style="background: rgba(255,255,255,0.9);">
         <nav aria-label="breadcrumb">
-          <ol class="breadcrumb mb-0 small">
+          <ol class="breadcrumb app-caption-trail mb-0 small">
             {% for b in breadcrumb_items %}
               {% if b.url %}
                 <li class="breadcrumb-item"><a href="{{ b.url }}">{{ t(b.label) }}</a></li>
@@ -273,7 +273,7 @@
 
           {% if breadcrumb_items and breadcrumb_items|length > 0 %}
             <nav aria-label="breadcrumb" class="d-inline-block ms-2">
-              <ol class="breadcrumb mb-0 small">
+              <ol class="breadcrumb app-caption-trail mb-0 small">
                 {% for b in breadcrumb_items %}
                   {% if b.url %}
                     <li class="breadcrumb-item"><a href="{{ b.url }}">{{ t(b.label) }}</a></li>
