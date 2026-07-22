@@ -2,12 +2,14 @@
 {% block page_class %}page-login{% endblock %}
 {% block content %}
 <div class="container py-5" style="max-width:720px;">
-  <div class="text-center mb-3">
-    <img src="{{ url_for('static', filename='CODEP.png', v=1) }}" alt="CodeP Logo" class="brand-logo-xl" style="height: 96px; width:auto;" />
-  </div>
-  <div class="login-title mb-4 text-center">
-    <div class="brand-title-main">Cloud Education Management System</div>
-    <div class="brand-title-sub">Powered by CodeP</div>
+  <div class="login-title mb-4">
+    <div class="app-brand-lockup app-brand-lockup--login justify-content-center text-center">
+      <img src="{{ url_for('static', filename='CODEP.png', v=1) }}" alt="CodeP-CloudEMS logo" class="app-brand-lockup__icon" />
+      <div class="app-brand-lockup__text">
+        <div class="app-brand-lockup__name">CodeP-CloudEMS</div>
+        <div class="app-brand-lockup__tagline">Cloud-Based Education Management System</div>
+      </div>
+    </div>
   </div>
   <div class="row g-3 align-items-stretch">
     <div class="col-12 col-md-7">

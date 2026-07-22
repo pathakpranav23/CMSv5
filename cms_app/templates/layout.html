@@ -7,13 +7,13 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>{% block title %}{% endblock %}{% if self.title()|trim %} · {% endif %}CloudEMS</title>
+  <title>{% block title %}{% endblock %}{% if self.title()|trim %} · {% endif %}CodeP-CloudEMS</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap/css/bootstrap.min.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.css') }}">
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='CODEP.png', v=1) }}" />
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='CODEP.png', v=1) }}">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=4) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=5) }}">
   <script>
     const isLocalHost = ['127.0.0.1', 'localhost'].includes(window.location.hostname);
     if ('serviceWorker' in navigator) {
@@ -56,9 +56,12 @@
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <a class="d-flex align-items-center gap-2 text-decoration-none" href="{{ url_for('main.index') }}" title="CodeP-CloudEMS">
-          <img src="{{ url_for('static', filename='CODEP.png', v=1) }}" alt="CodeP Logo" />
-          <span class="fw-semibold" style="color: var(--nav-fg)">CodeP-CloudEMS</span>
+        <a class="app-brand-lockup app-brand-lockup--sidebar text-decoration-none" href="{{ url_for('main.index') }}" title="CodeP-CloudEMS">
+          <img src="{{ url_for('static', filename='CODEP.png', v=1) }}" alt="CodeP-CloudEMS logo" class="app-brand-lockup__icon" />
+          <span class="app-brand-lockup__text">
+            <span class="app-brand-lockup__name">CodeP-CloudEMS</span>
+            <span class="app-brand-lockup__tagline">Cloud-Based Education Management System</span>
+          </span>
           {% if program_name %}
             <span class="program-badge" title="Program">{{ program_name }}</span>
           {% endif %}
@@ -186,7 +189,12 @@
       <div class="mobile-topbar d-lg-none d-flex align-items-center justify-content-between px-3 py-2" style="background: var(--nav-bg); color: var(--nav-fg);">
         <div class="mobile-topbar-row d-flex align-items-center justify-content-between w-100">
           <button class="coin-btn" id="sidebarToggle" aria-label="Menu" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Menu"><i class="bi bi-list"></i></button>
-          <span class="fw-bold brand-title">CodeP-CloudEMS</span>
+          <a class="app-brand-lockup app-brand-lockup--topbar text-decoration-none" href="{{ url_for('main.index') }}" title="CodeP-CloudEMS">
+            <img src="{{ url_for('static', filename='CODEP.png', v=1) }}" alt="CodeP-CloudEMS logo" class="app-brand-lockup__icon" />
+            <span class="app-brand-lockup__text">
+              <span class="app-brand-lockup__name brand-title">CodeP-CloudEMS</span>
+            </span>
+          </a>
           <div class="d-flex align-items-center gap-2">
             <a class="coin-btn topbar-btn--dash" href="{{ url_for('main.dashboard') }}" aria-label="Dashboard" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Dashboard"><i class="bi bi-house"></i></a>
             {% if current_user.is_authenticated and current_user.is_super_admin %}
@@ -343,12 +351,17 @@
       <footer class="app-footer">
         <div class="container py-3">
           <div class="row align-items-center justify-content-center gy-2 text-center">
-            <div class="col-12 col-md-3">
-              <img src="{{ url_for('static', filename='CODEP-LOGO-6.png') }}" alt="CODEP Company Logo" class="footer-logo" loading="lazy" decoding="async" fetchpriority="low" />
+            <div class="col-12 col-md-4">
+              <a class="app-brand-lockup app-brand-lockup--footer justify-content-center text-decoration-none" href="{{ url_for('main.index') }}" title="CodeP-CloudEMS">
+                <img src="{{ url_for('static', filename='CODEP.png', v=1) }}" alt="CodeP-CloudEMS logo" class="app-brand-lockup__icon footer-logo" loading="lazy" decoding="async" fetchpriority="low" />
+                <span class="app-brand-lockup__text">
+                  <span class="app-brand-lockup__name">CodeP-CloudEMS</span>
+                  <span class="app-brand-lockup__tagline">Cloud-Based Education Management System</span>
+                </span>
+              </a>
             </div>
-            <div class="col-12 col-md-6">
+            <div class="col-12 col-md-5">
               <div class="footer-brand">
-                <div class="small fw-semibold">CodeP-CloudEMS</div>
                 {% if ctx_active_trust %}
                   <div class="small text-muted">Workspace: {{ ctx_active_trust.trust_name }}{% if ctx_active_institute %} • {{ ctx_active_institute.institute_name }}{% endif %}</div>
                 {% else %}

@@ -1,7 +1,7 @@
 {
-  "name": "Parekh Colleges CMS",
-  "short_name": "SBPET CMS",
-  "description": "Student and Faculty Portal for Shri Balvant Parekh Education Trust",
+  "name": "CodeP-CloudEMS",
+  "short_name": "CloudEMS",
+  "description": "Cloud-Based Education Management System for multi-role academic operations",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
