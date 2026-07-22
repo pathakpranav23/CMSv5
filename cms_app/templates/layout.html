@@ -52,7 +52,7 @@
   {% endif %}
 </head>
 <body class="role-{{ (current_user.role|lower) if (current_user.is_authenticated) else 'guest' }} {% if current_user.is_authenticated and current_user.is_super_admin and not ctx_active_trust %}su-global{% endif %} {% if program_slug %}program-{{ program_slug }}{% endif %} {{ page_class|default('') }} {% block page_class %}{% endblock %} {% if not info_hints_enabled %}hints-off{% endif %} {% if (lang_code or 'en') == 'gu' %}lang-gu{% endif %}"
-      data-theme="{{ theme|default('aurora') }}">
+      data-theme="{{ theme|default('college_saas') }}">
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">

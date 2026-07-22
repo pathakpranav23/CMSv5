@@ -134,6 +134,28 @@ body[data-theme="aurora"] {
   --accent-danger: #fb7185;
 }
 
+body[data-theme="college_saas"],
+body[data-theme="lightblue"] {
+  --surface-bg: #f4faff;
+  --text-color: #0b1220;
+  --text-muted: #516579;
+  --border-color: #d9e7f2;
+  --nav-bg: #071a2c;
+  --nav-fg: rgba(255, 255, 255, 0.96);
+  --card-header-bg: rgba(255, 255, 255, 0.92);
+  --card-border: #d9e7f2;
+  --card-bg: #ffffff;
+  --shadow-soft: 0 14px 34px rgba(7, 26, 44, 0.10);
+  --shadow-strong: 0 20px 52px rgba(7, 26, 44, 0.14);
+  --focus-ring: 0 0 0 0.25rem rgba(34, 211, 238, 0.22);
+  --accent-cyan: #22d3ee;
+  --accent-indigo: #0b5e6b;
+  --accent-mint: #34d399;
+  --accent-warn: #f59e0b;
+  --accent-danger: #ef4444;
+  --accent-gold: #b88a22;
+}
+
 body[data-theme="pastelgrid"] {
   --surface-bg: #f7f9ff;
   --text-color: #0b1020;
@@ -152,6 +174,26 @@ body[data-theme="pastelgrid"] {
   --accent-mint: #34d399;
   --accent-warn: #f59e0b;
   --accent-danger: #fb7185;
+}
+
+body[data-theme="college_saas"],
+body[data-theme="lightblue"] {
+  background:
+    radial-gradient(1100px 520px at 12% 0%, rgba(34, 211, 238, 0.12), transparent 62%),
+    radial-gradient(1100px 520px at 92% 0%, rgba(11, 94, 107, 0.10), transparent 64%),
+    linear-gradient(180deg, rgba(244, 250, 255, 1) 0%, rgba(255, 255, 255, 1) 55%, rgba(244, 250, 255, 1) 100%);
+  background-attachment: fixed;
+}
+
+body[data-theme="college_saas"].page-login,
+body[data-theme="lightblue"].page-login,
+body[data-theme="college_saas"].page-index,
+body[data-theme="lightblue"].page-index {
+  background:
+    radial-gradient(1200px 560px at 14% 0%, rgba(34, 211, 238, 0.16), transparent 60%),
+    radial-gradient(1200px 560px at 92% 0%, rgba(11, 94, 107, 0.14), transparent 62%),
+    linear-gradient(180deg, rgba(7, 26, 44, 0.03) 0%, rgba(244, 250, 255, 1) 55%, rgba(255, 255, 255, 1) 100%);
+  background-attachment: fixed;
 }
 
 body[data-theme="pastelgrid"] {
