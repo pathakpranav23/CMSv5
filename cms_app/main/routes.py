@@ -6843,7 +6843,7 @@ def faculty_new():
                     "certifications": certifications,
                     "medium_expertise": medium_raw,
                 },
-                theme="lightblue",
+                theme="college_saas",
             )
 
         # Build extra_data JSON for long-tail fields
@@ -7317,7 +7317,7 @@ def faculty_edit(faculty_id: int):
     except Exception:
         linked_username = ""
     form_data["linked_username"] = linked_username
-    return render_template("faculty_edit.html", programs=programs, errors=[], form_data=form_data, faculty_id=faculty_id, theme="lightblue")
+    return render_template("faculty_edit.html", programs=programs, errors=[], form_data=form_data, faculty_id=faculty_id, theme="college_saas")
 
 
 @main_bp.route("/faculty/<int:faculty_id>/delete", methods=["POST"])
