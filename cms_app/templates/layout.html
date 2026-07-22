@@ -520,6 +520,41 @@
       if (toggleBtn) { toggleBtn.addEventListener('click', function() { toggleSidebar(); }); }
       if (backdrop) { backdrop.addEventListener('click', function() { toggleSidebar(false); }); }
 
+      // Match the current URL to the closest sidebar link and highlight it.
+      var currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+      var sidebarLinks = Array.prototype.slice.call(document.querySelectorAll('.sidebar .nav a[href]'));
+      var bestMatch = null;
+      sidebarLinks.forEach(function(link) {
+        var href = link.getAttribute('href');
+        if (!href || href.charAt(0) === '#') return;
+        try {
+          var url = new URL(href, window.location.origin);
+          var linkPath = url.pathname.replace(/\/+$/, '') || '/';
+          if (linkPath === '/' || currentPath === '/') {
+            if (linkPath === currentPath && (!bestMatch || linkPath.length > bestMatch.path.length)) {
+              bestMatch = { link: link, path: linkPath };
+            }
+            return;
+          }
+          if ((currentPath === linkPath || currentPath.indexOf(linkPath + '/') === 0) && (!bestMatch || linkPath.length > bestMatch.path.length)) {
+            bestMatch = { link: link, path: linkPath };
+          }
+        } catch (e) {}
+      });
+      if (bestMatch && bestMatch.link) {
+        bestMatch.link.classList.add('is-active');
+        bestMatch.link.setAttribute('aria-current', 'page');
+        var openCollapse = bestMatch.link.closest('.collapse');
+        if (openCollapse) {
+          openCollapse.classList.add('show');
+          var toggle = document.querySelector('[href="#' + openCollapse.id + '"]');
+          if (toggle) {
+            toggle.classList.add('is-active');
+            toggle.setAttribute('aria-expanded', 'true');
+          }
+        }
+      }
+
       // Enhanced Navigation: Scroll controls (desktop only)
       var scrollToTopBtns = document.querySelectorAll('#scrollToTop');
       var scrollToBottomBtns = document.querySelectorAll('#scrollToBottom');

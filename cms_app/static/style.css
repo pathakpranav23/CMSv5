@@ -341,6 +341,84 @@ body[data-theme="aurora"] .sidebar .nav a { color: rgba(255,255,255,0.92); }
 body[data-theme="aurora"] .sidebar .nav a:hover { background: rgba(255,255,255,0.10); }
 body[data-theme="aurora"] .module-icon { background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.14); color: rgba(255,255,255,0.92); }
 
+body[data-theme="college_saas"] .btn-primary,
+body[data-theme="lightblue"] .btn-primary {
+  background: linear-gradient(135deg, #071a2c 0%, #0b2a3c 42%, #0b5e6b 100%);
+  border: 0;
+  color: #ffffff;
+  box-shadow: 0 14px 32px rgba(7, 26, 44, 0.18), 0 8px 20px rgba(34, 211, 238, 0.10);
+}
+body[data-theme="college_saas"] .btn-primary:hover,
+body[data-theme="college_saas"] .btn-primary:focus,
+body[data-theme="lightblue"] .btn-primary:hover,
+body[data-theme="lightblue"] .btn-primary:focus {
+  transform: translateY(-1px);
+  color: #ffffff;
+  box-shadow: 0 18px 40px rgba(7, 26, 44, 0.22), 0 10px 26px rgba(34, 211, 238, 0.16);
+}
+body[data-theme="college_saas"] .btn-outline-secondary,
+body[data-theme="lightblue"] .btn-outline-secondary {
+  border-color: rgba(11, 42, 60, 0.16);
+  color: #0b2a3c;
+  background: rgba(255, 255, 255, 0.72);
+}
+body[data-theme="college_saas"] .btn-outline-secondary:hover,
+body[data-theme="college_saas"] .btn-outline-secondary:focus,
+body[data-theme="lightblue"] .btn-outline-secondary:hover,
+body[data-theme="lightblue"] .btn-outline-secondary:focus {
+  border-color: rgba(11, 94, 107, 0.24);
+  background: rgba(11, 94, 107, 0.06);
+  color: #071a2c;
+}
+body[data-theme="college_saas"] .sidebar,
+body[data-theme="lightblue"] .sidebar {
+  background:
+    radial-gradient(760px 420px at 14% 8%, rgba(34, 211, 238, 0.16), transparent 58%),
+    radial-gradient(760px 420px at 88% 16%, rgba(11, 94, 107, 0.14), transparent 62%),
+    linear-gradient(180deg, rgba(7, 26, 44, 0.98), rgba(11, 42, 60, 0.96));
+  border-right: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 22px 60px rgba(7, 26, 44, 0.22);
+}
+body[data-theme="college_saas"] .sidebar .nav a,
+body[data-theme="lightblue"] .sidebar .nav a {
+  border-radius: 12px;
+  transition: background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+body[data-theme="college_saas"] .sidebar .nav a:hover,
+body[data-theme="lightblue"] .sidebar .nav a:hover {
+  background: rgba(255,255,255,0.08);
+  transform: translateX(1px);
+}
+body[data-theme="college_saas"] .sidebar .nav a[aria-current="page"],
+body[data-theme="college_saas"] .sidebar .nav a.is-active,
+body[data-theme="lightblue"] .sidebar .nav a[aria-current="page"],
+body[data-theme="lightblue"] .sidebar .nav a.is-active {
+  background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(34,211,238,0.18));
+  color: #ffffff;
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(34, 211, 238, 0.06);
+}
+body[data-theme="college_saas"] .sidebar .nav a[aria-current="page"] .module-icon,
+body[data-theme="college_saas"] .sidebar .nav a.is-active .module-icon,
+body[data-theme="lightblue"] .sidebar .nav a[aria-current="page"] .module-icon,
+body[data-theme="lightblue"] .sidebar .nav a.is-active .module-icon {
+  background: linear-gradient(135deg, rgba(255,255,255,0.20), rgba(34,211,238,0.22));
+  border-color: rgba(255,255,255,0.20);
+  box-shadow: 0 8px 18px rgba(34, 211, 238, 0.16);
+}
+body[data-theme="college_saas"] .module-icon,
+body[data-theme="lightblue"] .module-icon {
+  background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(34,211,238,0.08));
+  border-color: rgba(255,255,255,0.14);
+}
+body[data-theme="college_saas"] .brand-title,
+body[data-theme="lightblue"] .brand-title {
+  background: linear-gradient(90deg, rgba(255,255,255,0.98), rgba(191, 239, 248, 0.98), rgba(34,211,238,0.94), rgba(255,255,255,0.98));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 .text-muted { color: var(--text-muted) !important; }
 
 body[data-theme="obsidian"] a { color: var(--accent-cyan); }
