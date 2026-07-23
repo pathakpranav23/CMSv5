@@ -4,7 +4,7 @@ import os
 import csv
 from datetime import datetime
 from typing import Dict, List
-from sqlalchemy import select
+from sqlalchemy import func, select
 from werkzeug.security import generate_password_hash
 from sqlalchemy.exc import OperationalError
 
