@@ -546,6 +546,22 @@ class Announcement(db.Model):
     audiences = db.relationship("AnnouncementAudience", backref="announcement", lazy=True)
 
 
+class AnnouncementRevision(db.Model):
+    __tablename__ = "announcement_revisions"
+    revision_id = db.Column(db.Integer, primary_key=True)
+    announcement_id_fk = db.Column(db.Integer, db.ForeignKey("announcements.announcement_id"), nullable=False)
+    version = db.Column(db.Integer, nullable=False)
+    title = db.Column(db.String(128), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    severity = db.Column(db.String(16))
+    is_active = db.Column(db.Boolean, default=True)
+    program_id_fk = db.Column(db.Integer)
+    start_at = db.Column(db.DateTime)
+    end_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    actor_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+
+
 class AnnouncementAudience(db.Model):
     __tablename__ = "announcement_audience"
     audience_id = db.Column(db.Integer, primary_key=True)
@@ -595,6 +611,20 @@ class SubjectMaterial(db.Model):
     is_flagged = db.Column(db.Boolean)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime)
+
+
+class MaterialRevision(db.Model):
+    __tablename__ = "material_revisions"
+    revision_id = db.Column(db.Integer, primary_key=True)
+    material_id_fk = db.Column(db.Integer, db.ForeignKey("subject_materials.material_id"), nullable=False)
+    version = db.Column(db.Integer, nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    kind = db.Column(db.String(16), nullable=False)
+    file_path = db.Column(db.String(255))
+    external_url = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=utc_now)
+    actor_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
 
 
 class SubjectMaterialLog(db.Model):
