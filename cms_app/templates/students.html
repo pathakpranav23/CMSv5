@@ -130,13 +130,66 @@
   <span class="ms-2"><code>scripts/import_students.py</code> imports Excel data.</span>
   
 
- 
+{% if students and students|length > 0 %}
+<form id="studentsBulkForm" method="post" action="{{ url_for('main.students_bulk_set_active') }}" class="mb-3">
+  <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+  <div class="card border-0 shadow-sm">
+    <div class="card-body py-3 d-flex flex-column gap-3">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div class="fw-semibold">Bulk Actions <span class="text-muted small ms-2" id="studentsSelectedCount">0 selected of {{ students|length }}</span></div>
+        <div class="d-flex flex-wrap gap-2">
+          {% if students_credentials_download_url %}
+          <a class="btn btn-sm btn-outline-dark" href="{{ students_credentials_download_url }}">Export Credentials Sheet</a>
+          {% endif %}
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllStudentsRows(true);">Select Page</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllStudentsRows(false);">Clear</button>
+        </div>
+      </div>
+      <div class="small text-muted" id="studentsBulkHint">Choose one or more students to enable bulk actions.</div>
+      <div class="d-flex flex-wrap gap-2">
+        <button type="submit" class="btn btn-sm btn-outline-success bulk-selection-required" onclick="return submitStudentsBulk('{{ url_for('main.students_bulk_set_active') }}', 'true');">Activate</button>
+        <button type="submit" class="btn btn-sm btn-outline-warning bulk-selection-required" onclick="return submitStudentsBulk('{{ url_for('main.students_bulk_set_active') }}', 'false');">Archive</button>
+        <button type="submit" class="btn btn-sm btn-outline-info bulk-selection-required" onclick="return submitStudentsBulk('{{ url_for('main.students_bulk_provision_users') }}');">Create User Accounts</button>
+        <button type="submit" class="btn btn-sm btn-outline-primary bulk-selection-required" onclick="return submitStudentsBulk('{{ url_for('main.students_bulk_export') }}');">Export Selected</button>
+      </div>
+      <div class="row g-2 align-items-end">
+        <div class="col-12 col-lg-6">
+          <label class="form-label form-label-sm mb-1" for="studentsBulkTargetDivisionId">Assign Division</label>
+          <div class="input-group input-group-sm">
+            <select name="target_division_id" id="studentsBulkTargetDivisionId" class="form-select">
+              <option value="">Choose division</option>
+              {% for div in bulk_division_list %}
+                <option value="{{ div.division_id }}">Sem {{ div.semester }} - {{ div.division_code }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-outline-secondary bulk-selection-required" onclick="return submitStudentsAssignDivision();">Assign</button>
+          </div>
+        </div>
+        <div class="col-12 col-lg-4">
+          <label class="form-label form-label-sm mb-1" for="studentsBulkTargetSemester">Promote Semester</label>
+          <div class="input-group input-group-sm">
+            <select name="target_semester" id="studentsBulkTargetSemester" class="form-select">
+              <option value="">Choose semester</option>
+              {% for sem in range(1, 9) %}
+                <option value="{{ sem }}">Semester {{ sem }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-outline-secondary bulk-selection-required" onclick="return submitStudentsPromoteSemester();">Promote</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <input type="hidden" name="set_active" id="studentsBulkSetActive" value="true" />
+  </div>
+</form>
+{% endif %}
 
 {% if students and students|length > 0 %}
 <div class="table-responsive">
   <table class="table table-sm table-striped align-middle">
     <thead>
       <tr>
+        <th><input type="checkbox" id="studentsSelectAll" onclick="toggleStudentsSelection(this)" /></th>
         <th>#</th>
         <th>Photo</th>
         <th>Enrollment No.</th>
@@ -156,6 +209,7 @@
       {% for s in students %}
       {% set sem_div = division_map.get(s.division_id_fk) %}
       <tr>
+        <td><input type="checkbox" class="student-row-checkbox" name="selected_ids" value="{{ s.enrollment_no }}" form="studentsBulkForm" onchange="updateStudentsSelectedCount()" /></td>
         <td>{{ loop.index }}</td>
         <td>
           {% if s.photo_url %}
@@ -213,6 +267,81 @@
 {% endif %}
 
 <script>
+function updateStudentsSelectedCount() {
+  var boxes = document.querySelectorAll('.student-row-checkbox');
+  var checked = document.querySelectorAll('.student-row-checkbox:checked').length;
+  var counter = document.getElementById('studentsSelectedCount');
+  var hint = document.getElementById('studentsBulkHint');
+  var requiresSelection = document.querySelectorAll('.bulk-selection-required');
+  if (counter) {
+    counter.textContent = checked + ' selected of ' + boxes.length;
+  }
+  if (hint) {
+    hint.textContent = checked
+      ? 'Ready to update ' + checked + ' selected student' + (checked === 1 ? '' : 's') + '.'
+      : 'Choose one or more students to enable bulk actions.';
+  }
+  requiresSelection.forEach(function(control) {
+    control.disabled = checked === 0;
+  });
+  var selectAll = document.getElementById('studentsSelectAll');
+  if (selectAll) {
+    selectAll.indeterminate = checked > 0 && checked < boxes.length;
+    selectAll.checked = boxes.length > 0 && checked === boxes.length;
+  }
+}
+
+function toggleStudentsSelection(master) {
+  document.querySelectorAll('.student-row-checkbox').forEach(function(box) {
+    box.checked = master.checked;
+  });
+  updateStudentsSelectedCount();
+}
+
+function selectAllStudentsRows(checked) {
+  document.querySelectorAll('.student-row-checkbox').forEach(function(box) {
+    box.checked = checked;
+  });
+  var selectAll = document.getElementById('studentsSelectAll');
+  if (selectAll) {
+    selectAll.checked = checked;
+    selectAll.indeterminate = false;
+  }
+  updateStudentsSelectedCount();
+}
+
+function submitStudentsBulk(actionUrl, setActiveValue) {
+  var checked = document.querySelectorAll('.student-row-checkbox:checked').length;
+  if (!checked) {
+    alert('Select at least one student first.');
+    return false;
+  }
+  var form = document.getElementById('studentsBulkForm');
+  form.action = actionUrl;
+  if (setActiveValue !== undefined) {
+    document.getElementById('studentsBulkSetActive').value = setActiveValue;
+  }
+  return true;
+}
+
+function submitStudentsAssignDivision() {
+  var targetDivisionId = document.getElementById('studentsBulkTargetDivisionId').value.trim();
+  if (!targetDivisionId) {
+    alert('Choose a target division first.');
+    return false;
+  }
+  return submitStudentsBulk('{{ url_for('main.students_bulk_assign_division') }}');
+}
+
+function submitStudentsPromoteSemester() {
+  var targetSemester = document.getElementById('studentsBulkTargetSemester').value.trim();
+  if (!targetSemester) {
+    alert('Choose a target semester first.');
+    return false;
+  }
+  return submitStudentsBulk('{{ url_for('main.students_bulk_promote_semester') }}');
+}
+
 function filterStudents() {
   var input, filter, table, tr, td, i, txtValue;
   input = document.getElementById("clientSearchInput");
@@ -231,5 +360,7 @@ function filterStudents() {
     }
   }
 }
+
+updateStudentsSelectedCount();
 </script>
 {% endblock %}

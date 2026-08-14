@@ -23,8 +23,6 @@
     </div>
   </div>
 
-  
-
   <form class="filters row g-1 g-md-3 mb-3" method="get" action="{{ url_for('main.subjects_list') }}">
     {% set role_lower = (current_user.role|lower) if current_user.is_authenticated else 'guest' %}
     {% set user_program_id = current_user.program_id_fk if current_user.is_authenticated else None %}
@@ -80,6 +78,57 @@
   <div class="card">
     <div class="card-header card-header-standard"><div class="card-title">Subjects List</div></div>
     <div class="card-body p-0">
+      {% if rows and rows|length > 0 %}
+      <form id="subjectsBulkForm" method="post" action="{{ url_for('main.subjects_bulk_set_active') }}" class="px-3 pt-3">
+        <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+        <input type="hidden" name="set_active" id="subjectsBulkSetActive" value="true" />
+        <input type="hidden" name="action" id="subjectsBulkElectiveAction" value="" />
+        <div class="card border-0 shadow-sm mb-3">
+          <div class="card-body py-3 d-flex flex-column gap-3">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+              <div class="fw-semibold">Bulk Actions <span class="text-muted small ms-2" id="subjectsSelectedCount">0 selected of {{ rows|length }}</span></div>
+              <div class="d-flex flex-wrap gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllSubjectsRows(true);">Select Page</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllSubjectsRows(false);">Clear</button>
+              </div>
+            </div>
+            <div class="small text-muted" id="subjectsBulkHint">Choose one or more subjects to enable bulk actions.</div>
+            <div class="d-flex flex-wrap gap-2">
+              <button type="submit" class="btn btn-sm btn-outline-success bulk-selection-required" onclick="return submitSubjectsBulk('{{ url_for('main.subjects_bulk_set_active') }}', 'true');">Activate</button>
+              <button type="submit" class="btn btn-sm btn-outline-warning bulk-selection-required" onclick="return submitSubjectsBulk('{{ url_for('main.subjects_bulk_set_active') }}', 'false');">Deactivate</button>
+              <button type="submit" class="btn btn-sm btn-outline-secondary bulk-selection-required" onclick="return submitSubjectsElectiveAction('make_elective');">Make Elective</button>
+              <button type="submit" class="btn btn-sm btn-outline-secondary bulk-selection-required" onclick="return submitSubjectsElectiveAction('make_core');">Make Core</button>
+              <button type="submit" class="btn btn-sm btn-outline-primary bulk-selection-required" onclick="return submitSubjectsBulk('{{ url_for('main.subjects_bulk_export') }}');">Export Selected</button>
+            </div>
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-lg-5">
+                <label class="form-label form-label-sm mb-1" for="subjectsBulkFacultyUserId">Assign Faculty</label>
+                <select name="faculty_user_id" id="subjectsBulkFacultyUserId" class="form-select form-select-sm">
+                  <option value="">Choose faculty</option>
+                  {% for faculty_user_id, faculty_name in faculty_options %}
+                    <option value="{{ faculty_user_id }}">{{ faculty_name }} (User {{ faculty_user_id }})</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12 col-lg-3">
+                <label class="form-label form-label-sm mb-1" for="subjectsBulkAcademicYear">Academic Year</label>
+                <input type="text" name="academic_year" id="subjectsBulkAcademicYear" class="form-control form-control-sm" value="{{ current_ay }}" placeholder="2026-27" />
+              </div>
+              <div class="col-12 col-lg-2">
+                <label class="form-label form-label-sm mb-1" for="subjectsBulkAssignmentRole">Role</label>
+                <select name="assignment_role" id="subjectsBulkAssignmentRole" class="form-select form-select-sm">
+                  <option value="primary">Primary</option>
+                  <option value="co">Co</option>
+                </select>
+              </div>
+              <div class="col-12 col-lg-2">
+                <button type="submit" class="btn btn-sm btn-outline-secondary w-100 bulk-selection-required" onclick="return submitSubjectsAssignFaculty();">Assign Faculty</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </form>
+      {% endif %}
       <div class="px-3 py-2 d-flex justify-content-between align-items-center">
         <div class="input-group input-group-sm" style="max-width:240px;">
           <span class="input-group-text">{{ t('Per Page') }}</span>
@@ -98,6 +147,7 @@
         <table class="table table-modern table-striped table-hover mb-0">
           <thead class="table-light">
             <tr>
+              <th scope="col"><input type="checkbox" id="subjectsSelectAll" onclick="toggleSubjectsSelection(this)" /></th>
               <th scope="col">Code</th>
               <th scope="col">Paper Code</th>
               <th scope="col">Subject</th>
@@ -115,8 +165,9 @@
           <tbody>
             {% for r in rows %}
             <tr>
-              <td>{{ r.subject_code or '—' }}</td>
-              <td>{{ r.paper_code or '—' }}</td>
+              <td><input type="checkbox" class="subject-row-checkbox" name="selected_ids" value="{{ r.subject_id }}" form="subjectsBulkForm" onchange="updateSubjectsSelectedCount()" /></td>
+              <td>{{ r.subject_code or '&mdash;'|safe }}</td>
+              <td>{{ r.paper_code or '&mdash;'|safe }}</td>
               <td>
                 {{ r.subject_name }}
                 {% if r.is_elective %}
@@ -127,10 +178,10 @@
                 {% if r.medium_tag %}
                   <span class="badge bg-info text-dark">{{ r.medium_tag }}</span>
                 {% else %}
-                  —
+                  &mdash;
                 {% endif %}
               </td>
-              <td>{{ r.type_name }}</td>
+              <td>{{ r.type_code }}</td>
               <td class="text-center">{{ r.theory_credits }}</td>
               <td class="text-center">{{ r.practical_credits }}</td>
               <td class="text-center">{{ r.total_credits }}</td>
@@ -165,7 +216,7 @@
   {% set start_idx = ((selected_page - 1) * selected_limit) + 1 %}
   {% set end_idx = (start_idx + rows|length - 1) %}
   <div class="d-flex justify-content-between align-items-center mt-2">
-    <div class="small text-muted">Showing {{ start_idx if total_count else 0 }}–{{ end_idx if total_count else 0 }} of {{ total_count or 0 }}</div>
+    <div class="small text-muted">Showing {{ start_idx if total_count else 0 }}&ndash;{{ end_idx if total_count else 0 }} of {{ total_count or 0 }}</div>
     {% set base_url = url_for('main.subjects_list') %}
     {% set prev_page = selected_page - 1 %}
     {% set next_page = selected_page + 1 %}
@@ -196,10 +247,92 @@
 </div>
 
 <script>
+function updateSubjectsSelectedCount() {
+  var boxes = document.querySelectorAll('.subject-row-checkbox');
+  var checked = document.querySelectorAll('.subject-row-checkbox:checked').length;
+  var counter = document.getElementById('subjectsSelectedCount');
+  var hint = document.getElementById('subjectsBulkHint');
+  var requiresSelection = document.querySelectorAll('.bulk-selection-required');
+  if (counter) {
+    counter.textContent = checked + ' selected of ' + boxes.length;
+  }
+  if (hint) {
+    hint.textContent = checked
+      ? 'Ready to update ' + checked + ' selected subject' + (checked === 1 ? '' : 's') + '.'
+      : 'Choose one or more subjects to enable bulk actions.';
+  }
+  requiresSelection.forEach(function(control) {
+    control.disabled = checked === 0;
+  });
+  var selectAll = document.getElementById('subjectsSelectAll');
+  if (selectAll) {
+    selectAll.indeterminate = checked > 0 && checked < boxes.length;
+    selectAll.checked = boxes.length > 0 && checked === boxes.length;
+  }
+}
+
+function toggleSubjectsSelection(master) {
+  document.querySelectorAll('.subject-row-checkbox').forEach(function(box) {
+    box.checked = master.checked;
+  });
+  updateSubjectsSelectedCount();
+}
+
+function selectAllSubjectsRows(checked) {
+  document.querySelectorAll('.subject-row-checkbox').forEach(function(box) {
+    box.checked = checked;
+  });
+  var selectAll = document.getElementById('subjectsSelectAll');
+  if (selectAll) {
+    selectAll.checked = checked;
+    selectAll.indeterminate = false;
+  }
+  updateSubjectsSelectedCount();
+}
+
+function submitSubjectsBulk(actionUrl, setActiveValue) {
+  var checked = document.querySelectorAll('.subject-row-checkbox:checked').length;
+  if (!checked) {
+    alert('Select at least one subject first.');
+    return false;
+  }
+  var form = document.getElementById('subjectsBulkForm');
+  form.action = actionUrl;
+  if (setActiveValue !== undefined) {
+    document.getElementById('subjectsBulkSetActive').value = setActiveValue;
+  }
+  return true;
+}
+
+function submitSubjectsAssignFaculty() {
+  var facultyUserId = document.getElementById('subjectsBulkFacultyUserId').value.trim();
+  if (!facultyUserId) {
+    alert('Choose a faculty first.');
+    return false;
+  }
+  var academicYear = document.getElementById('subjectsBulkAcademicYear').value.trim();
+  if (!academicYear) {
+    alert('Academic year is required.');
+    return false;
+  }
+  var assignmentRole = document.getElementById('subjectsBulkAssignmentRole').value.trim().toLowerCase();
+  if (!assignmentRole) {
+    assignmentRole = 'primary';
+  }
+  return submitSubjectsBulk('{{ url_for('main.subjects_bulk_assign_faculty') }}');
+}
+
+function submitSubjectsElectiveAction(actionName) {
+  document.getElementById('subjectsBulkElectiveAction').value = actionName;
+  return submitSubjectsBulk('{{ url_for('main.subjects_bulk_toggle_elective') }}');
+}
+
 function showAssignStaffModal() {
   var modal = new bootstrap.Modal(document.getElementById('assignStaffModal'));
   modal.show();
 }
+
+updateSubjectsSelectedCount();
 </script>
 
 {% endblock %}

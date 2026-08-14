@@ -3,15 +3,14 @@
 <div class="container py-4">
   <div class="section-header d-flex justify-content-between align-items-center mb-3">
     {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
-<h2 class="mb-0 title d-flex align-items-center">Staff <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
+    <h2 class="mb-0 title d-flex align-items-center">Staff <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
     <div class="actions">
       {% if current_user.is_authenticated and (current_user.role|lower in ['admin','principal']) %}
-<a class="btn btn-primary btn-sm" href="{{ url_for('main.faculty_new') }}">New Staff</a>
+      <a class="btn btn-primary btn-sm" href="{{ url_for('main.faculty_new') }}">New Staff</a>
       {% endif %}
     </div>
   </div>
 
-  <!-- Filters: compact input-group pattern for consistency -->
   <form class="filters row g-1 g-md-3 mb-3" method="get" action="{{ url_for('main.faculty_list') }}">
     <div class="col-md-6">
       <div class="input-group input-group-sm">
@@ -19,30 +18,30 @@
         <input type="text" name="q" class="form-control form-control-sm" placeholder="Name or email" value="{{ request.args.get('q','') }}">
       </div>
     </div>
-  <div class="col-md-4 col-lg-3">
-    <div class="input-group input-group-sm">
-      <span class="input-group-text">Role</span>
-      {% set sel_role = request.args.get('role','') %}
-      <select name="role" class="form-select form-select-sm">
-        <option value="">All</option>
-        <option value="admin" {% if sel_role=='admin' %}selected{% endif %}>Admin</option>
-        <option value="principal" {% if sel_role=='principal' %}selected{% endif %}>Principal</option>
-        <option value="faculty" {% if sel_role=='faculty' %}selected{% endif %}>Staff</option>
-        <option value="clerk" {% if sel_role=='clerk' %}selected{% endif %}>Clerk</option>
-      </select>
+    <div class="col-md-4 col-lg-3">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">Role</span>
+        {% set sel_role = request.args.get('role','') %}
+        <select name="role" class="form-select form-select-sm">
+          <option value="">All</option>
+          <option value="admin" {% if sel_role == 'admin' %}selected{% endif %}>Admin</option>
+          <option value="principal" {% if sel_role == 'principal' %}selected{% endif %}>Principal</option>
+          <option value="faculty" {% if sel_role == 'faculty' %}selected{% endif %}>Staff</option>
+          <option value="clerk" {% if sel_role == 'clerk' %}selected{% endif %}>Clerk</option>
+        </select>
+      </div>
     </div>
-  </div>
-  <div class="col-md-4 col-lg-3">
-    <div class="input-group input-group-sm">
-      <span class="input-group-text">Prog</span>
-      <select name="program_id" class="form-select form-select-sm" {% if current_user.is_authenticated and (current_user.role or '').lower()=='principal' %}disabled{% endif %}>
-        <option value="">All</option>
-        {% for p in program_list %}
-          <option value="{{ p.program_id }}" {% if selected_program_id==p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
-        {% endfor %}
-      </select>
+    <div class="col-md-4 col-lg-3">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text">Prog</span>
+        <select name="program_id" class="form-select form-select-sm" {% if current_user.is_authenticated and (current_user.role or '').lower() == 'principal' %}disabled{% endif %}>
+          <option value="">All</option>
+          {% for p in program_list %}
+          <option value="{{ p.program_id }}" {% if selected_program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
     </div>
-  </div>
     <div class="col-md-2 col-lg-3">
       <div class="filter-actions d-flex flex-column flex-md-row gap-2">
         <button type="submit" class="btn btn-primary btn-sm">Search</button>
@@ -51,37 +50,130 @@
     </div>
   </form>
 
+  {% if rows and rows|length > 0 %}
+  <form id="facultyBulkForm" method="post" action="{{ url_for('main.faculty_bulk_provision_users') }}" class="mb-3">
+    <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+    <div class="card border-0 shadow-sm">
+      <div class="card-body py-3 d-flex flex-column gap-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div class="fw-semibold">Bulk Actions <span class="text-muted small ms-2" id="facultySelectedCount">0 selected of {{ rows|length }}</span></div>
+          <div class="d-flex flex-wrap gap-2">
+            {% if faculty_credentials_download_url %}
+            <a class="btn btn-sm btn-outline-dark" href="{{ faculty_credentials_download_url }}">Export Credentials Sheet</a>
+            {% endif %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllFacultyRows(true);">Select Page</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllFacultyRows(false);">Clear</button>
+          </div>
+        </div>
+        <div class="small text-muted" id="facultyBulkHint">Choose one or more unlinked staff records to create login accounts.</div>
+        <div class="d-flex flex-wrap gap-2">
+          <button type="submit" class="btn btn-sm btn-outline-info bulk-selection-required">Create User Accounts</button>
+        </div>
+      </div>
+    </div>
+  </form>
+  {% endif %}
+
   <div class="table-responsive">
     <table class="table table-sm align-middle">
       <thead>
         <tr>
+          <th><input type="checkbox" id="facultySelectAll" onclick="toggleFacultySelection(this)" /></th>
           <th>Name</th>
           <th>Email</th>
           <th>Mobile</th>
           <th>Role</th>
           <th>Program</th>
+          <th>Account</th>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
         {% for row in rows %}
-          <tr>
-            <td>{{ row.name }}</td>
-            <td>{{ row.email or '—' }}</td>
-            <td>{{ row.mobile or '—' }}</td>
-            <td>{{ row.role or '—' }}</td>
-            <td>{{ row.program or '—' }}</td>
-            <td>
-              {% if row.faculty_id %}
-                <a class="btn btn-link btn-sm p-0" href="{{ url_for('main.faculty_profile', faculty_id=row.faculty_id) }}">View Profile</a>
-              {% else %}
-                <span class="text-muted">—</span>
-              {% endif %}
-            </td>
-          </tr>
+        <tr>
+          <td>
+            <input
+              type="checkbox"
+              class="faculty-row-checkbox"
+              name="selected_ids"
+              value="{{ row.faculty_id or '' }}"
+              form="facultyBulkForm"
+              onchange="updateFacultySelectedCount()"
+              {% if not row.faculty_id or row.linked_user %}disabled{% endif %}
+            />
+          </td>
+          <td>{{ row.name }}</td>
+          <td>{{ row.email or '&mdash;'|safe }}</td>
+          <td>{{ row.mobile or '&mdash;'|safe }}</td>
+          <td>{{ row.role or '&mdash;'|safe }}</td>
+          <td>{{ row.program or '&mdash;'|safe }}</td>
+          <td>
+            {% if row.linked_user %}
+            <span class="badge bg-success-subtle text-success-emphasis border">{{ row.username or 'Linked' }}</span>
+            {% elif row.faculty_id %}
+            <span class="badge bg-warning-subtle text-warning-emphasis border">No login yet</span>
+            {% else %}
+            <span class="text-muted">&mdash;</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.faculty_id %}
+            <a class="btn btn-link btn-sm p-0" href="{{ url_for('main.faculty_profile', faculty_id=row.faculty_id) }}">View Profile</a>
+            {% else %}
+            <span class="text-muted">&mdash;</span>
+            {% endif %}
+          </td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+
+<script>
+function updateFacultySelectedCount() {
+  var boxes = document.querySelectorAll('.faculty-row-checkbox:not(:disabled)');
+  var checked = document.querySelectorAll('.faculty-row-checkbox:not(:disabled):checked').length;
+  var counter = document.getElementById('facultySelectedCount');
+  var hint = document.getElementById('facultyBulkHint');
+  var requiresSelection = document.querySelectorAll('#facultyBulkForm .bulk-selection-required');
+  if (counter) {
+    counter.textContent = checked + ' selected of ' + boxes.length;
+  }
+  if (hint) {
+    hint.textContent = checked
+      ? 'Ready to create login accounts for ' + checked + ' selected staff member' + (checked === 1 ? '' : 's') + '.'
+      : 'Choose one or more unlinked staff records to create login accounts.';
+  }
+  requiresSelection.forEach(function(control) {
+    control.disabled = checked === 0;
+  });
+  var selectAll = document.getElementById('facultySelectAll');
+  if (selectAll) {
+    selectAll.indeterminate = checked > 0 && checked < boxes.length;
+    selectAll.checked = boxes.length > 0 && checked === boxes.length;
+  }
+}
+
+function toggleFacultySelection(master) {
+  document.querySelectorAll('.faculty-row-checkbox:not(:disabled)').forEach(function(box) {
+    box.checked = master.checked;
+  });
+  updateFacultySelectedCount();
+}
+
+function selectAllFacultyRows(checked) {
+  document.querySelectorAll('.faculty-row-checkbox:not(:disabled)').forEach(function(box) {
+    box.checked = checked;
+  });
+  var selectAll = document.getElementById('facultySelectAll');
+  if (selectAll) {
+    selectAll.checked = checked;
+    selectAll.indeterminate = false;
+  }
+  updateFacultySelectedCount();
+}
+
+updateFacultySelectedCount();
+</script>
 {% endblock %}

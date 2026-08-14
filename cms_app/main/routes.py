@@ -3,9 +3,11 @@ from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
 import os
 import csv
+import io
+import json
 from sqlalchemy import or_, select, and_, cast, Integer, false, update, MetaData, Table, inspect as sa_inspect
 from sqlalchemy.orm import selectinload
-from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification
+from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementRevision, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, MaterialRevision, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification, DataAuditLog
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
 from ..api_utils import api_success, api_error
@@ -515,6 +517,172 @@ def _effective_trust_id():
         except Exception:
             return None
     return getattr(current_user, "trust_id_fk", None)
+
+
+def _bulk_wants_json():
+    if request.is_json:
+        return True
+    return request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+
+def _bulk_request_ids(name="selected_ids"):
+    raw_ids = []
+    if request.is_json:
+        payload = request.get_json(silent=True) or {}
+        raw_ids = payload.get(name) or payload.get("ids") or []
+        if isinstance(raw_ids, str):
+            raw_ids = [raw_ids]
+    else:
+        raw_ids = request.form.getlist(name)
+        if not raw_ids:
+            joined = (request.form.get(name) or "").strip()
+            if joined:
+                raw_ids = [part.strip() for part in joined.split(",")]
+    seen = set()
+    cleaned = []
+    for raw_id in raw_ids:
+        value = str(raw_id or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        cleaned.append(value)
+    return cleaned
+
+
+def _bulk_request_value(name, default=None):
+    if request.is_json:
+        payload = request.get_json(silent=True) or {}
+        return payload.get(name, default)
+    return request.form.get(name, default)
+
+
+def _bulk_redirect_target(fallback_endpoint, **fallback_values):
+    return_to = (request.form.get("return_to") or request.args.get("return_to") or "").strip()
+    if return_to:
+        return return_to
+    return url_for(fallback_endpoint, **fallback_values)
+
+
+def _bulk_csv_response(filename, headers, rows):
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(headers)
+    for row in rows:
+        writer.writerow(row)
+    return Response(
+        buf.getvalue().encode("utf-8"),
+        headers={
+            "Content-Type": "text/csv",
+            "Content-Disposition": f"attachment; filename={filename}",
+        },
+    )
+
+
+def _bulk_credentials_session_key(entity):
+    return f"bulk_credentials_{entity}_token"
+
+
+def _bulk_credentials_cache_key(token):
+    return f"bulk_credentials_sheet:{token}"
+
+
+def _bulk_store_credentials_sheet(entity, filename, headers, rows):
+    token = secrets.token_urlsafe(24)
+    payload = {
+        "entity": entity,
+        "filename": filename,
+        "headers": headers,
+        "rows": rows,
+        "actor_user_id": getattr(current_user, "user_id", None),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    cache.set(_bulk_credentials_cache_key(token), payload, timeout=15 * 60)
+    session[_bulk_credentials_session_key(entity)] = token
+    return token
+
+
+def _bulk_get_credentials_sheet(entity):
+    token = session.get(_bulk_credentials_session_key(entity))
+    if not token:
+        return None
+    payload = cache.get(_bulk_credentials_cache_key(token))
+    if not payload:
+        session.pop(_bulk_credentials_session_key(entity), None)
+        return None
+    if payload.get("actor_user_id") != getattr(current_user, "user_id", None):
+        return None
+    return payload
+
+
+def _bulk_clear_credentials_sheet(entity):
+    token = session.pop(_bulk_credentials_session_key(entity), None)
+    if token:
+        cache.delete(_bulk_credentials_cache_key(token))
+
+
+def _bulk_credentials_download_url(entity):
+    if entity == "students":
+        return url_for("main.students_bulk_export_credentials")
+    if entity == "faculty":
+        return url_for("main.faculty_bulk_export_credentials")
+    return None
+
+
+def _bulk_audit_entry(action, selection, counts, *, program_id=None, semester=None):
+    entry = DataAuditLog(
+        action=action,
+        actor_user_id_fk=getattr(current_user, "user_id", None),
+        actor_role=(getattr(current_user, "role", None) or ""),
+        trust_id_fk=_effective_trust_id(),
+        program_id_fk=program_id,
+        semester=semester,
+        selection_json=json.dumps(selection or {}, ensure_ascii=False),
+        counts_json=json.dumps(counts or {}, ensure_ascii=False),
+    )
+    db.session.add(entry)
+    return entry
+
+
+def _bulk_build_result(action, entity, requested, results):
+    eligible = sum(1 for item in results if item.get("status") != "skipped")
+    succeeded = sum(1 for item in results if item.get("status") == "success")
+    failed = sum(1 for item in results if item.get("status") == "failed")
+    skipped = sum(1 for item in results if item.get("status") == "skipped")
+    return {
+        "ok": failed == 0,
+        "action": action,
+        "entity": entity,
+        "summary": {
+            "requested": requested,
+            "eligible": eligible,
+            "processed": eligible,
+            "succeeded": succeeded,
+            "failed": failed,
+            "skipped": skipped,
+        },
+        "results": results,
+    }
+
+
+def _bulk_finish(action, entity, requested, results, *, fallback_endpoint, fallback_values=None, program_id=None, semester=None):
+    payload = _bulk_build_result(action, entity, requested, results)
+    _bulk_audit_entry(
+        f"bulk_{entity}_{action}",
+        {"ids": [item.get("id") for item in results], "entity": entity, "action": action},
+        payload.get("summary"),
+        program_id=program_id,
+        semester=semester,
+    )
+    db.session.commit()
+    if _bulk_wants_json():
+        return jsonify(payload)
+    summary = payload["summary"]
+    flash(
+        f"Bulk {entity} action '{action}' completed. "
+        f"Success: {summary['succeeded']}, Failed: {summary['failed']}, Skipped: {summary['skipped']}.",
+        "success" if summary["failed"] == 0 else "warning",
+    )
+    return redirect(_bulk_redirect_target(fallback_endpoint, **(fallback_values or {})))
 
 
 def _dashboard_cache_bypass():
@@ -6458,13 +6626,12 @@ def account_settings():
 @main_bp.route("/faculty")
 @cache.cached(timeout=60, key_prefix=lambda: f"fac_list_{getattr(current_user, 'user_id', 'anon')}_{request.full_path}", unless=lambda: session.get("_flashes"))
 def faculty_list():
-    # List Admin/Principal/Faculty/Clerk users with optional filters (role, search, program)
+    # List linked staff accounts plus unlinked faculty records that still need a login.
     from sqlalchemy import func, or_
     allowed_roles = ["admin", "principal", "faculty", "clerk"]
     sel_role = (request.args.get("role") or "").strip().lower()
     q = (request.args.get("q") or "").strip()
     program_id_raw = (request.args.get("program_id") or "").strip()
-    current_role = ((getattr(current_user, "role", "") or "").strip().lower() if getattr(current_user, "is_authenticated", False) else "")
 
     # Determine Effective Trust Context
     effective_trust_id = None
@@ -6507,6 +6674,7 @@ def faculty_list():
 
     users = db.session.execute(query.distinct().order_by(User.username.asc())).scalars().all()
     program_list = _ctx.get("program_list", [])
+    program_name_map = {p.program_id: p.program_name for p in program_list if getattr(p, "program_id", None)}
     user_ids = [u.user_id for u in users if getattr(u, "user_id", None)]
     faculty_rows = {}
     if user_ids:
@@ -6545,9 +6713,234 @@ def faculty_list():
             "mobile": mobile,
             "role": (u.role or ""),
             "program": program_name,
+            "username": u.username,
+            "linked_user": True,
         })
 
-    return render_template("faculty.html", rows=rows, program_list=program_list, selected_role=sel_role, selected_program_id=selected_program_id, q=q)
+    if sel_role in ("", "faculty"):
+        unlinked_columns = [
+            faculty_table.c.faculty_id,
+            faculty_table.c.user_id_fk,
+            faculty_table.c.full_name,
+            faculty_table.c.email,
+            faculty_table.c.mobile,
+            faculty_table.c.program_id_fk,
+        ]
+        if "emp_id" in faculty_table.c:
+            unlinked_columns.append(faculty_table.c.emp_id)
+        unlinked_query = select(*unlinked_columns).where(faculty_table.c.user_id_fk.is_(None))
+        if effective_trust_id and "trust_id_fk" in faculty_table.c:
+            unlinked_query = unlinked_query.where(faculty_table.c.trust_id_fk == effective_trust_id)
+        if selected_program_id and "program_id_fk" in faculty_table.c:
+            unlinked_query = unlinked_query.where(faculty_table.c.program_id_fk == selected_program_id)
+        if q:
+            search_filters = [faculty_table.c.full_name.ilike(f"%{q}%")]
+            if "email" in faculty_table.c:
+                search_filters.append(faculty_table.c.email.ilike(f"%{q}%"))
+            if "mobile" in faculty_table.c:
+                search_filters.append(faculty_table.c.mobile.ilike(f"%{q}%"))
+            if "emp_id" in faculty_table.c:
+                search_filters.append(faculty_table.c.emp_id.ilike(f"%{q}%"))
+            unlinked_query = unlinked_query.where(or_(*search_filters))
+        unlinked_rows = db.session.execute(unlinked_query.order_by(faculty_table.c.full_name.asc())).mappings().all()
+        for row in unlinked_rows:
+            program_name = program_name_map.get(row.get("program_id_fk"))
+            if not program_name and row.get("program_id_fk"):
+                try:
+                    program = db.session.get(Program, row.get("program_id_fk"))
+                    program_name = program.program_name if program else ""
+                except Exception:
+                    program_name = ""
+            rows.append(
+                {
+                    "user_id": None,
+                    "faculty_id": row.get("faculty_id"),
+                    "name": row.get("full_name") or "",
+                    "email": row.get("email") or "",
+                    "mobile": row.get("mobile") or "",
+                    "role": "Faculty",
+                    "program": program_name or "",
+                    "username": "",
+                    "linked_user": False,
+                    "emp_id": row.get("emp_id") or "",
+                }
+            )
+
+    rows.sort(key=lambda item: ((item.get("name") or "").lower(), (item.get("username") or "").lower()))
+
+    return render_template(
+        "faculty.html",
+        rows=rows,
+        program_list=program_list,
+        selected_role=sel_role,
+        selected_program_id=selected_program_id,
+        q=q,
+        faculty_credentials_download_url=(
+            _bulk_credentials_download_url("faculty") if _bulk_get_credentials_sheet("faculty") else None
+        ),
+    )
+
+
+@main_bp.route("/faculty/bulk/provision-users", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+def faculty_bulk_provision_users():
+    selected_ids = _bulk_request_ids()
+    if not selected_ids:
+        flash("Select at least one staff record first.", "warning")
+        return redirect(_bulk_redirect_target("main.faculty_list"))
+
+    results = []
+    credential_rows = []
+    touched_program_id = None
+    current_role = (getattr(current_user, "role", "") or "").strip().lower()
+    principal_pid = None
+    if current_role == "principal":
+        try:
+            principal_pid = int(getattr(current_user, "program_id_fk", None) or 0) or None
+        except Exception:
+            principal_pid = None
+
+    def _random_password():
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+        return "".join(secrets.choice(alphabet) for _ in range(10))
+
+    for raw_id in selected_ids:
+        try:
+            faculty_id = int(raw_id)
+        except ValueError:
+            results.append({"id": raw_id, "status": "failed", "message": "Invalid faculty id"})
+            continue
+        row = _fetch_faculty_mapping(faculty_id)
+        if not row:
+            results.append({"id": faculty_id, "status": "failed", "message": "Faculty not found"})
+            continue
+        if principal_pid and row.get("program_id_fk") != principal_pid:
+            results.append({"id": faculty_id, "status": "failed", "message": "Principal cannot update this staff record"})
+            continue
+        if row.get("user_id_fk"):
+            results.append({"id": faculty_id, "status": "skipped", "message": "Already linked to a user"})
+            continue
+
+        full_name = (row.get("full_name") or "").strip()
+        email = (row.get("email") or "").strip().lower()
+        mobile = row.get("mobile") or ""
+        mobile_digits = "".join(ch for ch in mobile if ch.isdigit())
+        emp_id = (row.get("emp_id") or "").strip()
+
+        preferred_username = ""
+        if len(mobile_digits) >= 10:
+            preferred_username = mobile_digits
+        elif email:
+            preferred_username = email
+        elif emp_id:
+            preferred_username = f"faculty_{emp_id}"
+        else:
+            preferred_username = f"faculty_{faculty_id}"
+
+        username = preferred_username
+        existing_user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
+        linked_user_id = None
+        status_label = "created"
+        temp_password = ""
+
+        if existing_user:
+            existing_role = (existing_user.role or "").strip().lower()
+            if existing_role != "faculty":
+                results.append({"id": faculty_id, "status": "failed", "message": f"Username '{username}' belongs to a non-faculty account"})
+                continue
+            linked_elsewhere = db.session.execute(
+                select(Faculty.faculty_id).where(Faculty.user_id_fk == existing_user.user_id)
+            ).scalar()
+            if linked_elsewhere and int(linked_elsewhere) != faculty_id:
+                results.append({"id": faculty_id, "status": "failed", "message": f"Username '{username}' is already linked to another staff record"})
+                continue
+            existing_user.program_id_fk = row.get("program_id_fk")
+            existing_user.trust_id_fk = row.get("trust_id_fk") or existing_user.trust_id_fk
+            existing_user.email = email or existing_user.email
+            existing_user.mobile = mobile or existing_user.mobile
+            existing_user.is_active = True
+            linked_user_id = existing_user.user_id
+            status_label = "linked_existing"
+        else:
+            temp_password = _random_password()
+            trust_id = row.get("trust_id_fk")
+            if not trust_id and row.get("program_id_fk"):
+                prog = db.session.get(Program, row.get("program_id_fk"))
+                try:
+                    trust_id = prog.institute.trust_id_fk if prog and prog.institute else None
+                except Exception:
+                    trust_id = None
+            new_user = User(
+                username=username,
+                password_hash=generate_password_hash(temp_password),
+                role="Faculty",
+                program_id_fk=row.get("program_id_fk"),
+                must_change_password=True,
+                mobile=mobile or None,
+                email=email or None,
+                trust_id_fk=trust_id,
+                is_active=True,
+            )
+            db.session.add(new_user)
+            db.session.flush()
+            linked_user_id = new_user.user_id
+
+        _update_faculty_row(faculty_id, {"user_id_fk": linked_user_id})
+        touched_program_id = touched_program_id or row.get("program_id_fk")
+        credential_rows.append([faculty_id, full_name, username, temp_password, status_label])
+        results.append(
+            {
+                "id": faculty_id,
+                "status": "success",
+                "message": "User provisioned" if status_label == "created" else "Existing user linked",
+                "after": {"username": username, "status": status_label},
+            }
+        )
+
+    payload = _bulk_build_result("provision-users", "faculty", len(selected_ids), results)
+    _bulk_audit_entry(
+        "bulk_faculty_provision-users",
+        {"ids": [item.get("id") for item in results], "entity": "faculty", "action": "provision-users"},
+        payload.get("summary"),
+        program_id=touched_program_id,
+        semester=None,
+    )
+    db.session.commit()
+    if _bulk_wants_json():
+        if credential_rows:
+            payload["credentials_download_url"] = _bulk_credentials_download_url("faculty")
+        return jsonify(payload)
+    if credential_rows:
+        _bulk_store_credentials_sheet(
+            "faculty",
+            "faculty_bulk_provision_users.csv",
+            ["Faculty ID", "Staff Name", "Username", "Temporary Password", "Status"],
+            credential_rows,
+        )
+    flash(
+        f"Bulk faculty action 'provision-users' completed. Success: {payload['summary']['succeeded']}, "
+        f"Failed: {payload['summary']['failed']}, Skipped: {payload['summary']['skipped']}.",
+        "success" if payload["summary"]["failed"] == 0 else "warning",
+    )
+    if credential_rows:
+        flash("Credentials sheet is ready. Use 'Export Credentials Sheet' to download it.", "info")
+    return redirect(_bulk_redirect_target("main.faculty_list"))
+
+
+@main_bp.route("/faculty/bulk/export-credentials", methods=["GET"])
+@login_required
+@role_required("admin", "principal")
+def faculty_bulk_export_credentials():
+    sheet = _bulk_get_credentials_sheet("faculty")
+    if not sheet:
+        flash("No staff credentials sheet is available right now.", "warning")
+        return redirect(_bulk_redirect_target("main.faculty_list"))
+    return _bulk_csv_response(
+        sheet.get("filename") or "faculty_bulk_provision_users.csv",
+        sheet.get("headers") or ["Faculty ID", "Staff Name", "Username", "Temporary Password", "Status"],
+        sheet.get("rows") or [],
+    )
 
 @main_bp.route("/faculty/<int:faculty_id>")
 def faculty_profile(faculty_id):
@@ -7541,6 +7934,17 @@ def students():
              ).scalars().all()
         except:
              pass
+    bulk_division_list = []
+    if selected_program_id:
+        bulk_divisions_q = select(Division).filter_by(program_id_fk=selected_program_id)
+        if selected_semester not in ("all", ""):
+            try:
+                bulk_divisions_q = bulk_divisions_q.filter_by(semester=int(selected_semester))
+            except ValueError:
+                pass
+        bulk_division_list = db.session.execute(
+            bulk_divisions_q.order_by(Division.semester, Division.division_code)
+        ).scalars().all()
 
     # Division Filter
     if selected_division_id and selected_division_id != "all":
@@ -7614,6 +8018,7 @@ def students():
         selected_status=selected_status,
         sort_by=sort_by,
         division_list=division_list,
+        bulk_division_list=bulk_division_list,
         selected_limit=selected_limit,
         selected_page=selected_page,
         total_count=total_count,
@@ -7622,6 +8027,9 @@ def students():
         program_list=program_list,
         selected_program_id=selected_program_id,
         allow_all_programs=_ctx.get("allow_all_programs", False),
+        students_credentials_download_url=(
+            _bulk_credentials_download_url("students") if _bulk_get_credentials_sheet("students") else None
+        ),
     )
 
 
@@ -7773,6 +8181,312 @@ def api_command_palette_actions():
         if a.get("url"):
             allowed.append(a)
     return api_success({"items": allowed}, {"role": role, "count": len(allowed)})
+
+
+@main_bp.route("/students/bulk/set-active", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+def students_bulk_set_active():
+    selected_ids = _bulk_request_ids()
+    if not selected_ids:
+        if _bulk_wants_json():
+            return jsonify({"ok": False, "message": "No students selected."}), 400
+        flash("Select at least one student first.", "warning")
+        return redirect(_bulk_redirect_target("main.students"))
+
+    target_state_raw = str(_bulk_request_value("set_active", "true")).strip().lower()
+    set_active = target_state_raw in ("1", "true", "yes", "active")
+    student_map = _fetch_students_mapping_map(selected_ids)
+    results = []
+    touched_program_id = None
+    touched_semester = None
+
+    for enrollment_no in selected_ids:
+        row = student_map.get(enrollment_no)
+        if not row:
+            results.append({"id": enrollment_no, "status": "failed", "message": "Student not found"})
+            continue
+        current_state = bool(row.get("is_active"))
+        if current_state == set_active:
+            results.append({"id": enrollment_no, "status": "skipped", "message": "Already in requested state"})
+            continue
+        _update_student_row(enrollment_no, {"is_active": set_active})
+        touched_program_id = touched_program_id or row.get("program_id_fk")
+        touched_semester = touched_semester or row.get("current_semester")
+        results.append({
+            "id": enrollment_no,
+            "status": "success",
+            "message": "Student updated",
+            "before": {"is_active": current_state},
+            "after": {"is_active": set_active},
+        })
+
+    return _bulk_finish(
+        "set-active",
+        "students",
+        len(selected_ids),
+        results,
+        fallback_endpoint="main.students",
+        fallback_values={},
+        program_id=touched_program_id,
+        semester=touched_semester,
+    )
+
+
+@main_bp.route("/students/bulk/export", methods=["POST"])
+@login_required
+def students_bulk_export():
+    selected_ids = _bulk_request_ids()
+    if not selected_ids:
+        flash("Select at least one student first.", "warning")
+        return redirect(_bulk_redirect_target("main.students"))
+    rows = list(_fetch_students_mapping_map(selected_ids).values())
+    export_rows = []
+    for row in rows:
+        export_rows.append([
+            row.get("enrollment_no") or "",
+            row.get("roll_no") or "",
+            row.get("surname") or "",
+            row.get("student_name") or "",
+            row.get("father_name") or "",
+            row.get("mobile") or "",
+            row.get("current_semester") or "",
+            row.get("medium_tag") or "",
+            "Active" if row.get("is_active") else "Archived",
+        ])
+    return _bulk_csv_response(
+        "students_bulk_export.csv",
+        ["Enrollment No", "Roll No", "Surname", "Student Name", "Father Name", "Mobile", "Semester", "Medium", "Status"],
+        export_rows,
+    )
+
+
+@main_bp.route("/students/bulk/assign-division", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk")
+def students_bulk_assign_division():
+    selected_ids = _bulk_request_ids()
+    target_division_raw = str(_bulk_request_value("target_division_id", "")).strip()
+    if not selected_ids:
+        flash("Select at least one student first.", "warning")
+        return redirect(_bulk_redirect_target("main.students"))
+    try:
+        target_division_id = int(target_division_raw)
+    except ValueError:
+        flash("Enter a valid target division ID.", "danger")
+        return redirect(_bulk_redirect_target("main.students"))
+    target_division = db.session.get(Division, target_division_id)
+    if not target_division:
+        flash("Target division not found.", "danger")
+        return redirect(_bulk_redirect_target("main.students"))
+
+    results = []
+    student_map = _fetch_students_mapping_map(selected_ids)
+    for enrollment_no in selected_ids:
+        row = student_map.get(enrollment_no)
+        if not row:
+            results.append({"id": enrollment_no, "status": "failed", "message": "Student not found"})
+            continue
+        if row.get("program_id_fk") != target_division.program_id_fk:
+            results.append({"id": enrollment_no, "status": "failed", "message": "Student program does not match target division"})
+            continue
+        before_division = row.get("division_id_fk")
+        if before_division == target_division.division_id:
+            results.append({"id": enrollment_no, "status": "skipped", "message": "Already in target division"})
+            continue
+        _update_student_row(enrollment_no, {"division_id_fk": target_division.division_id})
+        results.append({
+            "id": enrollment_no,
+            "status": "success",
+            "message": "Division updated",
+            "before": {"division_id_fk": before_division},
+            "after": {"division_id_fk": target_division.division_id},
+        })
+    return _bulk_finish(
+        "assign-division",
+        "students",
+        len(selected_ids),
+        results,
+        fallback_endpoint="main.students",
+        fallback_values={},
+        program_id=target_division.program_id_fk,
+        semester=target_division.semester,
+    )
+
+
+@main_bp.route("/students/bulk/promote-semester", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk")
+def students_bulk_promote_semester():
+    selected_ids = _bulk_request_ids()
+    target_sem_raw = str(_bulk_request_value("target_semester", "")).strip()
+    if not selected_ids:
+        flash("Select at least one student first.", "warning")
+        return redirect(_bulk_redirect_target("main.students"))
+    try:
+        target_semester = int(target_sem_raw)
+    except ValueError:
+        flash("Enter a valid target semester.", "danger")
+        return redirect(_bulk_redirect_target("main.students"))
+    if target_semester < 1 or target_semester > 8:
+        flash("Target semester must be between 1 and 8.", "danger")
+        return redirect(_bulk_redirect_target("main.students"))
+
+    results = []
+    touched_program_ids = set()
+    student_map = _fetch_students_mapping_map(selected_ids)
+    for enrollment_no in selected_ids:
+        row = student_map.get(enrollment_no)
+        if not row:
+            results.append({"id": enrollment_no, "status": "failed", "message": "Student not found"})
+            continue
+        current_semester = row.get("current_semester")
+        if current_semester == target_semester:
+            results.append({"id": enrollment_no, "status": "skipped", "message": "Already in target semester"})
+            continue
+        _update_student_row(enrollment_no, {"current_semester": target_semester})
+        if row.get("program_id_fk"):
+            touched_program_ids.add(int(row.get("program_id_fk")))
+        results.append({
+            "id": enrollment_no,
+            "status": "success",
+            "message": "Semester updated",
+            "before": {"current_semester": current_semester},
+            "after": {"current_semester": target_semester},
+        })
+
+    payload = _bulk_build_result("promote-semester", "students", len(selected_ids), results)
+    _bulk_audit_entry(
+        "bulk_students_promote-semester",
+        {"ids": [item.get("id") for item in results], "entity": "students", "action": "promote-semester", "target_semester": target_semester},
+        payload.get("summary"),
+        program_id=(next(iter(touched_program_ids)) if touched_program_ids else None),
+        semester=target_semester,
+    )
+    db.session.commit()
+    for program_id in sorted(touched_program_ids):
+        program = db.session.get(Program, program_id)
+        if program:
+            _rebalance_program_divisions_for_semester(program, target_semester)
+    if _bulk_wants_json():
+        return jsonify(payload)
+    flash(
+        f"Bulk students action 'promote-semester' completed. Success: {payload['summary']['succeeded']}, "
+        f"Failed: {payload['summary']['failed']}, Skipped: {payload['summary']['skipped']}.",
+        "success" if payload["summary"]["failed"] == 0 else "warning",
+    )
+    return redirect(_bulk_redirect_target("main.students"))
+
+
+@main_bp.route("/students/bulk/provision-users", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk")
+def students_bulk_provision_users():
+    selected_ids = _bulk_request_ids()
+    if not selected_ids:
+        flash("Select at least one student first.", "warning")
+        return redirect(_bulk_redirect_target("main.students"))
+
+    results = []
+    credential_rows = []
+    student_map = _fetch_students_mapping_map(selected_ids)
+    touched_program_id = None
+    for enrollment_no in selected_ids:
+        row = student_map.get(enrollment_no)
+        if not row:
+            results.append({"id": enrollment_no, "status": "failed", "message": "Student not found"})
+            continue
+        if row.get("user_id_fk"):
+            results.append({"id": enrollment_no, "status": "skipped", "message": "Already linked to a user"})
+            continue
+        mobile = row.get("mobile") or ""
+        mobile_digits = "".join(ch for ch in mobile if ch.isdigit())
+        username = mobile_digits if len(mobile_digits) >= 10 else enrollment_no
+        temp_password = mobile_digits if len(mobile_digits) >= 10 else secrets.token_urlsafe(8)[:10]
+        existing_user = db.session.execute(select(User).filter_by(username=username)).scalars().first()
+        linked_user_id = None
+        status_label = "created"
+        if existing_user:
+            if (existing_user.role or "").strip().lower() != "student":
+                results.append({"id": enrollment_no, "status": "failed", "message": f"Username '{username}' belongs to a non-student account"})
+                continue
+            linked_user_id = existing_user.user_id
+            status_label = "linked_existing"
+        else:
+            trust_id = row.get("trust_id_fk")
+            if not trust_id and row.get("program_id_fk"):
+                prog = db.session.get(Program, row.get("program_id_fk"))
+                try:
+                    trust_id = prog.institute.trust_id_fk if prog and prog.institute else None
+                except Exception:
+                    trust_id = None
+            new_user = User(
+                username=username,
+                password_hash=generate_password_hash(temp_password),
+                role="student",
+                program_id_fk=row.get("program_id_fk"),
+                must_change_password=True,
+                mobile=row.get("mobile"),
+                email=row.get("email"),
+                trust_id_fk=trust_id,
+                is_active=True,
+            )
+            db.session.add(new_user)
+            db.session.flush()
+            linked_user_id = new_user.user_id
+        _update_student_row(enrollment_no, {"user_id_fk": linked_user_id})
+        touched_program_id = touched_program_id or row.get("program_id_fk")
+        credential_rows.append([enrollment_no, username, temp_password if status_label == "created" else "", status_label])
+        results.append({
+            "id": enrollment_no,
+            "status": "success",
+            "message": "User provisioned" if status_label == "created" else "Existing user linked",
+            "after": {"username": username, "status": status_label},
+        })
+
+    payload = _bulk_build_result("provision-users", "students", len(selected_ids), results)
+    _bulk_audit_entry(
+        "bulk_students_provision-users",
+        {"ids": [item.get("id") for item in results], "entity": "students", "action": "provision-users"},
+        payload.get("summary"),
+        program_id=touched_program_id,
+        semester=None,
+    )
+    db.session.commit()
+    if _bulk_wants_json():
+        if credential_rows:
+            payload["credentials_download_url"] = _bulk_credentials_download_url("students")
+        return jsonify(payload)
+    if credential_rows:
+        _bulk_store_credentials_sheet(
+            "students",
+            "students_bulk_provision_users.csv",
+            ["Enrollment No", "Username", "Temporary Password", "Status"],
+            credential_rows,
+        )
+    flash(
+        f"Bulk students action 'provision-users' completed. Success: {payload['summary']['succeeded']}, "
+        f"Failed: {payload['summary']['failed']}, Skipped: {payload['summary']['skipped']}.",
+        "success" if payload["summary"]["failed"] == 0 else "warning",
+    )
+    if credential_rows:
+        flash("Credentials sheet is ready. Use 'Export Credentials Sheet' to download it.", "info")
+    return redirect(_bulk_redirect_target("main.students"))
+
+
+@main_bp.route("/students/bulk/export-credentials", methods=["GET"])
+@login_required
+@role_required("admin", "principal")
+def students_bulk_export_credentials():
+    sheet = _bulk_get_credentials_sheet("students")
+    if not sheet:
+        flash("No student credentials sheet is available right now.", "warning")
+        return redirect(_bulk_redirect_target("main.students"))
+    return _bulk_csv_response(
+        sheet.get("filename") or "students_bulk_provision_users.csv",
+        sheet.get("headers") or ["Enrollment No", "Username", "Temporary Password", "Status"],
+        sheet.get("rows") or [],
+    )
 
 
 @main_bp.route("/students/new", methods=["GET", "POST"])
@@ -8892,6 +9606,8 @@ def subjects_list():
 
     rows = []
     total_count = 0
+    faculty_options = []
+    academic_year = current_academic_year()
     if selected_program and semester:
         subject_table = _reflected_table("subjects")
         q = select(
@@ -8955,11 +9671,18 @@ def subjects_list():
                 "medium_tag": (s.get("medium_tag") or ""),
                 "has_assignment": bool(assignments_map.get(subject_id, 0)),
             })
+        faculty_options = db.session.execute(
+            select(Faculty.user_id_fk, Faculty.full_name)
+            .filter_by(program_id_fk=selected_program.program_id)
+            .order_by(Faculty.full_name.asc())
+        ).all()
 
     return render_template(
         "subjects.html",
         programs=programs,
         rows=rows,
+        faculty_options=faculty_options,
+        current_ay=academic_year,
         filters={
             "program_id": (selected_program.program_id if selected_program else None),
             "semester": semester,
@@ -9041,6 +9764,297 @@ def subjects_export_csv():
         ])
     data = buf.getvalue().encode("utf-8")
     return Response(data, headers={"Content-Type": "text/csv", "Content-Disposition": "attachment; filename=subjects_export.csv"})
+
+
+@main_bp.route("/subjects/bulk/set-active", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk")
+def subjects_bulk_set_active():
+    selected_ids = _bulk_request_ids()
+    if not selected_ids:
+        if _bulk_wants_json():
+            return jsonify({"ok": False, "message": "No subjects selected."}), 400
+        flash("Select at least one subject first.", "warning")
+        return redirect(_bulk_redirect_target("main.subjects_list"))
+
+    target_state_raw = str(_bulk_request_value("set_active", "true")).strip().lower()
+    set_active = target_state_raw in ("1", "true", "yes", "active")
+    results = []
+    touched_program_id = None
+    touched_semester = None
+
+    for raw_id in selected_ids:
+        try:
+            subject_id = int(raw_id)
+        except ValueError:
+            results.append({"id": raw_id, "status": "failed", "message": "Invalid subject id"})
+            continue
+        row = _fetch_subject_mapping(subject_id)
+        if not row:
+            results.append({"id": raw_id, "status": "failed", "message": "Subject not found"})
+            continue
+        current_state = bool(row.get("is_active"))
+        if current_state == set_active:
+            results.append({"id": subject_id, "status": "skipped", "message": "Already in requested state"})
+            continue
+        _update_subject_row(subject_id, {"is_active": set_active})
+        touched_program_id = touched_program_id or row.get("program_id_fk")
+        touched_semester = touched_semester or row.get("semester")
+        results.append({
+            "id": subject_id,
+            "status": "success",
+            "message": "Subject updated",
+            "before": {"is_active": current_state},
+            "after": {"is_active": set_active},
+        })
+
+    return _bulk_finish(
+        "set-active",
+        "subjects",
+        len(selected_ids),
+        results,
+        fallback_endpoint="main.subjects_list",
+        fallback_values={},
+        program_id=touched_program_id,
+        semester=touched_semester,
+    )
+
+
+@main_bp.route("/subjects/bulk/export", methods=["POST"])
+@login_required
+def subjects_bulk_export():
+    selected_ids = _bulk_request_ids()
+    if not selected_ids:
+        flash("Select at least one subject first.", "warning")
+        return redirect(_bulk_redirect_target("main.subjects_list"))
+    export_rows = []
+    for raw_id in selected_ids:
+        try:
+            subject_id = int(raw_id)
+        except ValueError:
+            continue
+        row = _fetch_subject_mapping(subject_id)
+        if not row:
+            continue
+        export_rows.append([
+            row.get("subject_code") or "",
+            row.get("paper_code") or "",
+            row.get("subject_name") or "",
+            row.get("semester") or "",
+            row.get("medium_tag") or "",
+            "Elective" if row.get("is_elective") else "Core",
+            "Active" if row.get("is_active") else "Inactive",
+        ])
+    return _bulk_csv_response(
+        "subjects_bulk_export.csv",
+        ["Subject Code", "Paper Code", "Subject Name", "Semester", "Medium", "Mode", "Status"],
+        export_rows,
+    )
+
+
+@main_bp.route("/subjects/bulk/assign-faculty", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+def subjects_bulk_assign_faculty():
+    selected_ids = _bulk_request_ids()
+    faculty_user_id_raw = str(_bulk_request_value("faculty_user_id", "")).strip()
+    academic_year = str(_bulk_request_value("academic_year", "")).strip() or current_academic_year()
+    role_raw = str(_bulk_request_value("assignment_role", "primary")).strip().lower()
+    assignment_role = "primary" if role_raw not in ("primary", "co") else role_raw
+
+    if not selected_ids:
+        flash("Select at least one subject first.", "warning")
+        return redirect(_bulk_redirect_target("main.subjects_list"))
+    try:
+        faculty_user_id = int(faculty_user_id_raw)
+    except ValueError:
+        flash("Enter a valid faculty user ID.", "danger")
+        return redirect(_bulk_redirect_target("main.subjects_list"))
+    faculty = db.session.execute(select(Faculty).filter_by(user_id_fk=faculty_user_id)).scalars().first()
+    if not faculty:
+        flash("Faculty profile not found for the selected user ID.", "danger")
+        return redirect(_bulk_redirect_target("main.subjects_list"))
+
+    current_role = (getattr(current_user, "role", "") or "").strip().lower()
+    principal_program_id = getattr(current_user, "program_id_fk", None) if current_role == "principal" else None
+    results = []
+    touched_program_id = None
+    touched_semester = None
+
+    for raw_id in selected_ids:
+        try:
+            subject_id = int(raw_id)
+        except ValueError:
+            results.append({"id": raw_id, "status": "failed", "message": "Invalid subject id"})
+            continue
+        subject_row = _fetch_subject_mapping(subject_id)
+        if not subject_row:
+            results.append({"id": subject_id, "status": "failed", "message": "Subject not found"})
+            continue
+        subj = _subject_namespace(subject_row)
+        if principal_program_id and subj.program_id_fk != principal_program_id:
+            results.append({"id": subject_id, "status": "failed", "message": "Principal cannot assign subjects outside the mapped program"})
+            continue
+        if faculty.program_id_fk != subj.program_id_fk:
+            results.append({"id": subject_id, "status": "failed", "message": "Faculty program does not match subject program"})
+            continue
+
+        divisions = db.session.execute(
+            select(Division)
+            .filter_by(program_id_fk=subj.program_id_fk, semester=subj.semester)
+            .order_by(Division.division_code)
+        ).scalars().all()
+        if not divisions:
+            results.append({"id": subject_id, "status": "failed", "message": "No divisions found for this subject semester"})
+            continue
+
+        created_count = 0
+        skipped_count = 0
+        disabled_primary_count = 0
+        for division in divisions:
+            if assignment_role == "primary":
+                existing_primary = db.session.execute(
+                    select(CourseAssignment).filter_by(
+                        subject_id_fk=subj.subject_id,
+                        division_id_fk=division.division_id,
+                        academic_year=academic_year,
+                        role="primary",
+                        is_active=True,
+                    )
+                ).scalars().all()
+                for ca in existing_primary:
+                    if ca.faculty_id_fk == faculty_user_id:
+                        continue
+                    ca.is_active = False
+                    disabled_primary_count += 1
+            existing_same = db.session.execute(
+                select(CourseAssignment).filter_by(
+                    faculty_id_fk=faculty_user_id,
+                    subject_id_fk=subj.subject_id,
+                    division_id_fk=division.division_id,
+                    academic_year=academic_year,
+                    role=assignment_role,
+                    is_active=True,
+                )
+            ).scalars().first()
+            if existing_same:
+                skipped_count += 1
+                continue
+            db.session.add(
+                CourseAssignment(
+                    faculty_id_fk=faculty_user_id,
+                    subject_id_fk=subj.subject_id,
+                    division_id_fk=division.division_id,
+                    academic_year=academic_year,
+                    role=assignment_role,
+                    is_active=True,
+                )
+            )
+            created_count += 1
+
+        touched_program_id = touched_program_id or subj.program_id_fk
+        touched_semester = touched_semester or subj.semester
+        if created_count == 0 and skipped_count:
+            results.append({"id": subject_id, "status": "skipped", "message": "Assignments already existed for all divisions"})
+            continue
+        results.append(
+            {
+                "id": subject_id,
+                "status": "success",
+                "message": f"Assigned across {created_count} division(s)",
+                "after": {
+                    "faculty_user_id": faculty_user_id,
+                    "academic_year": academic_year,
+                    "role": assignment_role,
+                    "created_divisions": created_count,
+                    "skipped_divisions": skipped_count,
+                    "disabled_primary_assignments": disabled_primary_count,
+                },
+            }
+        )
+
+    return _bulk_finish(
+        "assign-faculty",
+        "subjects",
+        len(selected_ids),
+        results,
+        fallback_endpoint="main.subjects_list",
+        fallback_values={},
+        program_id=touched_program_id,
+        semester=touched_semester,
+    )
+
+
+@main_bp.route("/subjects/bulk/toggle-elective", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk")
+def subjects_bulk_toggle_elective():
+    selected_ids = _bulk_request_ids()
+    action = str(_bulk_request_value("action", "")).strip().lower()
+    if not selected_ids:
+        flash("Select at least one subject first.", "warning")
+        return redirect(_bulk_redirect_target("main.subjects_list"))
+    if action == "make_elective":
+        next_is_elective = True
+    elif action == "make_core":
+        next_is_elective = False
+    else:
+        flash("Choose a valid elective action.", "danger")
+        return redirect(_bulk_redirect_target("main.subjects_list"))
+
+    role_lower = (getattr(current_user, "role", "") or "").strip().lower()
+    try:
+        user_pid = int(current_user.program_id_fk) if current_user.program_id_fk else None
+    except Exception:
+        user_pid = None
+
+    results = []
+    touched_program_id = None
+    touched_semester = None
+    for raw_id in selected_ids:
+        try:
+            subject_id = int(raw_id)
+        except ValueError:
+            results.append({"id": raw_id, "status": "failed", "message": "Invalid subject id"})
+            continue
+        subject_row = _fetch_subject_mapping(subject_id)
+        if not subject_row:
+            results.append({"id": subject_id, "status": "failed", "message": "Subject not found"})
+            continue
+        subj = _subject_namespace(subject_row)
+        if role_lower in ("principal", "clerk") and ((user_pid is None) or (subj.program_id_fk != user_pid)):
+            results.append({"id": subject_id, "status": "failed", "message": "You cannot update subjects outside your program"})
+            continue
+        current_value = bool(getattr(subj, "is_elective", False))
+        if current_value == next_is_elective:
+            results.append({"id": subject_id, "status": "skipped", "message": "Already in requested mode"})
+            continue
+        values = {"is_elective": next_is_elective}
+        if not next_is_elective:
+            values["elective_group_id"] = None
+        _update_subject_row(subject_id, values)
+        touched_program_id = touched_program_id or subj.program_id_fk
+        touched_semester = touched_semester or subj.semester
+        results.append(
+            {
+                "id": subject_id,
+                "status": "success",
+                "message": f"Updated to {'elective' if next_is_elective else 'core'}",
+                "before": {"is_elective": current_value},
+                "after": {"is_elective": next_is_elective},
+            }
+        )
+
+    return _bulk_finish(
+        "toggle-elective",
+        "subjects",
+        len(selected_ids),
+        results,
+        fallback_endpoint="main.subjects_list",
+        fallback_values={},
+        program_id=touched_program_id,
+        semester=touched_semester,
+    )
 
 
 # Elective offering UI
@@ -9632,6 +10646,77 @@ def subject_assign(subject_id):
         current_ay=current_ay,
         form_data={},
     )
+
+
+@main_bp.route("/subjects/assignments/<int:assignment_id>/deactivate", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+def subject_assign_deactivate(assignment_id: int):
+    assignment = db.session.get(CourseAssignment, assignment_id)
+    if not assignment:
+        abort(404)
+
+    subject = db.session.get(Subject, assignment.subject_id_fk)
+    if not subject:
+        abort(404)
+
+    try:
+        user_role = (getattr(current_user, "role", "") or "").strip().lower()
+        principal_program = getattr(current_user, "program_id_fk", None)
+        if user_role == "principal" and principal_program and subject.program_id_fk != principal_program:
+            flash("You are not authorized to modify assignments outside your program.", "danger")
+            return redirect(url_for("main.subject_assign", subject_id=subject.subject_id))
+    except Exception:
+        pass
+
+    if not assignment.is_active:
+        flash("Assignment is already inactive.", "warning")
+        return redirect(url_for("main.subject_assign", subject_id=subject.subject_id))
+
+    assignment.is_active = False
+    try:
+        db.session.add(
+            DataAuditLog(
+                action="subject_assignment_deactivate",
+                actor_user_id_fk=getattr(current_user, "user_id", None),
+                actor_role=(getattr(current_user, "role", None) or ""),
+                trust_id_fk=_effective_trust_id(),
+                program_id_fk=subject.program_id_fk,
+                semester=subject.semester,
+                selection_json=json.dumps(
+                    {
+                        "entity": "course_assignment",
+                        "assignment_id": assignment.assignment_id,
+                        "subject_id_fk": assignment.subject_id_fk,
+                        "faculty_id_fk": assignment.faculty_id_fk,
+                        "division_id_fk": assignment.division_id_fk,
+                        "academic_year": assignment.academic_year,
+                        "role": assignment.role,
+                    },
+                    ensure_ascii=False,
+                ),
+                counts_json=json.dumps(
+                    {
+                        "requested": 1,
+                        "eligible": 1,
+                        "processed": 1,
+                        "succeeded": 1,
+                        "failed": 0,
+                        "skipped": 0,
+                        "before": {"is_active": True},
+                        "after": {"is_active": False},
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        db.session.commit()
+        flash("Assignment deactivated.", "success")
+    except Exception:
+        db.session.rollback()
+        flash("Failed to deactivate assignment.", "danger")
+
+    return redirect(url_for("main.subject_assign", subject_id=subject.subject_id))
 
 
 # Subject edit UI
@@ -10349,6 +11434,309 @@ def users_list():
     programs = {p.program_id: p.program_name for p in program_list}
     roles = ["Admin", "Principal", "Faculty", "Clerk", "Student"]
     return render_template("users.html", users=users, programs=programs, roles=roles, selected_role=q_role, program_list=program_list, selected_program_id=selected_program_id)
+
+
+@main_bp.route("/admin/users/bulk/set-active", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+def users_bulk_set_active():
+    selected_ids = _bulk_request_ids()
+    if not selected_ids:
+        if _bulk_wants_json():
+            return jsonify({"ok": False, "message": "No users selected."}), 400
+        flash("Select at least one account first.", "warning")
+        return redirect(_bulk_redirect_target("main.users_list"))
+
+    target_state_raw = str(_bulk_request_value("set_active", "true")).strip().lower()
+    set_active = target_state_raw in ("1", "true", "yes", "active")
+    current_role = (getattr(current_user, "role", "") or "").strip().lower()
+    results = []
+    touched_program_id = None
+
+    for raw_id in selected_ids:
+        try:
+            user_id = int(raw_id)
+        except ValueError:
+            results.append({"id": raw_id, "status": "failed", "message": "Invalid user id"})
+            continue
+        user = db.session.get(User, user_id)
+        if not user:
+            results.append({"id": user_id, "status": "failed", "message": "User not found"})
+            continue
+        if current_role == "principal" and (user.role or "").strip().lower() not in ("faculty", "clerk", "student"):
+            results.append({"id": user_id, "status": "failed", "message": "Principal cannot update this role"})
+            continue
+        current_state = bool(user.is_active)
+        if current_state == set_active:
+            results.append({"id": user_id, "status": "skipped", "message": "Already in requested state"})
+            continue
+        user.is_active = set_active
+        touched_program_id = touched_program_id or user.program_id_fk
+        results.append({
+            "id": user_id,
+            "status": "success",
+            "message": "Account updated",
+            "before": {"is_active": current_state},
+            "after": {"is_active": set_active},
+        })
+
+    return _bulk_finish(
+        "set-active",
+        "users",
+        len(selected_ids),
+        results,
+        fallback_endpoint="main.users_list",
+        fallback_values={},
+        program_id=touched_program_id,
+        semester=None,
+    )
+
+
+@main_bp.route("/admin/users/bulk/force-password-change", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk")
+def users_bulk_force_password_change():
+    selected_ids = _bulk_request_ids()
+    if not selected_ids:
+        if _bulk_wants_json():
+            return jsonify({"ok": False, "message": "No users selected."}), 400
+        flash("Select at least one account first.", "warning")
+        return redirect(_bulk_redirect_target("main.users_list"))
+
+    results = []
+    touched_program_id = None
+    for raw_id in selected_ids:
+        try:
+            user_id = int(raw_id)
+        except ValueError:
+            results.append({"id": raw_id, "status": "failed", "message": "Invalid user id"})
+            continue
+        user = db.session.get(User, user_id)
+        if not user:
+            results.append({"id": user_id, "status": "failed", "message": "User not found"})
+            continue
+        if bool(user.must_change_password):
+            results.append({"id": user_id, "status": "skipped", "message": "Already flagged"})
+            continue
+        user.must_change_password = True
+        touched_program_id = touched_program_id or user.program_id_fk
+        results.append({
+            "id": user_id,
+            "status": "success",
+            "message": "Password change enforced",
+            "before": {"must_change_password": False},
+            "after": {"must_change_password": True},
+        })
+
+    return _bulk_finish(
+        "force-password-change",
+        "users",
+        len(selected_ids),
+        results,
+        fallback_endpoint="main.users_list",
+        fallback_values={},
+        program_id=touched_program_id,
+        semester=None,
+    )
+
+
+@main_bp.route("/admin/users/bulk/reset-passwords", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+def users_bulk_reset_passwords():
+    selected_ids = _bulk_request_ids()
+    if not selected_ids:
+        if _bulk_wants_json():
+            return jsonify({"ok": False, "message": "No users selected."}), 400
+        flash("Select at least one account first.", "warning")
+        return redirect(_bulk_redirect_target("main.users_list"))
+
+    results = []
+    touched_program_id = None
+    temp_password_rows = []
+    for raw_id in selected_ids:
+        try:
+            user_id = int(raw_id)
+        except ValueError:
+            results.append({"id": raw_id, "status": "failed", "message": "Invalid user id"})
+            continue
+        user = db.session.get(User, user_id)
+        if not user:
+            results.append({"id": user_id, "status": "failed", "message": "User not found"})
+            continue
+        temp_password = secrets.token_urlsafe(9)[:12]
+        user.password_hash = generate_password_hash(temp_password)
+        user.must_change_password = True
+        touched_program_id = touched_program_id or user.program_id_fk
+        db.session.add(
+            PasswordChangeLog(
+                user_id_fk=user.user_id,
+                changed_by_user_id_fk=getattr(current_user, "user_id", None),
+                method="bulk_reset",
+                note="bulk password reset",
+            )
+        )
+        temp_password_rows.append([user.username, temp_password, user.role or "", user.program_id_fk or ""])
+        results.append({
+            "id": user_id,
+            "status": "success",
+            "message": "Password reset",
+            "after": {"must_change_password": True},
+        })
+
+    payload = _bulk_build_result("reset-passwords", "users", len(selected_ids), results)
+    _bulk_audit_entry(
+        "bulk_users_reset-passwords",
+        {"ids": [item.get("id") for item in results], "entity": "users", "action": "reset-passwords"},
+        payload.get("summary"),
+        program_id=touched_program_id,
+        semester=None,
+    )
+    db.session.commit()
+    if _bulk_wants_json():
+        return jsonify(payload)
+    flash(
+        f"Bulk users action 'reset-passwords' completed. Success: {payload['summary']['succeeded']}, "
+        f"Failed: {payload['summary']['failed']}, Skipped: {payload['summary']['skipped']}.",
+        "success" if payload["summary"]["failed"] == 0 else "warning",
+    )
+    return _bulk_csv_response(
+        "users_bulk_password_reset.csv",
+        ["Username", "Temporary Password", "Role", "Program ID"],
+        temp_password_rows,
+    )
+
+
+@main_bp.route("/admin/users/bulk/assign-role", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+def users_bulk_assign_role():
+    selected_ids = _bulk_request_ids()
+    target_role = (str(_bulk_request_value("target_role", "")).strip() or "").title()
+    if not selected_ids:
+        flash("Select at least one account first.", "warning")
+        return redirect(_bulk_redirect_target("main.users_list"))
+    allowed_roles = ["Admin", "Principal", "Faculty", "Clerk", "Student"]
+    if target_role not in allowed_roles:
+        flash("Select a valid target role.", "danger")
+        return redirect(_bulk_redirect_target("main.users_list"))
+
+    current_role = (getattr(current_user, "role", "") or "").strip().lower()
+    principal_pid = None
+    if current_role == "principal":
+        try:
+            principal_pid = int(getattr(current_user, "program_id_fk", None) or 0) or None
+        except Exception:
+            principal_pid = None
+        if target_role not in ("Faculty", "Clerk", "Student"):
+            flash("Principal can assign only Faculty, Clerk, or Student roles.", "danger")
+            return redirect(_bulk_redirect_target("main.users_list"))
+
+    results = []
+    touched_program_id = None
+    for raw_id in selected_ids:
+        try:
+            user_id = int(raw_id)
+        except ValueError:
+            results.append({"id": raw_id, "status": "failed", "message": "Invalid user id"})
+            continue
+        user = db.session.get(User, user_id)
+        if not user:
+            results.append({"id": user_id, "status": "failed", "message": "User not found"})
+            continue
+        if current_role == "principal":
+            if (user.role in ("Admin", "Principal")) or (principal_pid is None) or (user.program_id_fk != principal_pid):
+                results.append({"id": user_id, "status": "failed", "message": "Principal cannot update this account"})
+                continue
+        current_user_role = (user.role or "").strip()
+        if current_user_role == target_role:
+            results.append({"id": user_id, "status": "skipped", "message": "Already in target role"})
+            continue
+        user.role = target_role
+        touched_program_id = touched_program_id or user.program_id_fk
+        results.append(
+            {
+                "id": user_id,
+                "status": "success",
+                "message": "Role updated",
+                "before": {"role": current_user_role},
+                "after": {"role": target_role},
+            }
+        )
+
+    return _bulk_finish(
+        "assign-role",
+        "users",
+        len(selected_ids),
+        results,
+        fallback_endpoint="main.users_list",
+        fallback_values={},
+        program_id=touched_program_id,
+        semester=None,
+    )
+
+
+@main_bp.route("/admin/users/bulk/assign-program", methods=["POST"])
+@login_required
+@role_required("admin")
+def users_bulk_assign_program():
+    selected_ids = _bulk_request_ids()
+    program_id_raw = str(_bulk_request_value("target_program_id", "")).strip()
+    if not selected_ids:
+        flash("Select at least one account first.", "warning")
+        return redirect(_bulk_redirect_target("main.users_list"))
+    try:
+        target_program_id = int(program_id_raw)
+    except ValueError:
+        flash("Enter a valid program ID.", "danger")
+        return redirect(_bulk_redirect_target("main.users_list"))
+    program = db.session.get(Program, target_program_id)
+    if not program:
+        flash("Target program not found.", "danger")
+        return redirect(_bulk_redirect_target("main.users_list"))
+
+    results = []
+    for raw_id in selected_ids:
+        try:
+            user_id = int(raw_id)
+        except ValueError:
+            results.append({"id": raw_id, "status": "failed", "message": "Invalid user id"})
+            continue
+        user = db.session.get(User, user_id)
+        if not user:
+            results.append({"id": user_id, "status": "failed", "message": "User not found"})
+            continue
+        current_role = (user.role or "").strip().lower()
+        if current_role == "admin":
+            results.append({"id": user_id, "status": "failed", "message": "Admin accounts are not program-scoped"})
+            continue
+        before_program = user.program_id_fk
+        if before_program == target_program_id:
+            results.append({"id": user_id, "status": "skipped", "message": "Already mapped to target program"})
+            continue
+        user.program_id_fk = target_program_id
+        if program.institute and program.institute.trust_id_fk:
+            user.trust_id_fk = program.institute.trust_id_fk
+        results.append(
+            {
+                "id": user_id,
+                "status": "success",
+                "message": "Program updated",
+                "before": {"program_id_fk": before_program},
+                "after": {"program_id_fk": target_program_id},
+            }
+        )
+
+    return _bulk_finish(
+        "assign-program",
+        "users",
+        len(selected_ids),
+        results,
+        fallback_endpoint="main.users_list",
+        fallback_values={},
+        program_id=target_program_id,
+        semester=None,
+    )
 
 
 @main_bp.route("/admin/users/new", methods=["GET", "POST"])

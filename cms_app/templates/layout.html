@@ -16,6 +16,15 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=5) }}">
   <script>
     const isLocalHost = ['127.0.0.1', 'localhost'].includes(window.location.hostname);
+    window.addEventListener('pageshow', (event) => {
+      try {
+        if (event.persisted) {
+          window.location.reload();
+        }
+      } catch (err) {
+        console.log('pageshow refresh skipped: ', err);
+      }
+    });
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', async () => {
         if (isLocalHost) {

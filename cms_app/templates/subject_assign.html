@@ -14,6 +14,13 @@ function cancelConfirm(btnId) {
   // Show the initial "Deactivate" button again
   document.getElementById('btn-deact-' + btnId).style.display = 'inline-block';
 }
+
+function syncRoleSelection(roleValue) {
+  var target = document.getElementById('role_hidden');
+  if (target) {
+    target.value = roleValue || 'primary';
+  }
+}
 </script>
 <div class="container py-4">
   <div class="section-header">
@@ -56,11 +63,11 @@ function cancelConfirm(btnId) {
           {% set selected_role = form_data.role or 'primary' %}
           <div class="d-flex flex-wrap gap-3">
             <div class="form-check form-check-inline">
-              <input class="form-check-input" type="radio" name="role" id="role_primary" value="primary" {% if selected_role == 'primary' %}checked{% endif %}>
+              <input class="form-check-input" type="radio" name="role_picker" id="role_primary" value="primary" {% if selected_role == 'primary' %}checked{% endif %} onclick="syncRoleSelection('primary')">
               <label class="form-check-label" for="role_primary">Primary</label>
             </div>
             <div class="form-check form-check-inline">
-              <input class="form-check-input" type="radio" name="role" id="role_co" value="co" {% if selected_role == 'co' %}checked{% endif %}>
+              <input class="form-check-input" type="radio" name="role_picker" id="role_co" value="co" {% if selected_role == 'co' %}checked{% endif %} onclick="syncRoleSelection('co')">
               <label class="form-check-label" for="role_co">Co-Faculty</label>
             </div>
           </div>
@@ -122,6 +129,7 @@ function cancelConfirm(btnId) {
   <form method="post" action="{{ url_for('main.subject_assign', subject_id=subject.subject_id) }}">
     <div class="card">
       <div class="card-body">
+        <input type="hidden" name="role" id="role_hidden" value="{{ selected_role }}">
         <div class="row g-3">
           <div class="col-md-6">
             <label for="faculty_user_id" class="form-label">Staff</label>
@@ -161,4 +169,7 @@ function cancelConfirm(btnId) {
     </div>
   </form>
 </div>
+<script>
+syncRoleSelection('{{ selected_role }}');
+</script>
 {% endblock %}

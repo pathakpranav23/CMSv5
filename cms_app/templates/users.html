@@ -46,6 +46,59 @@
     </div>
   </form>
 
+  {% if users and users|length > 0 %}
+  <form id="usersBulkForm" method="post" action="{{ url_for('main.users_bulk_set_active') }}" class="mb-3">
+    <input type="hidden" name="return_to" value="{{ request.full_path }}" />
+    <input type="hidden" name="set_active" id="usersBulkSetActive" value="true" />
+    <div class="card border-0 shadow-sm">
+      <div class="card-body py-3 d-flex flex-column gap-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div class="fw-semibold">Bulk Actions <span class="text-muted small ms-2" id="usersSelectedCount">0 selected of {{ users|length }}</span></div>
+          <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllUsersRows(true);">Select Page</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllUsersRows(false);">Clear</button>
+          </div>
+        </div>
+        <div class="small text-muted" id="usersBulkHint">Choose one or more accounts to enable bulk actions.</div>
+        <div class="d-flex flex-wrap gap-2">
+          <button type="submit" class="btn btn-sm btn-outline-success bulk-selection-required" onclick="return submitUsersBulk('{{ url_for('main.users_bulk_set_active') }}', 'true');">Activate</button>
+          <button type="submit" class="btn btn-sm btn-outline-warning bulk-selection-required" onclick="return submitUsersBulk('{{ url_for('main.users_bulk_set_active') }}', 'false');">Deactivate</button>
+          <button type="submit" class="btn btn-sm btn-outline-secondary bulk-selection-required" onclick="return submitUsersBulk('{{ url_for('main.users_bulk_force_password_change') }}');">Force Password Change</button>
+          <button type="submit" class="btn btn-sm btn-outline-primary bulk-selection-required" onclick="return submitUsersBulk('{{ url_for('main.users_bulk_reset_passwords') }}');">Reset Passwords</button>
+        </div>
+        <div class="row g-2 align-items-end">
+          <div class="col-12 col-lg-4">
+            <label class="form-label form-label-sm mb-1" for="usersBulkTargetRole">Assign Role</label>
+            <div class="input-group input-group-sm">
+              <select name="target_role" id="usersBulkTargetRole" class="form-select">
+                <option value="">Choose role</option>
+                {% for r in roles %}
+                  <option value="{{ r }}">{{ r }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" class="btn btn-outline-secondary bulk-selection-required" onclick="return submitUsersAssignRole();">Assign</button>
+            </div>
+          </div>
+          {% if current_user.role|lower == 'admin' %}
+          <div class="col-12 col-lg-5">
+            <label class="form-label form-label-sm mb-1" for="usersBulkTargetProgramId">Assign Program</label>
+            <div class="input-group input-group-sm">
+              <select name="target_program_id" id="usersBulkTargetProgramId" class="form-select">
+                <option value="">Choose program</option>
+                {% for p in program_list %}
+                  <option value="{{ p.program_id }}">{{ p.program_name }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" class="btn btn-outline-secondary bulk-selection-required" onclick="return submitUsersAssignProgram();">Assign</button>
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </form>
+  {% endif %}
+
   <div class="card">
     <div class="card-header card-header-standard"><div class="card-title">Accounts List</div></div>
     <div class="card-body p-0">
@@ -53,6 +106,7 @@
         <table class="table table-modern table-striped table-hover mb-0">
           <thead class="table-light">
             <tr>
+              <th scope="col"><input type="checkbox" id="usersSelectAll" onclick="toggleUsersSelection(this)" /></th>
               <th scope="col">Username</th>
               <th scope="col">Role</th>
               <th scope="col">Program</th>
@@ -62,9 +116,10 @@
           <tbody>
             {% for u in users %}
             <tr>
+              <td><input type="checkbox" class="user-row-checkbox" name="selected_ids" value="{{ u.user_id }}" form="usersBulkForm" onchange="updateUsersSelectedCount()" /></td>
               <td>{{ u.username }}</td>
               <td><span class="badge badge-role badge-role-{{ u.role|lower }}">{{ u.role }}</span></td>
-              <td>{{ programs.get(u.program_id_fk) or '—' }}</td>
+              <td>{{ programs.get(u.program_id_fk) or '&mdash;'|safe }}</td>
               <td>
                 <a class="btn btn-sm btn-outline-primary me-2" href="{{ url_for('main.user_edit', user_id=u.user_id) }}">Edit</a>
                 {% if (current_user.role|lower == 'admin') and (u.role|lower == 'principal') %}
@@ -91,4 +146,83 @@
     </div>
   </div>
 </div>
+
+<script>
+function updateUsersSelectedCount() {
+  var boxes = document.querySelectorAll('.user-row-checkbox');
+  var checked = document.querySelectorAll('.user-row-checkbox:checked').length;
+  var counter = document.getElementById('usersSelectedCount');
+  var hint = document.getElementById('usersBulkHint');
+  var requiresSelection = document.querySelectorAll('.bulk-selection-required');
+  if (counter) {
+    counter.textContent = checked + ' selected of ' + boxes.length;
+  }
+  if (hint) {
+    hint.textContent = checked
+      ? 'Ready to update ' + checked + ' selected account' + (checked === 1 ? '' : 's') + '.'
+      : 'Choose one or more accounts to enable bulk actions.';
+  }
+  requiresSelection.forEach(function(control) {
+    control.disabled = checked === 0;
+  });
+  var selectAll = document.getElementById('usersSelectAll');
+  if (selectAll) {
+    selectAll.indeterminate = checked > 0 && checked < boxes.length;
+    selectAll.checked = boxes.length > 0 && checked === boxes.length;
+  }
+}
+
+function toggleUsersSelection(master) {
+  document.querySelectorAll('.user-row-checkbox').forEach(function(box) {
+    box.checked = master.checked;
+  });
+  updateUsersSelectedCount();
+}
+
+function selectAllUsersRows(checked) {
+  document.querySelectorAll('.user-row-checkbox').forEach(function(box) {
+    box.checked = checked;
+  });
+  var selectAll = document.getElementById('usersSelectAll');
+  if (selectAll) {
+    selectAll.checked = checked;
+    selectAll.indeterminate = false;
+  }
+  updateUsersSelectedCount();
+}
+
+function submitUsersBulk(actionUrl, setActiveValue) {
+  var checked = document.querySelectorAll('.user-row-checkbox:checked').length;
+  if (!checked) {
+    alert('Select at least one account first.');
+    return false;
+  }
+  var form = document.getElementById('usersBulkForm');
+  form.action = actionUrl;
+  if (setActiveValue !== undefined) {
+    document.getElementById('usersBulkSetActive').value = setActiveValue;
+  }
+  return true;
+}
+
+function submitUsersAssignRole() {
+  var targetRole = document.getElementById('usersBulkTargetRole').value.trim();
+  if (!targetRole) {
+    alert('Choose a target role first.');
+    return false;
+  }
+  return submitUsersBulk('{{ url_for('main.users_bulk_assign_role') }}');
+}
+
+function submitUsersAssignProgram() {
+  var targetProgramId = document.getElementById('usersBulkTargetProgramId').value.trim();
+  if (!targetProgramId) {
+    alert('Choose a target program first.');
+    return false;
+  }
+  return submitUsersBulk('{{ url_for('main.users_bulk_assign_program') }}');
+}
+
+updateUsersSelectedCount();
+</script>
 {% endblock %}

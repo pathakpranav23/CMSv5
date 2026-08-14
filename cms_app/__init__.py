@@ -269,6 +269,22 @@ def create_app():
         except Exception:
             return response
         if not path.startswith("/static/"):
+            try:
+                is_html = (response.mimetype or "").startswith("text/html")
+            except Exception:
+                is_html = False
+            if is_html:
+                try:
+                    response.headers.setdefault("Vary", "Cookie")
+                except Exception:
+                    pass
+                try:
+                    if current_user.is_authenticated:
+                        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                        response.headers["Pragma"] = "no-cache"
+                        response.headers["Expires"] = "0"
+                except Exception:
+                    pass
             return response
         try:
             filename = path.rsplit("/", 1)[-1]
