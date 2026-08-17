@@ -10083,10 +10083,29 @@ def subjects_list():
     program_id_raw = request.args.get("program_id")
     sem_raw = request.args.get("semester")
     medium_raw = (request.args.get("medium") or "").strip()
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    faculty_subject_ids = []
+    if role == "faculty":
+        # Faculty may browse only subjects they are actively assigned to teach.
+        faculty_subject_ids = db.session.execute(
+            select(CourseAssignment.subject_id_fk).filter_by(
+                faculty_id_fk=current_user.user_id,
+                is_active=True,
+            ).distinct()
+        ).scalars().all()
     ctx = _program_dropdown_context(program_id_raw, include_admin_all=True, default_program_name=None, exclude_names=None, warn_unmapped=False, fallback_to_first=True, prefer_user_program_default=True)
     programs = ctx.get("program_list", [])
     selected_program_id = ctx.get("selected_program_id")
     selected_program = db.session.get(Program, selected_program_id) if selected_program_id else None
+    if role == "faculty":
+        faculty_program_ids = set()
+        if faculty_subject_ids:
+            faculty_program_ids = set(db.session.execute(
+                select(Subject.program_id_fk).filter(Subject.subject_id.in_(faculty_subject_ids)).distinct()
+            ).scalars().all())
+        programs = [program for program in programs if program.program_id in faculty_program_ids]
+        if not selected_program or selected_program.program_id not in faculty_program_ids:
+            selected_program = programs[0] if programs else None
     semester = None
     try:
         semester = int(sem_raw) if sem_raw else 1
@@ -10131,6 +10150,8 @@ def subjects_list():
             subject_table.c.program_id_fk == selected_program.program_id,
             subject_table.c.semester == semester,
         )
+        if role == "faculty":
+            q = q.filter(subject_table.c.subject_id.in_(faculty_subject_ids))
         if selected_medium and "medium_tag" in subject_table.c:
             q = q.filter(subject_table.c.medium_tag == selected_medium)
         total_count = db.session.scalar(select(func.count()).select_from(q.subquery())) or 0
@@ -10199,10 +10220,12 @@ def subjects_list():
         selected_limit=selected_limit,
         selected_page=selected_page,
         total_count=total_count,
+        is_faculty=role == "faculty",
     )
 
 @main_bp.route("/subjects/export.csv", methods=["GET"])
 @login_required
+@role_required("admin", "principal", "clerk", "faculty")
 def subjects_export_csv():
     program_id_raw = request.args.get("program_id")
     sem_raw = request.args.get("semester")
@@ -10330,6 +10353,7 @@ def subjects_bulk_set_active():
 
 @main_bp.route("/subjects/bulk/export", methods=["POST"])
 @login_required
+@role_required("admin", "principal", "clerk")
 def subjects_bulk_export():
     selected_ids = _bulk_request_ids()
     if not selected_ids:
@@ -15083,6 +15107,14 @@ def program_new():
                 errors.append("A program with this name already exists.")
         except Exception:
             pass
+    if (getattr(current_user, "role", "") or "").strip().lower() == "faculty":
+        assigned_subject_ids = db.session.execute(
+            select(CourseAssignment.subject_id_fk).filter_by(
+                faculty_id_fk=current_user.user_id,
+                is_active=True,
+            ).distinct()
+        ).scalars().all()
+        q = q.filter(subject_table.c.subject_id.in_(assigned_subject_ids))
         try:
             duration = int(duration_raw) if duration_raw else 3
             if duration < 1 or duration > 6:
