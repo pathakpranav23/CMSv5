@@ -3,17 +3,22 @@
 <div class="container py-4">
   <div class="section-header d-flex justify-content-between align-items-center mb-3">
     <h2 class="mb-0 title">{{ t('Materials') }}</h2>
-    {% if role in ['admin','principal'] %}
-      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.materials_moderation') }}">{{ t('Moderation') }}</a>
-    {% endif %}
-    {% if role == 'student' %}
-      <a class="btn btn-primary btn-sm" href="{{ url_for('main.materials_downloads') }}">{{ t('All Downloads') }}</a>
-    {% endif %}
+    <div class="d-flex gap-2">
+      {% if role in ['admin', 'principal'] %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.materials_moderation') }}">{{ t('Moderation') }}</a>
+      {% endif %}
+      {% if role == 'student' %}
+        <a class="btn btn-primary btn-sm" href="{{ url_for('main.materials_downloads') }}">{{ t('All Downloads') }}</a>
+      {% endif %}
+    </div>
   </div>
 
   {% if role == 'student' %}
     <div class="card mb-4">
-      <div class="card-header card-header-standard"><div class="card-title">{{ t('Your Subjects') }} — {{ ay }}</div></div>
+      <div class="card-header card-header-standard d-flex justify-content-between align-items-center">
+        <div class="card-title">{{ t('Your Subjects') }} - {{ ay }}</div>
+        <div class="small text-muted">Browse published resources only</div>
+      </div>
       <div class="card-body">
         {% if student_subjects %}
           <div class="list-group">
@@ -28,36 +33,170 @@
             {% endfor %}
           </div>
         {% else %}
-          <div class="text-muted">{{ t('No enrolled subjects found for') }} {{ ay }}.</div>
+          <div class="py-4 text-center">
+            <div class="fw-semibold mb-2">No enrolled subjects found for {{ ay }}.</div>
+            <div class="text-muted">Published material will appear here once your current-year enrollments are available.</div>
+          </div>
         {% endif %}
       </div>
     </div>
   {% elif role == 'faculty' %}
     <div class="card mb-4">
-      <div class="card-header card-header-standard"><div class="card-title">{{ t('Assigned Subjects') }} — {{ ay }}</div></div>
-      <div class="card-body">
-        {% if faculty_subjects %}
-          <div class="list-group">
-            {% for s in faculty_subjects %}
-              <div class="list-group-item d-flex justify-content-between align-items-center">
-                <div>
-                  <span class="fw-semibold">{{ s.subject_name }}</span>
-                  <span class="text-muted small">(Sem {{ s.semester }})</span>
-                </div>
-                <div class="d-flex gap-2">
-                  <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.subject_materials', subject_id=s.subject_id) }}">{{ t('Manage') }}</a>
-                  <a class="btn btn-primary btn-sm" href="{{ url_for('main.subject_material_new', subject_id=s.subject_id) }}">{{ t('Share') }}</a>
-                </div>
-              </div>
-            {% endfor %}
-          </div>
-        {% else %}
-          <div class="text-muted">{{ t('No active assignments found.') }}</div>
-        {% endif %}
+      <div class="card-body d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+        <div>
+          <div class="fw-semibold mb-1">Manage teaching resources subject by subject.</div>
+          <div class="text-muted">Faculty uploads publish immediately. Use Archive when a resource should no longer be shown to students, and use Publish to bring an older draft or archived item back live.</div>
+        </div>
+        <div class="text-lg-end">
+          <div class="small text-muted">Academic year</div>
+          <div class="fw-semibold">{{ ay }}</div>
+        </div>
       </div>
     </div>
+
+    {% if faculty_subject_rows %}
+      <div class="row g-3">
+        {% for row in faculty_subject_rows %}
+          {% set subject = row.subject %}
+          {% set stats = row.stats %}
+          <div class="col-12 col-xl-6">
+            <div class="card h-100">
+              <div class="card-header card-header-standard d-flex justify-content-between align-items-center">
+                <div class="card-title">{{ subject.subject_name }}</div>
+                <span class="small text-muted">Semester {{ subject.semester }}</span>
+              </div>
+              <div class="card-body">
+                {% if subject.subject_code %}
+                  <div class="small text-muted mb-3">Code: {{ subject.subject_code }}</div>
+                {% endif %}
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                  <span class="badge text-bg-light">Total {{ stats.total }}</span>
+                  <span class="badge text-bg-success">Published {{ stats.published }}</span>
+                  <span class="badge text-bg-secondary">Draft {{ stats.draft }}</span>
+                  {% if stats.archived %}
+                    <span class="badge text-bg-warning">Archived {{ stats.archived }}</span>
+                  {% endif %}
+                  {% if stats.flagged %}
+                    <span class="badge text-bg-danger">Flagged {{ stats.flagged }}</span>
+                  {% endif %}
+                </div>
+                <div class="text-muted small">Open the subject to see every uploaded file or link, check status, and manage revisions from the edit screen.</div>
+              </div>
+              <div class="card-footer d-flex flex-wrap gap-2">
+                <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.subject_materials', subject_id=subject.subject_id) }}">Manage Materials</a>
+                <a class="btn btn-primary btn-sm" href="{{ url_for('main.subject_material_new', subject_id=subject.subject_id) }}">Share New</a>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="card">
+        <div class="card-body py-5 text-center">
+          <div class="fw-semibold mb-2">No active subject assignments found.</div>
+          <div class="text-muted">Once subjects are assigned to your faculty account, they will appear here with material actions for each subject.</div>
+        </div>
+      </div>
+    {% endif %}
+  {% elif role in ['admin', 'principal', 'clerk'] %}
+    <div class="card mb-4">
+      <div class="card-body">
+        <form method="get" action="{{ url_for('main.materials_hub') }}" class="row g-3 align-items-end">
+          <div class="col-12 col-md-5">
+            <label for="program_id" class="form-label">Program</label>
+            <select id="program_id" name="program_id" class="form-select">
+              <option value="">{% if allow_all_programs %}All programs{% else %}All scoped programs{% endif %}</option>
+              {% for program in program_list %}
+                <option value="{{ program.program_id }}" {% if selected_program_id == program.program_id %}selected{% endif %}>{{ program.program_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-3">
+            <label for="semester" class="form-label">Semester</label>
+            <select id="semester" name="semester" class="form-select">
+              <option value="">All semesters</option>
+              {% for sem in range(1, 9) %}
+                <option value="{{ sem }}" {% if selected_semester == (sem|string) %}selected{% endif %}>Semester {{ sem }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-4 d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.materials_hub') }}">Reset</a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header card-header-standard d-flex justify-content-between align-items-center">
+        <div class="card-title">Subject Browser</div>
+        <div class="small text-muted">Open a subject to manage its teaching resources</div>
+      </div>
+      {% if managed_subject_rows %}
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-modern table-striped table-hover mb-0 align-middle">
+              <thead class="table-light">
+                <tr>
+                  <th scope="col">Program</th>
+                  <th scope="col">Subject</th>
+                  <th scope="col" class="text-center">Semester</th>
+                  <th scope="col" class="text-center">Materials</th>
+                  <th scope="col" class="text-center">Published</th>
+                  <th scope="col" class="text-center">Draft</th>
+                  <th scope="col" class="text-center">Archived</th>
+                  <th scope="col" class="text-center">Flagged</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in managed_subject_rows %}
+                  {% set subject = row.subject %}
+                  {% set stats = row.stats %}
+                  <tr>
+                    <td>{{ row.program_name or '-' }}</td>
+                    <td>
+                      <div class="fw-semibold">{{ subject.subject_name }}</div>
+                      {% if subject.subject_code %}
+                        <div class="small text-muted">{{ subject.subject_code }}</div>
+                      {% endif %}
+                    </td>
+                    <td class="text-center">{{ subject.semester }}</td>
+                    <td class="text-center">{{ stats.total }}</td>
+                    <td class="text-center">{{ stats.published }}</td>
+                    <td class="text-center">{{ stats.draft }}</td>
+                    <td class="text-center">{{ stats.archived }}</td>
+                    <td class="text-center">
+                      {% if stats.flagged %}
+                        <span class="badge bg-danger">{{ stats.flagged }}</span>
+                      {% else %}
+                        0
+                      {% endif %}
+                    </td>
+                    <td>
+                      <div class="d-flex flex-wrap gap-2">
+                        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.subject_materials', subject_id=subject.subject_id) }}">Open Subject</a>
+                        {% if can_share_to_subject %}
+                          <a class="btn btn-primary btn-sm" href="{{ url_for('main.subject_material_new', subject_id=subject.subject_id) }}">Share New</a>
+                        {% endif %}
+                      </div>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% else %}
+        <div class="card-body py-5 text-center">
+          <div class="fw-semibold mb-2">No subjects matched the current scope.</div>
+          <div class="text-muted">Try a different program or semester filter, or confirm that subject setup is complete for this workspace.</div>
+        </div>
+      {% endif %}
+    </div>
   {% else %}
-    <div class="alert alert-info">{{ t('Select a subject to view or manage materials.') }}</div>
+    <div class="alert alert-info">Select a subject to view or manage materials.</div>
   {% endif %}
 </div>
 {% endblock %}

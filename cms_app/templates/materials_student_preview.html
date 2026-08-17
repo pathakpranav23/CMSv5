@@ -1,0 +1,45 @@
+{% extends 'layout.html' %}
+{% import '_macros.html' as ui %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h2 class="mb-1 title">Student Preview - {{ subject.subject_name }}</h2>
+      <div class="text-muted">This is the same published, unflagged content students can see.</div>
+    </div>
+    {{ ui.back_link(url_for('main.subject_materials', subject_id=subject.subject_id), 'Back to Manage Materials') }}
+  </div>
+
+  <div class="alert {% if audience_count %}alert-success{% else %}alert-warning{% endif %}">
+    <strong>{{ audience_count }} active enrolled student{{ '' if audience_count == 1 else 's' }}</strong>
+    can currently see the published materials below for academic year {{ academic_year }}.
+    {% if not audience_count %}<div class="mt-1">No active current-year enrollment is available for this subject yet.</div>{% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-header card-header-standard"><div class="card-title">What students see</div></div>
+    {% if materials %}
+      <div class="list-group list-group-flush">
+        {% for material in materials %}
+          <div class="list-group-item">
+            <div class="d-flex justify-content-between gap-3">
+              <div>
+                <div class="fw-semibold">{{ material.title }}</div>
+                {% if material.description %}<div class="text-muted small">{{ material.description }}</div>{% endif %}
+                <div class="small text-muted mt-1">{{ material.kind|capitalize }}</div>
+              </div>
+              {% if material.kind == 'file' and material.file_path %}
+                <a class="btn btn-outline-primary btn-sm align-self-start" href="{{ url_for('main.material_download', material_id=material.material_id) }}">Download</a>
+              {% elif material.kind in ['link', 'embed'] and material.external_url %}
+                <a class="btn btn-outline-primary btn-sm align-self-start" href="{{ material.external_url }}" target="_blank" rel="noopener">Open</a>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="card-body text-center py-5 text-muted">Students cannot see any materials yet. Publish an unflagged item to make it visible.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

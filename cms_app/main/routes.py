@@ -1,13 +1,14 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, Response, session, send_file, jsonify
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
+from urllib.parse import urlparse
 import os
 import csv
 import io
 import json
 from sqlalchemy import or_, select, and_, cast, Integer, false, update, MetaData, Table, inspect as sa_inspect
 from sqlalchemy.orm import selectinload
-from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementRevision, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, MaterialRevision, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification, DataAuditLog
+from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementRevision, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, MaterialRevision, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification, StudentFollowUpTask, DataAuditLog
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
 from ..api_utils import api_success, api_error
@@ -1120,6 +1121,84 @@ def _user_is_student_enrolled(subject_id: int, academic_year: str) -> bool:
             academic_year=academic_year,
             is_active=True,
         )).scalars().first() is not None
+    except Exception:
+        return False
+
+
+def _subject_trust_id(subject) -> int | None:
+    """Resolve a subject's tenant through Program -> Institute."""
+    if not subject or not getattr(subject, "program_id_fk", None):
+        return None
+    try:
+        row = db.session.execute(
+            select(Institute.trust_id_fk).filter(Institute.institute_id == Program.institute_id_fk)
+            .filter(Program.program_id == subject.program_id_fk)
+        ).first()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _subject_in_current_tenant(subject) -> bool:
+    """Require an active tenant context whenever the subject is tenant-scoped."""
+    subject_trust_id = _subject_trust_id(subject)
+    effective_trust_id = _effective_trust_id()
+    if subject_trust_id is None:
+        return effective_trust_id is None
+    return effective_trust_id is not None and int(subject_trust_id) == int(effective_trust_id)
+
+
+def _material_user_can_view(material, subject=None) -> bool:
+    """Single server-side rule for material lists, previews, and downloads."""
+    if not material:
+        return False
+    subject = subject or db.session.get(Subject, material.subject_id_fk)
+    if not subject or not _subject_in_current_tenant(subject):
+        return False
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if _user_is_admin_or_principal():
+        if role == "principal":
+            return getattr(current_user, "program_id_fk", None) == subject.program_id_fk
+        return True
+    if role == "faculty":
+        return _user_is_faculty_assigned(subject.subject_id)
+    if role == "student":
+        return _user_is_student_enrolled(subject.subject_id, current_academic_year())
+    return False
+
+
+def _material_user_can_manage_subject(subject) -> bool:
+    if not subject or not _subject_in_current_tenant(subject):
+        return False
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if _user_is_admin_or_principal():
+        return role != "principal" or getattr(current_user, "program_id_fk", None) == subject.program_id_fk
+    return role == "faculty" and _user_is_faculty_assigned(subject.subject_id)
+
+
+def _material_student_audience_count(subject_id: int, academic_year: str) -> int:
+    """Count active current-year students who can see a published material."""
+    try:
+        return int(
+            db.session.scalar(
+                select(func.count(func.distinct(StudentSubjectEnrollment.student_id_fk)))
+                .join(Student, Student.enrollment_no == StudentSubjectEnrollment.student_id_fk)
+                .filter(
+                    StudentSubjectEnrollment.subject_id_fk == subject_id,
+                    StudentSubjectEnrollment.academic_year == academic_year,
+                    StudentSubjectEnrollment.is_active == True,
+                    Student.is_active == True,
+                )
+            ) or 0
+        )
+    except Exception:
+        return 0
+
+
+def _valid_external_material_url(value: str) -> bool:
+    try:
+        parsed = urlparse((value or "").strip())
+        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
     except Exception:
         return False
 
@@ -2589,7 +2668,13 @@ def materials_hub():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     student_subjects = []
     faculty_subjects = []
+    faculty_subject_rows = []
+    managed_subject_rows = []
     ay = current_academic_year()
+    program_list = []
+    selected_program_id = None
+    selected_semester = ""
+    allow_all_programs = False
     try:
         if role == "student":
             s = db.session.execute(select(Student).filter_by(user_id_fk=current_user.user_id)).scalars().first()
@@ -2608,12 +2693,92 @@ def materials_hub():
             ).scalars().all()
             subj_ids = sorted({a.subject_id_fk for a in assignments if a.subject_id_fk})
             faculty_subjects = db.session.execute(select(Subject).filter(Subject.subject_id.in_(subj_ids)).order_by(Subject.semester.asc(), Subject.subject_name.asc())).scalars().all() if subj_ids else []
+            counts_by_subject = _material_counts_by_subject(subj_ids)
+            for subject in faculty_subjects:
+                faculty_subject_rows.append(
+                    {
+                        "subject": subject,
+                        "stats": counts_by_subject.get(
+                            subject.subject_id,
+                            {"total": 0, "published": 0, "draft": 0, "flagged": 0},
+                        ),
+                    }
+                )
+        elif role in ("admin", "principal", "clerk"):
+            program_raw = (request.args.get("program_id") or "").strip()
+            semester_raw = (request.args.get("semester") or "").strip()
+            ctx = _program_dropdown_context(
+                program_raw,
+                include_admin_all=True,
+                warn_unmapped=False,
+                fallback_to_first=False,
+            )
+            program_list = ctx.get("program_list", [])
+            selected_program_id = ctx.get("selected_program_id")
+            allow_all_programs = bool(ctx.get("allow_all_programs"))
+            if role == "admin" and program_raw:
+                try:
+                    candidate_program_id = int(program_raw)
+                except Exception:
+                    candidate_program_id = None
+                if candidate_program_id and any(p.program_id == candidate_program_id for p in program_list):
+                    selected_program_id = candidate_program_id
+            selected_semester = semester_raw if semester_raw.isdigit() else ""
+
+            program_name_map = {
+                p.program_id: p.program_name
+                for p in program_list
+                if getattr(p, "program_id", None)
+            }
+            allowed_program_ids = sorted(program_name_map.keys())
+            subject_query = select(Subject)
+            if allowed_program_ids:
+                subject_query = subject_query.filter(Subject.program_id_fk.in_(allowed_program_ids))
+            else:
+                subject_query = subject_query.where(false())
+            if selected_program_id:
+                subject_query = subject_query.filter(Subject.program_id_fk == selected_program_id)
+            if selected_semester:
+                subject_query = subject_query.filter(Subject.semester == int(selected_semester))
+
+            managed_subjects = db.session.execute(
+                subject_query.order_by(Subject.semester.asc(), Subject.subject_name.asc())
+            ).scalars().all()
+            counts_by_subject = _material_counts_by_subject([s.subject_id for s in managed_subjects])
+            for subject in managed_subjects:
+                stats = counts_by_subject.get(
+                    subject.subject_id,
+                    {"total": 0, "published": 0, "draft": 0, "flagged": 0},
+                )
+                managed_subject_rows.append(
+                    {
+                        "subject": subject,
+                        "program_name": program_name_map.get(subject.program_id_fk, ""),
+                        "stats": stats,
+                    }
+                )
     except Exception:
         # Fail-soft: show empty lists
         student_subjects = []
         faculty_subjects = []
+        faculty_subject_rows = []
+        managed_subject_rows = []
 
-    return render_template("materials_hub.html", role=role, student_subjects=student_subjects, faculty_subjects=faculty_subjects, ay=ay)
+    return render_template(
+        "materials_hub.html",
+        role=role,
+        student_subjects=student_subjects,
+        faculty_subjects=faculty_subjects,
+        faculty_subject_rows=faculty_subject_rows,
+        managed_subject_rows=managed_subject_rows,
+        ay=ay,
+        program_list=program_list,
+        selected_program_id=selected_program_id,
+        selected_semester=selected_semester,
+        allow_all_programs=allow_all_programs,
+        can_moderate=(role in ("admin", "principal")),
+        can_share_to_subject=(role in ("admin", "principal")),
+    )
 
 @main_bp.route("/materials/downloads")
 @login_required
@@ -2742,13 +2907,13 @@ def subject_materials(subject_id: int):
     if not subject:
         abort(404)
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    can_manage = False
-    if _user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(subject_id)):
-        can_manage = True
-
-    if role == "faculty" and not _user_is_faculty_assigned(subject_id):
-        flash("Access denied. You are not assigned to this subject.", "danger")
+    if not _material_user_can_view(SubjectMaterial(subject_id_fk=subject_id), subject):
+        flash("You are not authorized to access this subject's materials.", "danger")
         return redirect(url_for("main.materials_hub"))
+
+    is_admin_or_principal = _user_is_admin_or_principal()
+    can_manage = _material_user_can_manage_subject(subject)
+    can_share = can_manage
 
     q = select(SubjectMaterial).filter_by(subject_id_fk=subject_id)
     if role == "student":
@@ -2759,21 +2924,51 @@ def subject_materials(subject_id: int):
         q = q.filter(SubjectMaterial.is_published == True, SubjectMaterial.is_flagged == False)
 
     materials = db.session.execute(q.order_by(SubjectMaterial.created_at.desc())).scalars().all()
-    # Owner display map
-    owner_ids = sorted({m.faculty_id_fk for m in materials if m.faculty_id_fk})
-    owners = {}
-    if owner_ids:
-        try:
-            users = db.session.execute(select(User).filter(User.user_id.in_(owner_ids))).scalars().all()
-            for u in users:
-                owners[u.user_id] = (u.username or f"User #{u.user_id}")
-            facs = db.session.execute(select(Faculty).filter(Faculty.user_id_fk.in_(owner_ids))).scalars().all()
-            for f in facs:
-                # Prefer faculty full_name when available
-                owners[f.user_id_fk] = f.full_name or owners.get(f.user_id_fk, f"User #{f.user_id_fk}")
-        except Exception:
-            pass
-    return render_template("subject_materials.html", subject=subject, materials=materials, role=role, can_manage=can_manage, owners=owners)
+    owners = _material_owner_name_map(materials)
+    lifecycle_by_material = _material_lifecycle_by_id([material.material_id for material in materials if getattr(material, "material_id", None)])
+    material_rows = []
+    for material in materials:
+        open_url, open_label = _material_link_details(material)
+        updated_at_display = getattr(material, "updated_at", None) or getattr(material, "created_at", None)
+        can_edit_item = bool(
+            is_admin_or_principal
+            or (role == "faculty" and material.faculty_id_fk == current_user.user_id and can_manage)
+        )
+        status_key = _material_status_key(material, lifecycle_by_material)
+        student_visible = bool(material.is_published and not material.is_flagged)
+        audience_count = _material_student_audience_count(subject_id, current_academic_year()) if student_visible else 0
+        material_rows.append(
+            {
+                "material": material,
+                "owner_name": owners.get(material.faculty_id_fk, "-"),
+                "open_url": open_url,
+                "open_label": open_label,
+                "updated_at_display": updated_at_display,
+                "status_key": status_key,
+                "student_visible": student_visible,
+                "student_visibility_count": audience_count,
+                "status_label": {
+                    "published": "Published",
+                    "archived": "Archived",
+                    "draft": "Draft",
+                }.get(status_key, "Draft"),
+                "can_edit": can_edit_item,
+                "can_delete": can_edit_item,
+                "can_publish": bool(can_edit_item and not getattr(material, "is_published", False)),
+                "can_archive": bool(can_edit_item and getattr(material, "is_published", False)),
+                "can_flag": bool(is_admin_or_principal or (role == "faculty" and can_manage)),
+                "can_unflag": is_admin_or_principal,
+            }
+        )
+    return render_template(
+        "subject_materials.html",
+        subject=subject,
+        role=role,
+        can_manage=can_manage,
+        can_share=can_share,
+        is_admin_or_principal=is_admin_or_principal,
+        material_rows=material_rows,
+    )
 
 # --- Materials create/edit/delete + moderation actions ---
 def _allowed_file(filename: str) -> bool:
@@ -2785,7 +2980,7 @@ def _allowed_file(filename: str) -> bool:
 def _subject_storage_bytes(subject_id: int) -> int:
     total = 0
     try:
-        root = os.path.join(current_app.root_path, "static", "materials", str(subject_id))
+        root = os.path.join(current_app.config["MATERIALS_STORAGE_DIR"], str(subject_id))
         for dirpath, _dirnames, filenames in os.walk(root):
             for fn in filenames:
                 fp = os.path.join(dirpath, fn)
@@ -2809,6 +3004,152 @@ def _quota_limits():
         max_mb = 512
     return max_items, max_mb
 
+
+def _material_owner_name_map(materials) -> dict:
+    owners = {}
+    owner_ids = sorted(
+        {
+            getattr(m, "faculty_id_fk", None)
+            for m in (materials or [])
+            if getattr(m, "faculty_id_fk", None)
+        }
+    )
+    if not owner_ids:
+        return owners
+    try:
+        users = db.session.execute(select(User).filter(User.user_id.in_(owner_ids))).scalars().all()
+        for user in users:
+            owners[user.user_id] = (user.username or f"User #{user.user_id}")
+        faculty_rows = db.session.execute(select(Faculty).filter(Faculty.user_id_fk.in_(owner_ids))).scalars().all()
+        for faculty in faculty_rows:
+            owners[faculty.user_id_fk] = faculty.full_name or owners.get(faculty.user_id_fk, f"User #{faculty.user_id_fk}")
+    except Exception:
+        return owners
+    return owners
+
+
+def _material_lifecycle_by_id(material_ids) -> dict:
+    lifecycle = {}
+    clean_material_ids = sorted({int(material_id) for material_id in (material_ids or []) if material_id})
+    if not clean_material_ids:
+        return lifecycle
+    try:
+        rows = db.session.execute(
+            select(
+                SubjectMaterialLog.material_id_fk,
+                SubjectMaterialLog.action,
+            )
+            .filter(
+                SubjectMaterialLog.material_id_fk.in_(clean_material_ids),
+                SubjectMaterialLog.action.in_(("publish", "unpublish")),
+            )
+            .order_by(SubjectMaterialLog.log_id.asc())
+        ).all()
+    except Exception:
+        return lifecycle
+    for material_id_fk, action in rows:
+        entry = lifecycle.setdefault(
+            material_id_fk,
+            {"ever_published": False, "last_visibility_action": None},
+        )
+        if action == "publish":
+            entry["ever_published"] = True
+        entry["last_visibility_action"] = action
+    return lifecycle
+
+
+def _material_status_key(material, lifecycle_by_id=None) -> str:
+    if not material:
+        return "draft"
+    if getattr(material, "is_published", False):
+        return "published"
+    lifecycle = (lifecycle_by_id or {}).get(getattr(material, "material_id", None), {})
+    if lifecycle.get("ever_published"):
+        return "archived"
+    return "draft"
+
+
+def _material_counts_by_subject(subject_ids) -> dict:
+    counts = {}
+    clean_subject_ids = sorted({int(subject_id) for subject_id in (subject_ids or []) if subject_id})
+    if not clean_subject_ids:
+        return counts
+    try:
+        materials = db.session.execute(
+            select(SubjectMaterial).filter(SubjectMaterial.subject_id_fk.in_(clean_subject_ids))
+        ).scalars().all()
+    except Exception:
+        return counts
+    lifecycle_by_material = _material_lifecycle_by_id([material.material_id for material in materials if getattr(material, "material_id", None)])
+    for material in materials:
+        entry = counts.setdefault(
+            material.subject_id_fk,
+            {"total": 0, "published": 0, "draft": 0, "archived": 0, "flagged": 0},
+        )
+        entry["total"] += 1
+        status_key = _material_status_key(material, lifecycle_by_material)
+        entry[status_key] += 1
+        if getattr(material, "is_flagged", False):
+            entry["flagged"] += 1
+    return counts
+
+
+def _material_link_details(material):
+    if not material:
+        return None, None
+    kind = (getattr(material, "kind", "") or "").strip().lower()
+    file_path = (getattr(material, "file_path", "") or "").strip()
+    external_url = (getattr(material, "external_url", "") or "").strip()
+    if kind == "file" and file_path:
+        try:
+            return url_for("main.material_download", material_id=material.material_id), "Download"
+        except Exception:
+            return None, None
+    if kind in ("link", "embed") and external_url:
+        return external_url, "Open"
+    return None, None
+
+
+def _material_user_can_edit(material) -> bool:
+    if not material:
+        return False
+    subject = db.session.get(Subject, material.subject_id_fk)
+    if not _material_user_can_manage_subject(subject):
+        return False
+    if _user_is_admin_or_principal():
+        return True
+    return getattr(material, "faculty_id_fk", None) == getattr(current_user, "user_id", None)
+
+
+def _material_user_can_flag(material) -> bool:
+    # Moderation is intentionally reserved for tenant-scoped admin/principal users.
+    if not material or not _user_is_admin_or_principal():
+        return False
+    return _material_user_can_manage_subject(db.session.get(Subject, material.subject_id_fk))
+
+
+@main_bp.route("/subjects/<int:subject_id>/materials/student-preview")
+@login_required
+def subject_materials_student_preview(subject_id: int):
+    subject = db.session.get(Subject, subject_id)
+    if not subject or not _material_user_can_manage_subject(subject):
+        abort(404)
+    academic_year = current_academic_year()
+    audience_count = _material_student_audience_count(subject_id, academic_year)
+    materials = db.session.execute(
+        select(SubjectMaterial)
+        .filter_by(subject_id_fk=subject_id, is_published=True, is_flagged=False)
+        .order_by(SubjectMaterial.created_at.desc())
+    ).scalars().all()
+    return render_template(
+        "materials_student_preview.html",
+        subject=subject,
+        materials=materials,
+        audience_count=audience_count,
+        academic_year=academic_year,
+    )
+
+
 @main_bp.route("/subjects/<int:subject_id>/materials/new", methods=["GET", "POST"])
 @login_required
 @csrf_required
@@ -2817,18 +3158,28 @@ def subject_material_new(subject_id: int):
     if not subject:
         abort(404)
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    if not (_user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(subject_id))):
+    if not _material_user_can_manage_subject(subject):
         flash("You are not authorized to add materials.", "danger")
-        return redirect(url_for("main.subject_materials", subject_id=subject_id))
+        return redirect(url_for("main.materials_hub"))
 
     if request.method == "POST":
         title = (request.form.get("title") or "").strip()
         description = (request.form.get("description") or "").strip()
         kind = (request.form.get("kind") or "file").strip().lower()
         external_url = (request.form.get("external_url") or "").strip()
+        upload = request.files.get("file")
 
         if not title:
             flash("Title is required.", "danger")
+            return render_template("materials_new.html", subject=subject)
+        if kind not in ("file", "link", "embed"):
+            flash("Choose a valid material type.", "danger")
+            return render_template("materials_new.html", subject=subject)
+        if kind == "file" and not (upload and getattr(upload, "filename", "")):
+            flash("Choose a file to upload.", "danger")
+            return render_template("materials_new.html", subject=subject)
+        if kind in ("link", "embed") and not external_url:
+            flash("External URL is required for links and embeds.", "danger")
             return render_template("materials_new.html", subject=subject)
 
         # Quotas
@@ -2842,6 +3193,8 @@ def subject_material_new(subject_id: int):
             flash("Subject materials quota reached. Please remove old items before adding new.", "warning")
             return render_template("materials_new.html", subject=subject)
 
+        auto_publish_on_create = (role == "faculty")
+
         material = SubjectMaterial(
             subject_id_fk=subject_id,
             title=title,
@@ -2849,7 +3202,7 @@ def subject_material_new(subject_id: int):
             kind=kind,
             external_url=(external_url if kind in ("link", "embed") else None),
             file_path=None,
-            is_published=False,
+            is_published=auto_publish_on_create,
             is_flagged=False,
             faculty_id_fk=current_user.user_id,
         )
@@ -2858,9 +3211,8 @@ def subject_material_new(subject_id: int):
 
         try:
             if kind == "file":
-                file = request.files.get("file")
-                if file and file.filename:
-                    filename = secure_filename(file.filename)
+                if upload and upload.filename:
+                    filename = secure_filename(upload.filename)
                     if not _allowed_file(filename):
                         flash("File type not allowed.", "danger")
                         db.session.rollback()
@@ -2868,9 +3220,9 @@ def subject_material_new(subject_id: int):
                     # Quota: total storage limit per subject
                     new_size = 0
                     try:
-                        file.stream.seek(0, os.SEEK_END)
-                        new_size = file.stream.tell()
-                        file.stream.seek(0)
+                        upload.stream.seek(0, os.SEEK_END)
+                        new_size = upload.stream.tell()
+                        upload.stream.seek(0)
                     except Exception:
                         new_size = 0
                     max_items, max_mb = _quota_limits()
@@ -2879,24 +3231,100 @@ def subject_material_new(subject_id: int):
                         flash("Subject storage quota exceeded. Upload a smaller file or remove old items.", "warning")
                         db.session.rollback()
                         return render_template("materials_new.html", subject=subject)
-                    root = os.path.join(current_app.root_path, "static", "materials", str(subject_id), str(material.material_id))
+                    root = os.path.join(current_app.config["MATERIALS_STORAGE_DIR"], str(subject_id), str(material.material_id))
                     os.makedirs(root, exist_ok=True)
                     dest = os.path.join(root, filename)
-                    file.save(dest)
-                    material.file_path = os.path.relpath(dest, os.path.join(current_app.root_path, "static")).replace("\\", "/")
+                    upload.save(dest)
+                    material.file_path = "private/materials/" + os.path.relpath(dest, current_app.config["MATERIALS_STORAGE_DIR"]).replace("\\", "/")
         except Exception:
             flash("Failed to save file.", "danger")
             db.session.rollback()
             return render_template("materials_new.html", subject=subject)
 
         db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="create", actor_user_id_fk=current_user.user_id, actor_role=role, meta_json=None))
+        if auto_publish_on_create:
+            db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="publish", actor_user_id_fk=current_user.user_id, actor_role=role, meta_json=None))
         ver = (db.session.scalar(select(func.max(MaterialRevision.version)).filter(MaterialRevision.material_id_fk == material.material_id)) or 0) + 1
         db.session.add(MaterialRevision(material_id_fk=material.material_id, version=ver, title=material.title, description=material.description, kind=material.kind, file_path=material.file_path, external_url=material.external_url, actor_user_id_fk=current_user.user_id))
         db.session.commit()
-        flash("Material added. Awaiting publish.", "success")
+        if auto_publish_on_create:
+            flash("Material added and published.", "success")
+        else:
+            flash("Material added. Awaiting publish.", "success")
         return redirect(url_for("main.subject_materials", subject_id=subject_id))
 
     return render_template("materials_new.html", subject=subject)
+
+def _material_file_location(material):
+    """Return the validated location of a current or legacy material file."""
+    if not material or not material.file_path:
+        return None
+    # New uploads live outside static/. Keep legacy uploads available through this
+    # authenticated endpoint while existing material records are being migrated.
+    storage_root = current_app.config.get("MATERIALS_STORAGE_DIR")
+    rel = (material.file_path or "").replace("\\", "/").lstrip("/")
+    if rel.startswith("private/materials/") and storage_root:
+        root = os.path.abspath(storage_root)
+        candidate = os.path.abspath(os.path.join(root, rel.removeprefix("private/materials/")))
+    elif rel.startswith("materials/"):
+        root = os.path.abspath(os.path.join(current_app.root_path, "static"))
+        candidate = os.path.abspath(os.path.join(root, rel))
+    else:
+        return None
+    if not candidate.startswith(root + os.sep) or not os.path.isfile(candidate):
+        return None
+    return candidate
+
+
+@main_bp.route("/materials/<int:material_id>/download")
+@login_required
+def material_download(material_id: int):
+    material = db.session.get(SubjectMaterial, material_id)
+    subject = db.session.get(Subject, material.subject_id_fk) if material else None
+    if not material or material.kind != "file" or not _material_user_can_view(material, subject):
+        abort(404)
+    candidate = _material_file_location(material)
+    if not candidate:
+        abort(404)
+    return send_file(candidate, as_attachment=True, download_name=os.path.basename(candidate))
+
+
+@main_bp.route("/materials/<int:material_id>/preview")
+@login_required
+def material_preview(material_id: int):
+    """Show a branded preview page for a private material file."""
+    material = db.session.get(SubjectMaterial, material_id)
+    subject = db.session.get(Subject, material.subject_id_fk) if material else None
+    if not material or material.kind != "file" or not _material_user_can_view(material, subject):
+        abort(404)
+    candidate = _material_file_location(material)
+    if not candidate:
+        abort(404)
+    extension = os.path.splitext(candidate)[1].lstrip(".").lower()
+    preview_mode = "pdf" if extension == "pdf" else "image" if extension in {"png", "jpg", "jpeg", "webp", "gif"} else "unsupported"
+    return render_template(
+        "material_preview.html",
+        material=material,
+        subject=subject,
+        filename=os.path.basename(candidate),
+        extension=extension.upper() or "FILE",
+        preview_mode=preview_mode,
+    )
+
+
+@main_bp.route("/materials/<int:material_id>/preview/content")
+@login_required
+def material_preview_content(material_id: int):
+    """Serve previewable material bytes inline, after the same access checks."""
+    material = db.session.get(SubjectMaterial, material_id)
+    subject = db.session.get(Subject, material.subject_id_fk) if material else None
+    if not material or material.kind != "file" or not _material_user_can_view(material, subject):
+        abort(404)
+    candidate = _material_file_location(material)
+    if not candidate:
+        abort(404)
+    return send_file(candidate, as_attachment=False, download_name=os.path.basename(candidate))
+
 
 @main_bp.route("/materials/<int:material_id>/edit", methods=["GET", "POST"])
 @login_required
@@ -2907,8 +3335,7 @@ def subject_material_edit(material_id: int):
         abort(404)
     subject = db.session.get(Subject, material.subject_id_fk)
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    is_owner = (material.faculty_id_fk == current_user.user_id)
-    if not (_user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(material.subject_id_fk) and is_owner)):
+    if not _material_user_can_edit(material):
         flash("You are not authorized to edit this material.", "danger")
         return redirect(url_for("main.subject_materials", subject_id=material.subject_id_fk))
 
@@ -2917,9 +3344,19 @@ def subject_material_edit(material_id: int):
         description = (request.form.get("description") or "").strip()
         kind = (request.form.get("kind") or "file").strip().lower()
         external_url = (request.form.get("external_url") or "").strip()
+        upload = request.files.get("file")
 
         if not title:
             flash("Title is required.", "danger")
+            return render_template("materials_edit.html", subject=subject, material=material)
+        if kind not in ("file", "link", "embed"):
+            flash("Choose a valid material type.", "danger")
+            return render_template("materials_edit.html", subject=subject, material=material)
+        if kind == "file" and not ((upload and getattr(upload, "filename", "")) or getattr(material, "file_path", None)):
+            flash("Upload a file for file-based materials.", "danger")
+            return render_template("materials_edit.html", subject=subject, material=material)
+        if kind in ("link", "embed") and not external_url:
+            flash("External URL is required for links and embeds.", "danger")
             return render_template("materials_edit.html", subject=subject, material=material)
 
         material.title = title
@@ -2929,9 +3366,8 @@ def subject_material_edit(material_id: int):
 
         try:
             if kind == "file":
-                file = request.files.get("file")
-                if file and file.filename:
-                    filename = secure_filename(file.filename)
+                if upload and upload.filename:
+                    filename = secure_filename(upload.filename)
                     if not _allowed_file(filename):
                         flash("File type not allowed.", "danger")
                         db.session.rollback()
@@ -2939,9 +3375,9 @@ def subject_material_edit(material_id: int):
                     # Quota: total storage limit per subject
                     new_size = 0
                     try:
-                        file.stream.seek(0, os.SEEK_END)
-                        new_size = file.stream.tell()
-                        file.stream.seek(0)
+                        upload.stream.seek(0, os.SEEK_END)
+                        new_size = upload.stream.tell()
+                        upload.stream.seek(0)
                     except Exception:
                         new_size = 0
                     max_items, max_mb = _quota_limits()
@@ -2950,11 +3386,11 @@ def subject_material_edit(material_id: int):
                         flash("Subject storage quota exceeded. Upload a smaller file or remove old items.", "warning")
                         db.session.rollback()
                         return render_template("materials_edit.html", subject=subject, material=material)
-                    root = os.path.join(current_app.root_path, "static", "materials", str(material.subject_id_fk), str(material.material_id))
+                    root = os.path.join(current_app.config["MATERIALS_STORAGE_DIR"], str(material.subject_id_fk), str(material.material_id))
                     os.makedirs(root, exist_ok=True)
                     dest = os.path.join(root, filename)
-                    file.save(dest)
-                    material.file_path = os.path.relpath(dest, os.path.join(current_app.root_path, "static")).replace("\\", "/")
+                    upload.save(dest)
+                    material.file_path = "private/materials/" + os.path.relpath(dest, current_app.config["MATERIALS_STORAGE_DIR"]).replace("\\", "/")
             else:
                 material.file_path = None
         except Exception:
@@ -2962,14 +3398,30 @@ def subject_material_edit(material_id: int):
             db.session.rollback()
             return render_template("materials_edit.html", subject=subject, material=material)
 
-    db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="update", actor_user_id_fk=current_user.user_id, actor_role=role, meta_json=None))
-    ver = (db.session.scalar(select(func.max(MaterialRevision.version)).filter(MaterialRevision.material_id_fk == material.material_id)) or 0) + 1
-    db.session.add(MaterialRevision(material_id_fk=material.material_id, version=ver, title=material.title, description=material.description, kind=material.kind, file_path=material.file_path, external_url=material.external_url, actor_user_id_fk=current_user.user_id))
-    db.session.commit()
-    flash("Material updated.", "success")
-    return redirect(url_for("main.subject_materials", subject_id=material.subject_id_fk))
+        material.updated_at = datetime.now(timezone.utc)
+        db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="update", actor_user_id_fk=current_user.user_id, actor_role=role, meta_json=None))
+        ver = (db.session.scalar(select(func.max(MaterialRevision.version)).filter(MaterialRevision.material_id_fk == material.material_id)) or 0) + 1
+        db.session.add(MaterialRevision(material_id_fk=material.material_id, version=ver, title=material.title, description=material.description, kind=material.kind, file_path=material.file_path, external_url=material.external_url, actor_user_id_fk=current_user.user_id))
+        db.session.commit()
+        flash("Material updated.", "success")
+        return redirect(url_for("main.subject_materials", subject_id=material.subject_id_fk))
 
-    return render_template("materials_edit.html", subject=subject, material=material)
+    revisions = db.session.execute(
+        select(MaterialRevision)
+        .filter_by(material_id_fk=material.material_id)
+        .order_by(MaterialRevision.version.desc())
+    ).scalars().all()
+    material_status_key = _material_status_key(
+        material,
+        _material_lifecycle_by_id([material.material_id]),
+    )
+    return render_template(
+        "materials_edit.html",
+        subject=subject,
+        material=material,
+        revisions=revisions,
+        material_status_key=material_status_key,
+    )
 
 @main_bp.route("/materials/<int:material_id>/delete", methods=["POST"])
 @login_required
@@ -2979,8 +3431,7 @@ def subject_material_delete(material_id: int):
     if not material:
         abort(404)
     role = (getattr(current_user, "role", "") or "").strip().lower()
-    is_owner = (material.faculty_id_fk == current_user.user_id)
-    if not (_user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(material.subject_id_fk) and is_owner)):
+    if not _material_user_can_edit(material):
         flash("You are not authorized to delete this material.", "danger")
         return redirect(url_for("main.subject_materials", subject_id=material.subject_id_fk))
 
@@ -2994,12 +3445,12 @@ def subject_material_delete(material_id: int):
 @login_required
 @csrf_required
 def subject_material_publish(material_id: int):
-    if not _user_is_admin_or_principal():
-        flash("Only admin or principal can publish.", "danger")
-        return redirect(url_for("main.dashboard"))
     material = db.session.get(SubjectMaterial, material_id)
     if not material:
         abort(404)
+    if not _material_user_can_edit(material):
+        flash("You are not authorized to publish this material.", "danger")
+        return redirect(url_for("main.subject_materials", subject_id=material.subject_id_fk))
     material.is_published = True
     db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="publish", actor_user_id_fk=current_user.user_id, actor_role=(current_user.role or ""), meta_json=None))
     db.session.commit()
@@ -3010,27 +3461,27 @@ def subject_material_publish(material_id: int):
 @login_required
 @csrf_required
 def subject_material_unpublish(material_id: int):
-    if not _user_is_admin_or_principal():
-        flash("Only admin or principal can unpublish.", "danger")
-        return redirect(url_for("main.dashboard"))
     material = db.session.get(SubjectMaterial, material_id)
     if not material:
         abort(404)
+    if not _material_user_can_edit(material):
+        flash("You are not authorized to archive this material.", "danger")
+        return redirect(url_for("main.subject_materials", subject_id=material.subject_id_fk))
     material.is_published = False
     db.session.add(SubjectMaterialLog(material_id_fk=material.material_id, action="unpublish", actor_user_id_fk=current_user.user_id, actor_role=(current_user.role or ""), meta_json=None))
     db.session.commit()
-    flash("Material unpublished.", "success")
+    flash("Material archived.", "success")
     return redirect(url_for("main.subject_materials", subject_id=material.subject_id_fk))
 
 @main_bp.route("/materials/<int:material_id>/flag", methods=["POST"])
 @login_required
 @csrf_required
 def subject_material_flag(material_id: int):
-    role = (getattr(current_user, "role", "") or "").strip().lower()
     material = db.session.get(SubjectMaterial, material_id)
     if not material:
         abort(404)
-    if not (_user_is_admin_or_principal() or (role == "faculty" and _user_is_faculty_assigned(material.subject_id_fk))):
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if not _material_user_can_flag(material):
         flash("You are not authorized to flag this material.", "danger")
         return redirect(url_for("main.subject_materials", subject_id=material.subject_id_fk))
     material.is_flagged = True
@@ -3064,19 +3515,8 @@ def materials_moderation():
     # Show unpublished or flagged materials
     q = select(SubjectMaterial).filter((SubjectMaterial.is_published == False) | (SubjectMaterial.is_flagged == True))
     materials = db.session.execute(q.order_by(SubjectMaterial.created_at.desc())).scalars().all()
-    # Owner map
-    owner_ids = sorted({m.faculty_id_fk for m in materials if m.faculty_id_fk})
-    owners = {}
-    if owner_ids:
-        try:
-            users = db.session.execute(select(User).filter(User.user_id.in_(owner_ids))).scalars().all()
-            for u in users:
-                owners[u.user_id] = (u.username or f"User #{u.user_id}")
-            facs = db.session.execute(select(Faculty).filter(Faculty.user_id_fk.in_(owner_ids))).scalars().all()
-            for f in facs:
-                owners[f.user_id_fk] = f.full_name or owners.get(f.user_id_fk, f"User #{f.user_id_fk}")
-        except Exception:
-            pass
+    owners = _material_owner_name_map(materials)
+    lifecycle_by_material = _material_lifecycle_by_id([material.material_id for material in materials if getattr(material, "material_id", None)])
     # Subject map for display
     subj_ids = sorted({m.subject_id_fk for m in materials})
     subjects = {}
@@ -3087,7 +3527,28 @@ def materials_moderation():
                 subjects[s.subject_id] = s
         except Exception:
             pass
-    return render_template("materials_moderation.html", materials=materials, owners=owners, subjects=subjects)
+    material_rows = []
+    for material in materials:
+        status_key = _material_status_key(material, lifecycle_by_material)
+        if status_key == "archived" and not getattr(material, "is_flagged", False):
+            continue
+        open_url, open_label = _material_link_details(material)
+        material_rows.append(
+            {
+                "material": material,
+                "subject": subjects.get(material.subject_id_fk),
+                "owner_name": owners.get(material.faculty_id_fk, "-"),
+                "open_url": open_url,
+                "open_label": open_label,
+                "status_key": status_key,
+                "status_label": {
+                    "published": "Published",
+                    "archived": "Archived",
+                    "draft": "Draft",
+                }.get(status_key, "Draft"),
+            }
+        )
+    return render_template("materials_moderation.html", material_rows=material_rows)
 
 # Authorization helper: restrict routes to specific roles
 def role_required(*roles):
@@ -7799,6 +8260,10 @@ def faculty_unlink_user(faculty_id: int):
 @main_bp.route("/students")
 @login_required
 def students():
+    role_name = (getattr(current_user, "role", "") or "").strip().lower()
+    if role_name not in {"admin", "principal", "clerk", "faculty"}:
+        flash("You are not authorized to view the student directory.", "danger")
+        return redirect(url_for("main.dashboard"))
     # Optional program scoping via query param: ?program_id=<id>
     program_id_raw = request.args.get("program_id")
     # Optional semester filter via query param: ?semester=3, ?semester=5, or ?semester=all
@@ -8183,9 +8648,48 @@ def api_command_palette_actions():
     return api_success({"items": allowed}, {"role": role, "count": len(allowed)})
 
 
+def _bulk_student_in_current_scope(row) -> bool:
+    """Limit student bulk actions to the operator's tenant and program scope."""
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role not in {"admin", "principal", "clerk"}:
+        return False
+    trust_id = _effective_trust_id()
+    row_trust_id = (row or {}).get("trust_id_fk")
+    if trust_id and row_trust_id and int(row_trust_id) != int(trust_id):
+        return False
+    if role in {"principal", "clerk"}:
+        try:
+            return int((row or {}).get("program_id_fk") or 0) == int(getattr(current_user, "program_id_fk", None) or 0)
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def _fetch_bulk_students_mapping_map(enrollment_nos):
+    """Fetch only student records the current bulk-action operator may manage."""
+    return {
+        enrollment_no: row
+        for enrollment_no, row in _fetch_students_mapping_map(enrollment_nos).items()
+        if _bulk_student_in_current_scope(row)
+    }
+
+
+def _bulk_program_in_current_scope(program_id) -> bool:
+    """Check a target program before a bulk action can move students into it."""
+    program = db.session.get(Program, program_id)
+    if not program:
+        return False
+    trust_id = None
+    try:
+        trust_id = program.institute.trust_id_fk if program.institute else None
+    except Exception:
+        pass
+    return _bulk_student_in_current_scope({"program_id_fk": program.program_id, "trust_id_fk": trust_id})
+
+
 @main_bp.route("/students/bulk/set-active", methods=["POST"])
 @login_required
-@role_required("admin", "principal")
+@role_required("admin", "principal", "clerk")
 def students_bulk_set_active():
     selected_ids = _bulk_request_ids()
     if not selected_ids:
@@ -8196,7 +8700,7 @@ def students_bulk_set_active():
 
     target_state_raw = str(_bulk_request_value("set_active", "true")).strip().lower()
     set_active = target_state_raw in ("1", "true", "yes", "active")
-    student_map = _fetch_students_mapping_map(selected_ids)
+    student_map = _fetch_bulk_students_mapping_map(selected_ids)
     results = []
     touched_program_id = None
     touched_semester = None
@@ -8235,12 +8739,13 @@ def students_bulk_set_active():
 
 @main_bp.route("/students/bulk/export", methods=["POST"])
 @login_required
+@role_required("admin", "principal", "clerk")
 def students_bulk_export():
     selected_ids = _bulk_request_ids()
     if not selected_ids:
         flash("Select at least one student first.", "warning")
         return redirect(_bulk_redirect_target("main.students"))
-    rows = list(_fetch_students_mapping_map(selected_ids).values())
+    rows = list(_fetch_bulk_students_mapping_map(selected_ids).values())
     export_rows = []
     for row in rows:
         export_rows.append([
@@ -8279,9 +8784,12 @@ def students_bulk_assign_division():
     if not target_division:
         flash("Target division not found.", "danger")
         return redirect(_bulk_redirect_target("main.students"))
+    if not _bulk_program_in_current_scope(target_division.program_id_fk):
+        flash("You are not authorized to assign students to that division.", "danger")
+        return redirect(_bulk_redirect_target("main.students"))
 
     results = []
-    student_map = _fetch_students_mapping_map(selected_ids)
+    student_map = _fetch_bulk_students_mapping_map(selected_ids)
     for enrollment_no in selected_ids:
         row = student_map.get(enrollment_no)
         if not row:
@@ -8334,7 +8842,7 @@ def students_bulk_promote_semester():
 
     results = []
     touched_program_ids = set()
-    student_map = _fetch_students_mapping_map(selected_ids)
+    student_map = _fetch_bulk_students_mapping_map(selected_ids)
     for enrollment_no in selected_ids:
         row = student_map.get(enrollment_no)
         if not row:
@@ -8389,7 +8897,7 @@ def students_bulk_provision_users():
 
     results = []
     credential_rows = []
-    student_map = _fetch_students_mapping_map(selected_ids)
+    student_map = _fetch_bulk_students_mapping_map(selected_ids)
     touched_program_id = None
     for enrollment_no in selected_ids:
         row = student_map.get(enrollment_no)
@@ -8476,7 +8984,7 @@ def students_bulk_provision_users():
 
 @main_bp.route("/students/bulk/export-credentials", methods=["GET"])
 @login_required
-@role_required("admin", "principal")
+@role_required("admin", "principal", "clerk")
 def students_bulk_export_credentials():
     sheet = _bulk_get_credentials_sheet("students")
     if not sheet:
@@ -13122,6 +13630,647 @@ def attendance_report_admin():
     )
 
 # Faculty attendance report scoped to assignments
+ATTENDANCE_INSIGHTS_BORDERLINE_THRESHOLD = 60.0
+ATTENDANCE_INSIGHTS_RECENT_ABSENCE_SESSIONS = 5
+ATTENDANCE_INSIGHTS_CONSECUTIVE_ABSENCE_SESSIONS = 5
+
+
+def _attendance_insight_metrics(subject, division, academic_year):
+    """Calculate class insight metrics for a single assigned subject and division."""
+    academic_start = datetime(int(academic_year.split("-", 1)[0]), 6, 1).date()
+    enrollment_ids = db.session.execute(
+        select(StudentSubjectEnrollment.student_id_fk)
+        .filter_by(subject_id_fk=subject.subject_id, division_id_fk=division.division_id, academic_year=academic_year, is_active=True)
+    ).scalars().all()
+    roster_query = select(Student).filter_by(is_active=True)
+    roster_query = roster_query.filter(Student.enrollment_no.in_(enrollment_ids)) if enrollment_ids else roster_query.filter_by(division_id_fk=division.division_id)
+    roster = db.session.execute(
+        roster_query.order_by(cast(Student.roll_no, Integer).asc(), Student.enrollment_no.asc())
+    ).scalars().all()
+    attendance_rows = db.session.execute(
+        select(Attendance)
+        .filter_by(subject_id_fk=subject.subject_id, division_id_fk=division.division_id)
+        .filter(Attendance.date_marked >= academic_start)
+        .order_by(Attendance.date_marked.asc(), Attendance.period_no.asc(), Attendance.attendance_id.asc())
+    ).scalars().all()
+    sessions = sorted({(row.date_marked, row.period_no or 0) for row in attendance_rows if row.date_marked})
+    status_by_student_session = {
+        (row.student_id_fk, row.date_marked, row.period_no or 0): (row.status or "").upper()
+        for row in attendance_rows if row.student_id_fk and row.date_marked
+    }
+    threshold = ATTENDANCE_INSIGHTS_BORDERLINE_THRESHOLD
+    counts = {key: 0 for key in ("no_attendance", "critical", "low", "borderline", "recent_absent", "consecutive_absent")}
+    insights = []
+    for student in roster:
+        statuses = [status_by_student_session.get((student.enrollment_no, session_date, period_no), "") for session_date, period_no in sessions]
+        attended = sum(1 for status in statuses if status in {"P", "L"})
+        held = len(sessions)
+        percentage = round((attended * 100.0 / held), 1) if held else None
+        recent_statuses = statuses[-ATTENDANCE_INSIGHTS_RECENT_ABSENCE_SESSIONS:]
+        recent_absent = (
+            len(recent_statuses) >= ATTENDANCE_INSIGHTS_RECENT_ABSENCE_SESSIONS
+            and all(status == "A" for status in recent_statuses)
+        )
+        absence_streak = 0
+        for status in reversed(statuses):
+            if status != "A":
+                break
+            absence_streak += 1
+        last_attended_date = next((session_date for (session_date, _), status in zip(reversed(sessions), reversed(statuses)) if status in {"P", "L"}), None)
+        primary_category = None
+        if held and attended == 0:
+            primary_category = "no_attendance"
+        elif percentage is not None and 0 < percentage <= 25:
+            primary_category = "critical"
+        elif percentage is not None and 25 < percentage <= 50:
+            primary_category = "low"
+        elif percentage is not None and 50 < percentage < threshold:
+            primary_category = "borderline"
+        if primary_category:
+            counts[primary_category] += 1
+        if recent_absent:
+            counts["recent_absent"] += 1
+        if absence_streak >= ATTENDANCE_INSIGHTS_CONSECUTIVE_ABSENCE_SESSIONS:
+            counts["consecutive_absent"] += 1
+        insights.append({
+            "student": student, "held": held, "attended": attended, "percentage": percentage,
+            "last_attended_date": last_attended_date, "absence_streak": absence_streak,
+            "primary_category": primary_category, "recent_absent": recent_absent,
+            "consecutive_absent": absence_streak >= ATTENDANCE_INSIGHTS_CONSECUTIVE_ABSENCE_SESSIONS,
+        })
+    return {"insights": insights, "counts": counts, "held_sessions": len(sessions), "threshold": threshold}
+
+
+def _filter_attendance_insights(insights, category):
+    if category == "recent_absent":
+        filtered = [item for item in insights if item["recent_absent"]]
+    elif category == "consecutive_absent":
+        filtered = [item for item in insights if item["consecutive_absent"]]
+    elif category != "all":
+        filtered = [item for item in insights if item["primary_category"] == category]
+    else:
+        filtered = list(insights)
+    return sorted(filtered, key=lambda item: (item["percentage"] is None, item["percentage"] if item["percentage"] is not None else 101, item["student"].roll_no or 999999))
+
+
+def _assigned_class_roster(subject_id, division_id, assignment):
+    """Return the active roster for an already-authorized course assignment."""
+    academic_year = assignment.academic_year or current_academic_year()
+    enrollment_ids = db.session.execute(
+        select(StudentSubjectEnrollment.student_id_fk).filter_by(
+            subject_id_fk=subject_id,
+            division_id_fk=division_id,
+            academic_year=academic_year,
+            is_active=True,
+        )
+    ).scalars().all()
+    roster_query = select(Student).filter_by(is_active=True)
+    if enrollment_ids:
+        roster_query = roster_query.filter(Student.enrollment_no.in_(enrollment_ids))
+    else:
+        roster_query = roster_query.filter_by(division_id_fk=division_id)
+    roster = db.session.execute(
+        roster_query.order_by(cast(Student.roll_no, Integer).asc(), Student.enrollment_no.asc())
+    ).scalars().all()
+    return academic_year, {student.enrollment_no: student for student in roster}
+
+
+def _student_follow_up_task_in_scope(task):
+    """Limit Clerk work to their tenant and assigned programme; Admin may oversee its active tenant."""
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id and task.trust_id_fk and int(task.trust_id_fk) != int(effective_trust_id):
+        return False
+    if role in {"clerk", "principal"}:
+        program_id = getattr(current_user, "program_id_fk", None)
+        return bool(program_id and int(task.program_id_fk) == int(program_id))
+    return role == "admin"
+
+
+@main_bp.route("/attendance/class-insights/follow-up", methods=["POST"])
+@login_required
+@role_required("faculty")
+@csrf_required
+def attendance_class_insights_follow_up():
+    """Open a Clerk task for an account-less student from the Faculty member's assigned class."""
+    try:
+        subject_id = int(request.form.get("subject_id") or 0)
+        division_id = int(request.form.get("division_id") or 0)
+    except ValueError:
+        abort(404)
+    student_id = (request.form.get("student_id") or "").strip()
+    category = (request.form.get("category") or "all").strip().lower()
+    assignment = db.session.execute(
+        select(CourseAssignment).filter_by(
+            faculty_id_fk=current_user.user_id,
+            subject_id_fk=subject_id,
+            division_id_fk=division_id,
+            is_active=True,
+        )
+    ).scalars().first()
+    subject = db.session.get(Subject, subject_id)
+    division = db.session.get(Division, division_id)
+    if not assignment or not subject or not division:
+        abort(404)
+    academic_year, roster_by_id = _assigned_class_roster(subject_id, division_id, assignment)
+    student = roster_by_id.get(student_id)
+    if not student:
+        abort(404)
+    if student.user_id_fk:
+        flash("This student has a linked account and can receive the Faculty notification workflow.", "info")
+        return redirect(url_for("main.attendance_class_insights", subject_id=subject_id, division_id=division_id, category=category))
+
+    note = (request.form.get("faculty_note") or "").strip()
+    if len(note) > 500:
+        flash("The Clerk follow-up note must be 500 characters or fewer.", "danger")
+        return render_template(
+            "attendance_follow_up_request.html", subject=subject, division=division, student=student,
+            academic_year=academic_year, category=category, faculty_note=note,
+        )
+    existing = db.session.execute(
+        select(StudentFollowUpTask).filter(
+            StudentFollowUpTask.student_id_fk == student.enrollment_no,
+            StudentFollowUpTask.subject_id_fk == subject_id,
+            StudentFollowUpTask.division_id_fk == division_id,
+            StudentFollowUpTask.faculty_user_id_fk == current_user.user_id,
+            StudentFollowUpTask.status.in_(("open", "in_progress")),
+        )
+    ).scalars().first()
+    if existing:
+        flash("A Clerk follow-up is already open for this student in this class.", "info")
+    else:
+        try:
+            db.session.add(StudentFollowUpTask(
+                student_id_fk=student.enrollment_no,
+                subject_id_fk=subject_id,
+                division_id_fk=division_id,
+                faculty_user_id_fk=current_user.user_id,
+                program_id_fk=subject.program_id_fk,
+                trust_id_fk=_subject_trust_id(subject) or _effective_trust_id(),
+                academic_year=academic_year,
+                faculty_note=note or None,
+            ))
+            _bulk_audit_entry(
+                "faculty_contact_followup",
+                {"student_id": student.enrollment_no, "subject_id": subject_id, "division_id": division_id},
+                {"created": 1}, program_id=subject.program_id_fk, semester=division.semester,
+            )
+            db.session.commit()
+            flash("Clerk follow-up requested. You will see its status in Class Insights.", "success")
+        except Exception:
+            db.session.rollback()
+            flash("The Clerk follow-up could not be created. Please try again.", "danger")
+    return redirect(url_for("main.attendance_class_insights", subject_id=subject_id, division_id=division_id, category=category))
+
+
+@main_bp.route("/clerk/student-follow-ups", methods=["GET"])
+@login_required
+@role_required("admin", "principal", "clerk")
+def student_follow_up_tasks():
+    """Scoped operational queue; it intentionally contains no academic-attendance editing."""
+    requested_status = (request.args.get("status") or "open").strip().lower()
+    if requested_status not in {"open", "in_progress", "resolved", "all"}:
+        requested_status = "open"
+    query = select(StudentFollowUpTask).order_by(StudentFollowUpTask.created_at.desc(), StudentFollowUpTask.task_id.desc())
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id:
+        query = query.filter(StudentFollowUpTask.trust_id_fk == effective_trust_id)
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role in {"clerk", "principal"}:
+        program_id = getattr(current_user, "program_id_fk", None)
+        if not program_id:
+            flash("Your account has no programme scope for Clerk follow-up tasks.", "warning")
+            return render_template("student_follow_up_tasks.html", tasks=[], task_details={}, selected_status=requested_status)
+        query = query.filter(StudentFollowUpTask.program_id_fk == program_id)
+    if requested_status != "all":
+        query = query.filter(StudentFollowUpTask.status == requested_status)
+    tasks = db.session.execute(query).scalars().all()
+    students = {student.enrollment_no: student for student in db.session.execute(select(Student).filter(Student.enrollment_no.in_([task.student_id_fk for task in tasks]))).scalars().all()} if tasks else {}
+    subjects = {subject.subject_id: subject for subject in db.session.execute(select(Subject).filter(Subject.subject_id.in_([task.subject_id_fk for task in tasks]))).scalars().all()} if tasks else {}
+    divisions = {division.division_id: division for division in db.session.execute(select(Division).filter(Division.division_id.in_([task.division_id_fk for task in tasks]))).scalars().all()} if tasks else {}
+    faculty_users = {user.user_id: user for user in db.session.execute(select(User).filter(User.user_id.in_([task.faculty_user_id_fk for task in tasks]))).scalars().all()} if tasks else {}
+    return render_template(
+        "student_follow_up_tasks.html", tasks=tasks, selected_status=requested_status,
+        task_details={task.task_id: {"student": students.get(task.student_id_fk), "subject": subjects.get(task.subject_id_fk), "division": divisions.get(task.division_id_fk), "faculty": faculty_users.get(task.faculty_user_id_fk)} for task in tasks},
+    )
+
+
+@main_bp.route("/clerk/student-follow-ups/<int:task_id>/update", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk")
+@csrf_required
+def student_follow_up_task_update(task_id):
+    task = db.session.get(StudentFollowUpTask, task_id)
+    if not task or not _student_follow_up_task_in_scope(task):
+        abort(404)
+    status = (request.form.get("status") or "").strip().lower()
+    clerk_note = (request.form.get("clerk_note") or "").strip()
+    if status not in {"in_progress", "resolved"} or len(clerk_note) > 500:
+        flash("Choose In progress or Resolved, and keep the Clerk note within 500 characters.", "danger")
+        return redirect(url_for("main.student_follow_up_tasks", status=task.status))
+    try:
+        task.status = status
+        task.clerk_note = clerk_note or None
+        if status == "resolved":
+            task.resolved_at = datetime.now(timezone.utc)
+            task.resolved_by_user_id_fk = current_user.user_id
+        else:
+            task.resolved_at = None
+            task.resolved_by_user_id_fk = None
+        _bulk_audit_entry(
+            "student_followup_update",
+            {"task_id": task.task_id, "student_id": task.student_id_fk},
+            {"status": status}, program_id=task.program_id_fk,
+        )
+        db.session.commit()
+        flash("Clerk follow-up updated.", "success")
+    except Exception:
+        db.session.rollback()
+        flash("The Clerk follow-up could not be updated. Please try again.", "danger")
+    return redirect(url_for("main.student_follow_up_tasks", status=request.form.get("return_status") or "open"))
+
+
+@main_bp.route("/attendance/class-insights/export.csv", methods=["GET"])
+@login_required
+@role_required("faculty")
+def attendance_class_insights_export_csv():
+    try:
+        subject_id = int(request.args.get("subject_id") or 0)
+        division_id = int(request.args.get("division_id") or 0)
+    except ValueError:
+        abort(404)
+    category = (request.args.get("category") or "all").strip().lower()
+    valid_categories = {"all", "no_attendance", "critical", "low", "borderline", "recent_absent", "consecutive_absent"}
+    if category not in valid_categories:
+        abort(404)
+    assignment = db.session.execute(
+        select(CourseAssignment).filter_by(faculty_id_fk=current_user.user_id, subject_id_fk=subject_id, division_id_fk=division_id, is_active=True)
+    ).scalars().first()
+    subject = db.session.get(Subject, subject_id)
+    division = db.session.get(Division, division_id)
+    if not assignment or not subject or not division:
+        abort(404)
+    academic_year = assignment.academic_year or current_academic_year()
+    metrics = _attendance_insight_metrics(subject, division, academic_year)
+    insights = _filter_attendance_insights(metrics["insights"], category)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Subject", subject.subject_name])
+    writer.writerow(["Division", f"Semester {division.semester} - {division.division_code}"])
+    writer.writerow(["Academic Year", academic_year])
+    writer.writerow(["Insight Filter", category.replace("_", " ").title()])
+    writer.writerow(["Completed Sessions", metrics["held_sessions"]])
+    writer.writerow([])
+    writer.writerow(["Roll No", "Student Name", "Attendance %", "Present", "Held Sessions", "Last Attended", "Absence Streak", "Risk Signal"])
+    for item in insights:
+        signal = item["primary_category"].replace("_", " ").title() if item["primary_category"] else "On track"
+        if item["consecutive_absent"]:
+            signal = f"{signal}; {ATTENDANCE_INSIGHTS_CONSECUTIVE_ABSENCE_SESSIONS}+ consecutive absences"
+        elif item["recent_absent"]:
+            signal = f"{signal}; Recent absences"
+        student = item["student"]
+        writer.writerow([
+            student.roll_no or "",
+            f"{student.surname or ''} {student.student_name or ''}".strip(),
+            item["percentage"] if item["percentage"] is not None else "",
+            item["attended"], item["held"],
+            item["last_attended_date"].isoformat() if item["last_attended_date"] else "",
+            item["absence_streak"], signal,
+        ])
+    try:
+        _bulk_audit_entry(
+            "faculty_attendance_export",
+            {"subject_id": subject_id, "division_id": division_id, "category": category},
+            {"exported": len(insights), "held_sessions": metrics["held_sessions"]},
+            program_id=subject.program_id_fk, semester=division.semester,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    filename = f"attendance_{subject.subject_id}_{division.division_code}_{category}.csv".replace(" ", "_")
+    return Response(output.getvalue(), mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+@main_bp.route("/attendance/class-insights/notify", methods=["POST"])
+@login_required
+@role_required("faculty")
+@csrf_required
+def attendance_class_insights_notify():
+    """Compose and deliver private in-app attendance follow-ups to an assigned class."""
+    try:
+        subject_id = int(request.form.get("subject_id") or 0)
+        division_id = int(request.form.get("division_id") or 0)
+    except ValueError:
+        abort(404)
+    category = (request.form.get("category") or "all").strip().lower()
+    assignment = db.session.execute(
+        select(CourseAssignment)
+        .filter_by(
+            faculty_id_fk=current_user.user_id,
+            subject_id_fk=subject_id,
+            division_id_fk=division_id,
+            is_active=True,
+        )
+    ).scalars().first()
+    subject = db.session.get(Subject, subject_id)
+    division = db.session.get(Division, division_id)
+    if not assignment or not subject or not division:
+        abort(404)
+
+    academic_year = assignment.academic_year or current_academic_year()
+    enrollment_ids = db.session.execute(
+        select(StudentSubjectEnrollment.student_id_fk)
+        .filter_by(
+            subject_id_fk=subject_id,
+            division_id_fk=division_id,
+            academic_year=academic_year,
+            is_active=True,
+        )
+    ).scalars().all()
+    roster_query = select(Student).filter_by(is_active=True)
+    if enrollment_ids:
+        roster_query = roster_query.filter(Student.enrollment_no.in_(enrollment_ids))
+    else:
+        roster_query = roster_query.filter_by(division_id_fk=division_id)
+    roster = db.session.execute(roster_query.order_by(cast(Student.roll_no, Integer).asc(), Student.enrollment_no.asc())).scalars().all()
+    roster_by_id = {student.enrollment_no: student for student in roster}
+    selected_ids = []
+    for enrollment_no in request.form.getlist("selected_ids"):
+        enrollment_no = (enrollment_no or "").strip()
+        if enrollment_no and enrollment_no in roster_by_id and enrollment_no not in selected_ids:
+            selected_ids.append(enrollment_no)
+    if not selected_ids:
+        flash("Select at least one eligible student from this assigned class.", "warning")
+        return redirect(url_for("main.attendance_class_insights", subject_id=subject_id, division_id=division_id, category=category))
+
+    recipients = [roster_by_id[enrollment_no] for enrollment_no in selected_ids]
+    deliverable_recipients = [student for student in recipients if getattr(student, "user_id_fk", None)]
+    skipped_recipients = [student for student in recipients if not getattr(student, "user_id_fk", None)]
+    action = (request.form.get("action") or "compose").strip().lower()
+    templates = {
+        "low_attendance": {
+            "label": "Low attendance warning",
+            "title": f"Attendance reminder: {subject.subject_name}",
+            "message": f"Your attendance in {subject.subject_name} is below the expected level. Please attend upcoming classes regularly and contact your Faculty member if you need academic support.",
+        },
+        "consecutive_absence": {
+            "label": "Consecutive absence reminder",
+            "title": f"We miss you in {subject.subject_name}",
+            "message": f"You have missed several recent classes in {subject.subject_name}. Please attend the next class and catch up on the shared material.",
+        },
+        "revision_session": {
+            "label": "Revision session invitation",
+            "title": f"Revision support: {subject.subject_name}",
+            "message": f"A revision session is planned for {subject.subject_name}. Please review the recent topics and attend the next class for support.",
+        },
+        "catch_up_material": {
+            "label": "Catch-up material reminder",
+            "title": f"Catch up on {subject.subject_name}",
+            "message": f"Please review the latest material shared for {subject.subject_name} and contact your Faculty member if you need help catching up.",
+        },
+    }
+    template_key = (request.form.get("template_key") or "low_attendance").strip()
+    if template_key not in templates:
+        template_key = "low_attendance"
+    if action != "send":
+        return render_template(
+            "attendance_class_notify.html",
+            subject=subject,
+            division=division,
+            academic_year=academic_year,
+            category=category,
+            recipients=recipients,
+            deliverable_recipients=deliverable_recipients,
+            skipped_recipients=skipped_recipients,
+            templates=templates,
+            selected_template_key=template_key,
+        )
+
+    if not deliverable_recipients:
+        flash("None of the selected students has a linked account for in-app delivery.", "warning")
+        return redirect(url_for("main.attendance_class_insights", subject_id=subject_id, division_id=division_id, category=category))
+    custom_title = (request.form.get("custom_title") or "").strip()
+    custom_message = (request.form.get("custom_message") or "").strip()
+    if len(custom_title) > 128 or len(custom_message) > 1000:
+        flash("Notification title must be 128 characters or fewer and message must be 1000 characters or fewer.", "danger")
+        return render_template(
+            "attendance_class_notify.html", subject=subject, division=division, academic_year=academic_year, category=category,
+            recipients=recipients, deliverable_recipients=deliverable_recipients, skipped_recipients=skipped_recipients,
+            templates=templates, selected_template_key=template_key,
+        )
+    template = templates[template_key]
+    title = custom_title or template["title"]
+    message = custom_message or template["message"]
+    payload = json.dumps({
+        "subject_id": subject_id,
+        "division_id": division_id,
+        "academic_year": academic_year,
+        "category": category,
+        "template": template_key,
+        "sent_by_user_id": current_user.user_id,
+    })
+    try:
+        for student in deliverable_recipients:
+            db.session.add(Notification(
+                student_id_fk=student.enrollment_no,
+                kind="attendance_follow_up",
+                title=title,
+                message=message,
+                data_json=payload,
+            ))
+        _bulk_audit_entry(
+            "faculty_attendance_notify",
+            {"subject_id": subject_id, "division_id": division_id, "category": category, "template": template_key, "student_ids": [student.enrollment_no for student in deliverable_recipients]},
+            {"selected": len(recipients), "delivered": len(deliverable_recipients), "skipped_no_account": len(skipped_recipients)},
+            program_id=subject.program_id_fk,
+            semester=division.semester,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        flash("The attendance notification could not be sent. Please try again.", "danger")
+        return redirect(url_for("main.attendance_class_insights", subject_id=subject_id, division_id=division_id, category=category))
+    flash(f"Private attendance notifications sent to {len(deliverable_recipients)} student{'s' if len(deliverable_recipients) != 1 else ''}.", "success")
+    if skipped_recipients:
+        flash(f"{len(skipped_recipients)} selected student{'s' if len(skipped_recipients) != 1 else ''} was skipped because no linked account is available.", "warning")
+    return redirect(url_for("main.attendance_class_insights", subject_id=subject_id, division_id=division_id, category=category))
+
+
+@main_bp.route("/attendance/class-insights", methods=["GET"])
+@login_required
+@role_required("faculty")
+def attendance_class_insights():
+    """Attendance risk insights for one Faculty member's assigned subject and division."""
+    default_academic_year = current_academic_year()
+    assignments = db.session.execute(
+        select(CourseAssignment)
+        .filter_by(faculty_id_fk=current_user.user_id, is_active=True)
+        .order_by(CourseAssignment.academic_year.desc(), CourseAssignment.assignment_id.asc())
+    ).scalars().all()
+
+    contexts = []
+    for assignment in assignments:
+        subject = db.session.get(Subject, assignment.subject_id_fk)
+        division = db.session.get(Division, assignment.division_id_fk)
+        program = db.session.get(Program, subject.program_id_fk) if subject else None
+        if subject and division and program:
+            contexts.append({"assignment": assignment, "subject": subject, "division": division, "program": program})
+    if not contexts:
+        flash("No active subject and division assignments are available for attendance insights.", "warning")
+        return redirect(url_for("main.module_attendance"))
+
+    try:
+        requested_subject_id = int(request.args.get("subject_id") or 0) or None
+        requested_division_id = int(request.args.get("division_id") or 0) or None
+    except ValueError:
+        requested_subject_id, requested_division_id = None, None
+    selected = next(
+        (
+            item for item in contexts
+            if item["subject"].subject_id == requested_subject_id and item["division"].division_id == requested_division_id
+        ),
+        contexts[0],
+    )
+    subject = selected["subject"]
+    division = selected["division"]
+    academic_year = selected["assignment"].academic_year or default_academic_year
+    academic_start = datetime(int(academic_year.split("-", 1)[0]), 6, 1).date()
+
+    category = (request.args.get("category") or "all").strip().lower()
+    valid_categories = {"all", "no_attendance", "critical", "low", "borderline", "recent_absent", "consecutive_absent"}
+    if category not in valid_categories:
+        category = "all"
+    threshold = ATTENDANCE_INSIGHTS_BORDERLINE_THRESHOLD
+
+    enrollments = db.session.execute(
+        select(StudentSubjectEnrollment.student_id_fk)
+        .filter_by(
+            subject_id_fk=subject.subject_id,
+            division_id_fk=division.division_id,
+            academic_year=academic_year,
+            is_active=True,
+        )
+    ).scalars().all()
+    roster = []
+    if enrollments:
+        roster = db.session.execute(
+            select(Student)
+            .filter(Student.enrollment_no.in_(enrollments), Student.is_active == True)
+            .order_by(cast(Student.roll_no, Integer).asc(), Student.enrollment_no.asc())
+        ).scalars().all()
+    if not roster:
+        roster = db.session.execute(
+            select(Student)
+            .filter_by(division_id_fk=division.division_id, is_active=True)
+            .order_by(cast(Student.roll_no, Integer).asc(), Student.enrollment_no.asc())
+        ).scalars().all()
+
+    attendance_rows = db.session.execute(
+        select(Attendance)
+        .filter_by(subject_id_fk=subject.subject_id, division_id_fk=division.division_id)
+        .filter(Attendance.date_marked >= academic_start)
+        .order_by(Attendance.date_marked.asc(), Attendance.period_no.asc(), Attendance.attendance_id.asc())
+    ).scalars().all()
+    sessions = sorted({(row.date_marked, row.period_no or 0) for row in attendance_rows if row.date_marked})
+    status_by_student_session = {}
+    for row in attendance_rows:
+        if not row.student_id_fk or not row.date_marked:
+            continue
+        status_by_student_session[(row.student_id_fk, row.date_marked, row.period_no or 0)] = (row.status or "").upper()
+
+    insights = []
+    counts = {key: 0 for key in valid_categories if key != "all"}
+    for student in roster:
+        statuses = [status_by_student_session.get((student.enrollment_no, session_date, period_no), "") for session_date, period_no in sessions]
+        attended = sum(1 for status in statuses if status in {"P", "L"})
+        held = len(sessions)
+        percentage = round((attended * 100.0 / held), 1) if held else None
+        recent_statuses = statuses[-ATTENDANCE_INSIGHTS_RECENT_ABSENCE_SESSIONS:]
+        recent_absent = (
+            len(recent_statuses) >= ATTENDANCE_INSIGHTS_RECENT_ABSENCE_SESSIONS
+            and all(status == "A" for status in recent_statuses)
+        )
+        absence_streak = 0
+        for status in reversed(statuses):
+            if status == "A":
+                absence_streak += 1
+            else:
+                break
+        last_attended_date = None
+        for (session_date, _period_no), status in zip(reversed(sessions), reversed(statuses)):
+            if status in {"P", "L"}:
+                last_attended_date = session_date
+                break
+
+        primary_category = None
+        if held and attended == 0:
+            primary_category = "no_attendance"
+        elif percentage is not None and 0 < percentage <= 25:
+            primary_category = "critical"
+        elif percentage is not None and 25 < percentage <= 50:
+            primary_category = "low"
+        elif percentage is not None and 50 < percentage < threshold:
+            primary_category = "borderline"
+        if primary_category:
+            counts[primary_category] += 1
+        if recent_absent:
+            counts["recent_absent"] += 1
+        if absence_streak >= ATTENDANCE_INSIGHTS_CONSECUTIVE_ABSENCE_SESSIONS:
+            counts["consecutive_absent"] += 1
+        insights.append({
+            "student": student,
+            "can_receive_notification": bool(getattr(student, "user_id_fk", None)),
+            "held": held,
+            "attended": attended,
+            "percentage": percentage,
+            "last_attended_date": last_attended_date,
+            "absence_streak": absence_streak,
+            "primary_category": primary_category,
+            "recent_absent": recent_absent,
+            "consecutive_absent": absence_streak >= ATTENDANCE_INSIGHTS_CONSECUTIVE_ABSENCE_SESSIONS,
+        })
+
+    follow_up_tasks = db.session.execute(
+        select(StudentFollowUpTask)
+        .filter(
+            StudentFollowUpTask.faculty_user_id_fk == current_user.user_id,
+            StudentFollowUpTask.subject_id_fk == subject.subject_id,
+            StudentFollowUpTask.division_id_fk == division.division_id,
+            StudentFollowUpTask.student_id_fk.in_([student.enrollment_no for student in roster]),
+        )
+        .order_by(StudentFollowUpTask.updated_at.desc(), StudentFollowUpTask.task_id.desc())
+    ).scalars().all() if roster else []
+    follow_up_by_student = {}
+    for task in follow_up_tasks:
+        follow_up_by_student.setdefault(task.student_id_fk, task)
+    for item in insights:
+        task = follow_up_by_student.get(item["student"].enrollment_no)
+        item["follow_up_status"] = task.status if task else None
+
+    if category == "all":
+        visible_insights = insights
+    elif category == "recent_absent":
+        visible_insights = [item for item in insights if item["recent_absent"]]
+    elif category == "consecutive_absent":
+        visible_insights = [item for item in insights if item["consecutive_absent"]]
+    else:
+        visible_insights = [item for item in insights if item["primary_category"] == category]
+    visible_insights.sort(key=lambda item: (item["percentage"] is None, item["percentage"] if item["percentage"] is not None else 101, item["student"].roll_no or 999999))
+
+    return render_template(
+        "attendance_class_insights.html",
+        contexts=contexts,
+        selected=selected,
+        category=category,
+        threshold=threshold,
+        counts=counts,
+        held_sessions=len(sessions),
+        attendance_pending=not sessions,
+        insights=visible_insights,
+        academic_year=academic_year,
+    )
+
+
 @main_bp.route("/attendance/faculty-report", methods=["GET"])
 @login_required
 @role_required("faculty")
@@ -16739,6 +17888,11 @@ def announcement_restore(announcement_id: int, version: int):
 @main_bp.route("/api/materials/<int:material_id>/revisions", methods=["GET"])
 @login_required
 def api_material_revisions(material_id: int):
+    material = db.session.get(SubjectMaterial, material_id)
+    if not material:
+        return api_error("not_found", "Material not found.", 404)
+    if not _material_user_can_edit(material):
+        return api_error("forbidden", "You are not authorized to view material revisions.", 403)
     rows = db.session.execute(select(MaterialRevision).filter_by(material_id_fk=material_id).order_by(MaterialRevision.version.desc())).scalars().all()
     data = [{"version": r.version, "title": r.title, "description": r.description, "kind": r.kind, "file_path": r.file_path, "external_url": r.external_url, "created_at": r.created_at.isoformat()} for r in rows]
     return api_success({"items": data})
@@ -16750,6 +17904,9 @@ def material_restore(material_id: int, version: int):
     m = db.session.get(SubjectMaterial, material_id)
     if not m:
         abort(404)
+    if not _material_user_can_edit(m):
+        flash("You are not authorized to restore this material.", "danger")
+        return redirect(url_for("main.subject_materials", subject_id=m.subject_id_fk))
     r = db.session.execute(select(MaterialRevision).filter_by(material_id_fk=material_id, version=version)).scalars().first()
     if not r:
         flash("Revision not found.", "warning")
@@ -16759,6 +17916,7 @@ def material_restore(material_id: int, version: int):
     m.kind = r.kind
     m.file_path = r.file_path
     m.external_url = r.external_url
+    m.updated_at = datetime.now(timezone.utc)
     ver = (db.session.scalar(select(func.max(MaterialRevision.version)).filter(MaterialRevision.material_id_fk == m.material_id)) or 0) + 1
     db.session.add(MaterialRevision(material_id_fk=m.material_id, version=ver, title=m.title, description=m.description, kind=m.kind, file_path=m.file_path, external_url=m.external_url, actor_user_id_fk=getattr(current_user, "user_id", None)))
     db.session.commit()
@@ -16766,12 +17924,15 @@ def material_restore(material_id: int, version: int):
     return redirect(url_for("main.subject_material_edit", material_id=material_id))
 @main_bp.route("/students/export.csv", methods=["GET"])
 @login_required
+@role_required("admin", "principal", "clerk")
 def students_export_csv():
     program_id_raw = request.args.get("program_id")
     selected_semester = (request.args.get("semester") or "all").lower()
     q_enrollment_no = (request.args.get("enrollment_no") or "").strip()
     q_name = (request.args.get("name") or "").strip()
     selected_medium = (request.args.get("medium") or "").strip().lower()
+    scope = _program_dropdown_context(program_id_raw, include_admin_all=True, prefer_user_program_default=False)
+    selected_program_id = scope.get("selected_program_id")
     student_table = _reflected_table("students")
     query = select(
         student_table.c.enrollment_no,
@@ -16784,12 +17945,13 @@ def students_export_csv():
         student_table.c.medium_tag,
         student_table.c.mobile,
     )
-    if program_id_raw:
-        try:
-            pid = int(program_id_raw)
-            query = query.filter(student_table.c.program_id_fk == pid)
-        except ValueError:
-            pass
+    if selected_program_id:
+        query = query.filter(student_table.c.program_id_fk == selected_program_id)
+    elif not scope.get("allow_all_programs"):
+        query = query.where(false())
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id and "trust_id_fk" in student_table.c:
+        query = query.filter(student_table.c.trust_id_fk == effective_trust_id)
     if selected_semester not in ("all", ""):
         try:
             sem_int = int(selected_semester)

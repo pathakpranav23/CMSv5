@@ -3,7 +3,7 @@ import secrets
 import time
 import uuid
 import sqlite3
-from flask import Flask, session, request, url_for, flash, redirect, current_app, render_template, g, has_request_context
+from flask import Flask, session, request, url_for, flash, redirect, current_app, render_template, g, has_request_context, abort
 from flask_login import LoginManager, current_user
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
@@ -78,6 +78,8 @@ def create_app():
     )
     # Global upload cap (can be overridden via env)
     app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_CONTENT_LENGTH", str(32 * 1024 * 1024)))
+    # Private application storage; never expose teaching resources through /static/.
+    app.config["MATERIALS_STORAGE_DIR"] = os.environ.get("MATERIALS_STORAGE_DIR", os.path.join(app.instance_path, "materials"))
     # CSRF token TTL (seconds)
     app.config["CSRF_TOKEN_TTL"] = int(os.environ.get("CSRF_TOKEN_TTL", "7200"))
     # UI hints toggle: set INFO_HINTS_ENABLED=false to hide soft guidance text globally
@@ -202,6 +204,12 @@ def create_app():
 
     # Import models so they are registered with SQLAlchemy
     from . import models  # noqa: F401
+
+    @app.before_request
+    def _block_legacy_public_materials():
+        # PythonAnywhere must not map this path as a separate static directory.
+        if (request.path or "").startswith("/static/materials/"):
+            abort(404)
 
     @app.before_request
     def _request_perf_start():

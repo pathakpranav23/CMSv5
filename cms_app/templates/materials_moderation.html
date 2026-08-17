@@ -3,81 +3,106 @@
 <div class="container py-4">
   <div class="section-header d-flex justify-content-between align-items-center mb-3">
     <h2 class="mb-0 title">Materials Moderation</h2>
-    <div class="actions">
+    <div class="actions d-flex gap-2">
+      <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.materials_hub') }}">Materials Hub</a>
       <a class="btn btn-secondary btn-sm" href="{{ url_for('main.dashboard') }}">Back to Dashboard</a>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-header card-header-standard"><div class="card-title">Unpublished or Flagged Materials</div></div>
-    <div class="card-body p-0">
-      <div class="table-responsive">
-        <table class="table table-modern table-striped table-hover mb-0">
-          <thead class="table-light">
-            <tr>
-              <th scope="col">Subject</th>
-              <th scope="col">Title</th>
-              <th scope="col" class="text-center">Kind</th>
-              <th scope="col">Owner</th>
-              <th scope="col" class="text-center">Status</th>
-              <th scope="col">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for m in materials %}
-              <tr>
-                <td>
-                  {% set subj = subjects.get(m.subject_id_fk) %}
-                  {% if subj %}
-                    {{ subj.subject_name }} (Sem {{ subj.semester }})
-                  {% else %}
-                    Subject #{{ m.subject_id_fk }}
-                  {% endif %}
-                </td>
-                <td>{{ m.title }}</td>
-                <td class="text-center">{{ m.kind|capitalize }}</td>
-                <td>{{ owners.get(m.faculty_id_fk, '—') }}</td>
-                <td class="text-center">
-                  {% if m.is_flagged %}
-                    <span class="badge bg-danger">Flagged</span>
-                  {% endif %}
-                  {% if m.is_published %}
-                    <span class="badge bg-success">Published</span>
-                  {% else %}
-                    <span class="badge bg-secondary">Hidden</span>
-                  {% endif %}
-                </td>
-                <td>
-                  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.subject_materials', subject_id=m.subject_id_fk) }}">Open Subject</a>
-                  {% if m.is_published %}
-                    <form method="post" action="{{ url_for('main.subject_material_unpublish', material_id=m.material_id) }}" class="d-inline ms-1">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                      <button type="submit" class="btn btn-warning btn-sm">Unpublish</button>
-                    </form>
-                  {% else %}
-                    <form method="post" action="{{ url_for('main.subject_material_publish', material_id=m.material_id) }}" class="d-inline ms-1">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                      <button type="submit" class="btn btn-success btn-sm">Publish</button>
-                    </form>
-                  {% endif %}
-                  {% if m.is_flagged %}
-                    <form method="post" action="{{ url_for('main.subject_material_unflag', material_id=m.material_id) }}" class="d-inline ms-1">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                      <button type="submit" class="btn btn-info btn-sm">Unflag</button>
-                    </form>
-                  {% else %}
-                    <form method="post" action="{{ url_for('main.subject_material_flag', material_id=m.material_id) }}" class="d-inline ms-1">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                      <button type="submit" class="btn btn-outline-warning btn-sm">Flag</button>
-                    </form>
-                  {% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+    <div class="card-header card-header-standard d-flex justify-content-between align-items-center">
+      <div class="card-title">Draft or Flagged Materials</div>
+      <div class="small text-muted">Review pending teaching resources</div>
     </div>
+    {% if material_rows %}
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-modern table-striped table-hover mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th scope="col">Subject</th>
+                <th scope="col">Title</th>
+                <th scope="col" class="text-center">Kind</th>
+                <th scope="col">Owner</th>
+                <th scope="col" class="text-center">Status</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in material_rows %}
+                {% set material = row.material %}
+                {% set subject = row.subject %}
+                <tr>
+                  <td>
+                    {% if subject %}
+                      <div class="fw-semibold">{{ subject.subject_name }}</div>
+                      <div class="small text-muted">Sem {{ subject.semester }}</div>
+                    {% else %}
+                      <div class="fw-semibold">Subject #{{ material.subject_id_fk }}</div>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <div class="fw-semibold">{{ material.title }}</div>
+                    {% if material.description %}
+                      <div class="small text-muted">{{ material.description }}</div>
+                    {% endif %}
+                  </td>
+                  <td class="text-center">{{ material.kind|capitalize }}</td>
+                  <td>{{ row.owner_name }}</td>
+                  <td class="text-center">
+                    {% if material.is_flagged %}
+                      <span class="badge bg-danger">Flagged</span>
+                    {% endif %}
+                    {% if row.status_key == 'published' %}
+                      <span class="badge bg-success">{{ row.status_label }}</span>
+                    {% elif row.status_key == 'archived' %}
+                      <span class="badge bg-warning text-dark">{{ row.status_label }}</span>
+                    {% else %}
+                      <span class="badge bg-secondary">{{ row.status_label }}</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <div class="d-flex flex-wrap gap-1">
+                      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.subject_materials', subject_id=material.subject_id_fk) }}">Open Subject</a>
+                      {% if row.open_url %}
+                        <a class="btn btn-outline-primary btn-sm" href="{{ row.open_url }}" target="_blank" rel="noopener">{{ row.open_label }}</a>
+                      {% endif %}
+                      {% if row.status_key == 'published' %}
+                        <form method="post" action="{{ url_for('main.subject_material_unpublish', material_id=material.material_id) }}" class="d-inline">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                          <button type="submit" class="btn btn-warning btn-sm">Archive</button>
+                        </form>
+                      {% else %}
+                        <form method="post" action="{{ url_for('main.subject_material_publish', material_id=material.material_id) }}" class="d-inline">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                          <button type="submit" class="btn btn-success btn-sm">Publish</button>
+                        </form>
+                      {% endif %}
+                      {% if material.is_flagged %}
+                        <form method="post" action="{{ url_for('main.subject_material_unflag', material_id=material.material_id) }}" class="d-inline">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                          <button type="submit" class="btn btn-info btn-sm">Unflag</button>
+                        </form>
+                      {% else %}
+                        <form method="post" action="{{ url_for('main.subject_material_flag', material_id=material.material_id) }}" class="d-inline">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                          <button type="submit" class="btn btn-outline-warning btn-sm">Flag</button>
+                        </form>
+                      {% endif %}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% else %}
+      <div class="card-body py-5 text-center">
+        <div class="fw-semibold mb-2">No materials need moderation right now.</div>
+        <div class="text-muted">This queue will show draft uploads and flagged items when faculty share new resources or moderation is required.</div>
+      </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

@@ -1,0 +1,54 @@
+{% extends 'layout.html' %}
+{% import '_macros.html' as ui %}
+{% block title %}Preview · {{ material.title }}{% endblock %}
+{% block content %}
+<style>
+  .material-preview-card { overflow: hidden; border: 0; box-shadow: 0 .6rem 1.8rem rgba(14, 63, 90, .14); }
+  .material-preview-banner { background: linear-gradient(115deg, #063e4d, #087c88 55%, #1aadd3); color: #fff; }
+  .material-preview-frame { width: 100%; height: min(72vh, 880px); border: 0; background: #f3f7f9; }
+  .material-preview-image { display: block; max-width: 100%; max-height: 72vh; margin: auto; object-fit: contain; background: #f3f7f9; }
+  .material-file-badge { letter-spacing: .06em; font-size: .72rem; }
+</style>
+<div class="container py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+    <div>
+      <div class="text-uppercase text-muted small fw-semibold mb-1">Subject material</div>
+      <h2 class="mb-1 title">Preview</h2>
+      <div class="text-muted">{{ subject.subject_name }}</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      {{ ui.back_link(url_for('main.subject_materials', subject_id=subject.subject_id), 'Back to Materials') }}
+      <a class="btn btn-primary btn-sm" href="{{ url_for('main.material_download', material_id=material.material_id) }}"><i class="bi bi-download me-1"></i>Download</a>
+    </div>
+  </div>
+
+  <article class="card material-preview-card">
+    <header class="material-preview-banner p-4 d-flex flex-wrap justify-content-between align-items-start gap-3">
+      <div>
+        <div class="d-flex align-items-center gap-2 mb-2"><i class="bi bi-file-earmark-richtext fs-4"></i><span class="badge text-bg-light text-dark material-file-badge">{{ extension }}</span></div>
+        <h3 class="h4 mb-1">{{ material.title }}</h3>
+        <div class="text-white-50">{{ filename }}</div>
+      </div>
+      <span class="badge rounded-pill text-bg-light text-dark"><i class="bi bi-shield-check me-1"></i>Private material</span>
+    </header>
+
+    {% if preview_mode == 'pdf' %}
+      <iframe class="material-preview-frame" title="Preview of {{ material.title }}" src="{{ url_for('main.material_preview_content', material_id=material.material_id) }}#view=FitH"></iframe>
+    {% elif preview_mode == 'image' %}
+      <div class="p-3 p-md-4 text-center"><img class="material-preview-image rounded" src="{{ url_for('main.material_preview_content', material_id=material.material_id) }}" alt="Preview of {{ material.title }}" /></div>
+    {% else %}
+      <div class="card-body text-center py-5 px-4">
+        <i class="bi bi-file-earmark-arrow-down display-4 text-info"></i>
+        <h3 class="h5 mt-3">This file can’t be previewed in your browser</h3>
+        <p class="text-muted mx-auto mb-4" style="max-width: 38rem;">{{ extension }} files such as Word, PowerPoint, and Excel documents need a compatible app. Download the file to open it.</p>
+        <a class="btn btn-primary" href="{{ url_for('main.material_download', material_id=material.material_id) }}"><i class="bi bi-download me-1"></i>Download {{ filename }}</a>
+      </div>
+    {% endif %}
+
+    <footer class="card-footer bg-white d-flex flex-wrap justify-content-between align-items-center gap-2 py-3">
+      <span class="small text-muted"><i class="bi bi-info-circle me-1"></i>{% if preview_mode == 'unsupported' %}Download the file to view its contents.{% else %}If the preview does not load, download the file instead.{% endif %}</span>
+      <a class="small" href="{{ url_for('main.material_download', material_id=material.material_id) }}">Download original</a>
+    </footer>
+  </article>
+</div>
+{% endblock %}

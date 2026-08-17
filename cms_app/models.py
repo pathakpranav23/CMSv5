@@ -527,6 +527,28 @@ class Notification(db.Model):
     read_at = db.Column(db.DateTime)
 
 
+class StudentFollowUpTask(db.Model):
+    """Operational hand-off for a Faculty member when a student cannot be reached."""
+    __tablename__ = "student_follow_up_tasks"
+
+    task_id = db.Column(db.Integer, primary_key=True)
+    student_id_fk = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"), nullable=False)
+    subject_id_fk = db.Column(db.Integer, db.ForeignKey("subjects.subject_id"), nullable=False)
+    division_id_fk = db.Column(db.Integer, db.ForeignKey("divisions.division_id"), nullable=False)
+    faculty_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
+    trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"))
+    academic_year = db.Column(db.String(16))
+    reason = db.Column(db.String(32), nullable=False, default="unreachable")
+    faculty_note = db.Column(db.Text)
+    status = db.Column(db.String(16), nullable=False, default="open")
+    clerk_note = db.Column(db.Text)
+    resolved_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    resolved_at = db.Column(db.DateTime)
+
+
 class Announcement(db.Model):
     __tablename__ = "announcements"
     announcement_id = db.Column(db.Integer, primary_key=True)

@@ -28,6 +28,7 @@
               <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_report_admin') }}">Admin Report</a>
             {% endif %}
             {% if (role or '') == 'faculty' %}
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_class_insights') }}">Class Insights</a>
               <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_report_faculty') }}">My Attendance Report</a>
             {% endif %}
           </div>

@@ -1,0 +1,66 @@
+{% extends 'layout.html' %}
+{% block title %}Student Follow-up Queue{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+    <div>
+      <h2 class="mb-1 title">Student Follow-up Queue</h2>
+      <div class="text-muted">Account and permitted contact follow-ups requested by Faculty. Academic attendance is read-only here.</div>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.module_students') }}">Back to Students</a>
+  </div>
+
+  <div class="btn-group mb-3" role="group" aria-label="Filter follow-up tasks">
+    {% for key, label in [('open', 'Open'), ('in_progress', 'In progress'), ('resolved', 'Resolved'), ('all', 'All')] %}
+      <a class="btn btn-sm {% if selected_status == key %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('main.student_follow_up_tasks', status=key) }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="card">
+    {% if tasks %}
+      <div class="table-responsive">
+        <table class="table table-modern table-striped table-hover mb-0 align-middle">
+          <thead class="table-light"><tr><th>Student</th><th>Class request</th><th>Faculty note</th><th>Status</th><th>Clerk action</th></tr></thead>
+          <tbody>
+            {% for task in tasks %}
+              {% set detail = task_details[task.task_id] %}
+              {% set student = detail.student %}
+              {% set subject = detail.subject %}
+              {% set division = detail.division %}
+              <tr>
+                <td>
+                  <div class="fw-semibold">{{ student.surname if student else '' }} {{ student.student_name if student else task.student_id_fk }}</div>
+                  <div class="small text-muted">Roll {{ student.roll_no or '-' if student else '-' }} · {{ task.student_id_fk }}</div>
+                  {% if student %}<a class="small" href="{{ url_for('main.students_edit', enrollment_no=student.enrollment_no) }}">Open permitted student record</a>{% endif %}
+                </td>
+                <td>
+                  <div>{{ subject.subject_name if subject else 'Subject unavailable' }}</div>
+                  <div class="small text-muted">{{ division.division_code if division else '-' }} · Sem {{ division.semester if division else '-' }} · {{ task.academic_year or '-' }}</div>
+                  <div class="small text-muted">Requested {{ task.created_at.strftime('%d %b %Y') if task.created_at else '-' }} by {{ detail.faculty.username if detail.faculty else 'Faculty' }}</div>
+                </td>
+                <td class="small">{{ task.faculty_note or 'No additional note.' }}</td>
+                <td><span class="badge {% if task.status == 'resolved' %}bg-success{% elif task.status == 'in_progress' %}bg-info text-dark{% else %}bg-secondary{% endif %}">{{ task.status.replace('_', ' ')|title }}</span>{% if task.clerk_note %}<div class="small text-muted mt-1">{{ task.clerk_note }}</div>{% endif %}</td>
+                <td style="min-width: 270px;">
+                  {% if task.status != 'resolved' %}
+                    <form method="post" action="{{ url_for('main.student_follow_up_task_update', task_id=task.task_id) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                      <input type="hidden" name="return_status" value="{{ selected_status }}" />
+                      <div class="input-group input-group-sm mb-2"><select class="form-select" name="status"><option value="in_progress" {% if task.status == 'in_progress' %}selected{% endif %}>In progress</option><option value="resolved">Resolved</option></select><button class="btn btn-primary" type="submit">Update</button></div>
+                      <label class="visually-hidden" for="clerk-note-{{ task.task_id }}">Resolution note</label>
+                      <textarea class="form-control form-control-sm" id="clerk-note-{{ task.task_id }}" name="clerk_note" maxlength="500" rows="2" placeholder="What was corrected or what is next?"></textarea>
+                    </form>
+                  {% else %}
+                    <span class="small text-muted">Resolved {{ task.resolved_at.strftime('%d %b %Y') if task.resolved_at else '' }}</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="card-body py-5 text-center text-muted">No {{ selected_status.replace('_', ' ') }} follow-up tasks are assigned to your scope.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

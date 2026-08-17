@@ -3,64 +3,141 @@
 {% block content %}
 <div class="container py-4">
   <div class="section-header d-flex justify-content-between align-items-center mb-3">
-    <h2 class="mb-0 title">Materials — {{ subject.subject_name }}</h2>
-    <div class="actions">
+    <h2 class="mb-0 title">Materials - {{ subject.subject_name }}</h2>
+    <div class="actions d-flex align-items-center gap-2">
       {{ ui.back_link(url_for('main.subjects_list', program_id=subject.program_id_fk, semester=subject.semester), 'Back to Subjects') }}
-      {% if can_manage and role == 'faculty' %}
-        <a class="btn btn-primary btn-sm ms-2" href="{{ url_for('main.subject_material_new', subject_id=subject.subject_id) }}">Share New</a>
+      {% if can_share %}
+        <a class="btn btn-primary btn-sm" href="{{ url_for('main.subject_material_new', subject_id=subject.subject_id) }}">Share New</a>
+      {% endif %}
+      {% if can_manage %}
+        <a class="btn btn-outline-info btn-sm" href="{{ url_for('main.subject_materials_student_preview', subject_id=subject.subject_id) }}">Student Preview</a>
+      {% endif %}
+      {% if is_admin_or_principal %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.materials_moderation') }}">Moderation</a>
       {% endif %}
     </div>
   </div>
 
   {% if info_hints_enabled %}
-    <div class="alert alert-info">New uploads are hidden until published. Flagged items are invisible to students.</div>
+    <div class="alert alert-info">Faculty uploads publish immediately. Use Archive to hide a resource from students later, and use Publish to make an older draft or archived item live again. Flagged items are hidden from students.</div>
   {% endif %}
 
   <div class="card">
-    <div class="card-header card-header-standard"><div class="card-title">Subject Materials</div></div>
-    <div class="card-body p-0">
-      <div class="table-responsive">
-        <table class="table table-modern table-striped table-hover mb-0">
-          <thead class="table-light">
-            <tr>
-              <th scope="col">Title</th>
-              <th scope="col" class="text-center">Kind</th>
-              <th scope="col">Link</th>
-              <th scope="col" class="text-center">Status</th>
-              <th scope="col">Owner</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for m in materials %}
-              <tr>
-                <td>{{ m.title }}</td>
-                <td class="text-center">{{ m.kind|capitalize }}</td>
-                <td>
-                  {% if m.kind == 'file' and m.file_path %}
-                    <a href="{{ url_for('static', filename=m.file_path) }}" target="_blank">Download</a>
-                  {% elif m.kind in ['link','embed'] and m.external_url %}
-                    <a href="{{ m.external_url }}" target="_blank">Open</a>
-                  {% else %}
-                    —
-                  {% endif %}
-                </td>
-                <td class="text-center">
-                  {% if m.is_flagged %}
-                    <span class="badge bg-danger">Flagged</span>
-                  {% endif %}
-                  {% if m.is_published %}
-                    <span class="badge bg-success">Published</span>
-                  {% else %}
-                    <span class="badge bg-secondary">Hidden</span>
-                  {% endif %}
-                </td>
-                <td>{{ owners.get(m.faculty_id_fk, '—') }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+    <div class="card-header card-header-standard d-flex justify-content-between align-items-center">
+      <div class="card-title">Subject Materials</div>
+      <div class="small text-muted">Semester {{ subject.semester }}</div>
     </div>
+    {% if material_rows %}
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-modern table-striped table-hover mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th scope="col">Title</th>
+                <th scope="col" class="text-center">Kind</th>
+                <th scope="col">Link</th>
+                <th scope="col" class="text-center">Status</th>
+                <th scope="col">Owner</th>
+                <th scope="col" class="text-center">Updated</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in material_rows %}
+                {% set material = row.material %}
+                <tr>
+                  <td>
+                    <div class="fw-semibold">{{ material.title }}</div>
+                    {% if material.description %}
+                      <div class="text-muted small">{{ material.description }}</div>
+                    {% endif %}
+                  </td>
+                  <td class="text-center">{{ material.kind|capitalize }}</td>
+                  <td>
+                    {% if row.open_url %}
+                      <a href="{{ row.open_url }}" target="_blank" rel="noopener">{{ row.open_label }}</a>
+                    {% else %}
+                      <span class="text-muted">No file or link</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-center">
+                    {% if material.is_flagged %}
+                      <span class="badge bg-danger">Flagged</span>
+                    {% endif %}
+                    {% if row.status_key == 'published' %}
+                      <span class="badge bg-success">{{ row.status_label }}</span>
+                    {% elif row.status_key == 'archived' %}
+                      <span class="badge bg-warning text-dark">{{ row.status_label }}</span>
+                    {% else %}
+                      <span class="badge bg-secondary">{{ row.status_label }}</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ row.owner_name }}</td>
+                  <td class="text-center">
+                    {{ row.updated_at_display.strftime('%d %b %Y') if row.updated_at_display else '-' }}
+                    <div class="small text-muted mt-1">
+                      {% if row.student_visible %}Visible to {{ row.student_visibility_count }} student{{ '' if row.student_visibility_count == 1 else 's' }}{% else %}Not visible to students{% endif %}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="d-flex flex-wrap gap-1">
+                      {% if row.open_url %}
+                        {% if material.kind == 'file' %}
+                          <a class="btn btn-outline-info btn-sm" href="{{ url_for('main.material_preview', material_id=material.material_id) }}" target="_blank" rel="noopener">Preview</a>
+                        {% endif %}
+                        <a class="btn btn-outline-secondary btn-sm" href="{{ row.open_url }}" target="_blank" rel="noopener">{{ row.open_label }}</a>
+                      {% endif %}
+                      {% if row.can_edit %}
+                        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.subject_material_edit', material_id=material.material_id) }}">Edit</a>
+                      {% endif %}
+                      {% if row.can_delete %}
+                        <form method="post" action="{{ url_for('main.subject_material_delete', material_id=material.material_id) }}" class="d-inline">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                          <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+                        </form>
+                      {% endif %}
+                      {% if row.can_archive %}
+                        <form method="post" action="{{ url_for('main.subject_material_unpublish', material_id=material.material_id) }}" class="d-inline">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                          <button type="submit" class="btn btn-warning btn-sm">Archive</button>
+                        </form>
+                      {% endif %}
+                      {% if row.can_publish %}
+                        <form method="post" action="{{ url_for('main.subject_material_publish', material_id=material.material_id) }}" class="d-inline">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                          <button type="submit" class="btn btn-success btn-sm">Publish</button>
+                        </form>
+                      {% endif %}
+                      {% if material.is_flagged %}
+                        {% if row.can_unflag %}
+                          <form method="post" action="{{ url_for('main.subject_material_unflag', material_id=material.material_id) }}" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                            <button type="submit" class="btn btn-info btn-sm">Unflag</button>
+                          </form>
+                        {% endif %}
+                      {% elif row.can_flag %}
+                        <form method="post" action="{{ url_for('main.subject_material_flag', material_id=material.material_id) }}" class="d-inline">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                          <button type="submit" class="btn btn-outline-warning btn-sm">Flag</button>
+                        </form>
+                      {% endif %}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% else %}
+      <div class="card-body py-5 text-center">
+        <div class="fw-semibold mb-2">No materials shared yet for this subject.</div>
+        <div class="text-muted mb-3">Start by adding lecture notes, lab files, reference links, or study resources for students.</div>
+        {% if can_share %}
+          <a class="btn btn-primary btn-sm" href="{{ url_for('main.subject_material_new', subject_id=subject.subject_id) }}">Share First Material</a>
+        {% endif %}
+      </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

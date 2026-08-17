@@ -3,7 +3,7 @@
 {% block content %}
 <div class="container py-4">
   <div class="section-header d-flex justify-content-between align-items-center mb-3">
-    <h2 class="mb-0 title">Edit Material — {{ subject.subject_name }}</h2>
+    <h2 class="mb-0 title">Edit Material - {{ subject.subject_name }}</h2>
     <div class="actions">
       {{ ui.back_link(url_for('main.subject_materials', subject_id=subject.subject_id), 'Back to Materials') }}
     </div>
@@ -15,43 +15,124 @@
     ('Edit', '')
   ]) }}
 
-  <form method="post" enctype="multipart/form-data" action="{{ url_for('main.subject_material_edit', material_id=material.material_id) }}" class="card">
-    <div class="card-header card-header-standard"><div class="card-title">Edit Material</div></div>
-    <div class="card-body">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <div class="mb-3">
-        <label for="title" class="form-label">Title</label>
-        <input type="text" class="form-control" id="title" name="title" value="{{ material.title }}" required />
+  <div class="row g-4">
+    <div class="col-12 col-xl-8">
+      <form method="post" enctype="multipart/form-data" action="{{ url_for('main.subject_material_edit', material_id=material.material_id) }}" class="card h-100">
+        <div class="card-header card-header-standard">
+          <div class="card-title">Edit Material</div>
+        </div>
+        <div class="card-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <div class="mb-3">
+            <label for="title" class="form-label">Title</label>
+            <input type="text" class="form-control" id="title" name="title" value="{{ material.title }}" required />
+          </div>
+          <div class="mb-3">
+            <label for="description" class="form-label">Description</label>
+            <textarea class="form-control" id="description" name="description" rows="3">{{ material.description or '' }}</textarea>
+          </div>
+          <div class="mb-3">
+            <label for="kind" class="form-label">Kind</label>
+            <select class="form-select" id="kind" name="kind" onchange="toggleKindFields()">
+              <option value="file" {% if material.kind == 'file' %}selected{% endif %}>File Upload</option>
+              <option value="link" {% if material.kind == 'link' %}selected{% endif %}>External Link</option>
+              <option value="embed" {% if material.kind == 'embed' %}selected{% endif %}>Embed Link</option>
+            </select>
+          </div>
+          <div class="mb-3" id="file_field">
+            <label for="file" class="form-label">Replace File</label>
+            <input type="file" class="form-control" id="file" name="file" />
+            {% if material.kind == 'file' and material.file_path %}
+              <div class="form-text">Current file: <a href="{{ url_for('main.material_download', material_id=material.material_id) }}" target="_blank" rel="noopener">Download</a></div>
+            {% endif %}
+            <div class="form-text">Allowed: pdf, doc/x, ppt/x, xls/x, png, jpg, jpeg</div>
+          </div>
+          <div class="mb-3 d-none" id="url_field">
+            <label for="external_url" class="form-label">External URL</label>
+            <input type="url" class="form-control" id="external_url" name="external_url" value="{{ material.external_url or '' }}" placeholder="https://..." />
+          </div>
+        </div>
+        <div class="card-footer text-end">
+          <button type="submit" class="btn btn-primary btn-sm">Update</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="col-12 col-xl-4">
+      <div class="card mb-4">
+        <div class="card-header card-header-standard">
+          <div class="card-title">Current Status</div>
+        </div>
+        <div class="card-body">
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            {% if material_status_key == 'published' %}
+              <span class="badge bg-success">Published</span>
+            {% elif material_status_key == 'archived' %}
+              <span class="badge bg-warning text-dark">Archived</span>
+            {% else %}
+              <span class="badge bg-secondary">Draft</span>
+            {% endif %}
+            {% if material.is_flagged %}
+              <span class="badge bg-danger">Flagged</span>
+            {% endif %}
+          </div>
+          <div class="small text-muted mb-2">Current resource</div>
+          {% if material.kind == 'file' and material.file_path %}
+            <a href="{{ url_for('main.material_download', material_id=material.material_id) }}" target="_blank" rel="noopener">Open current file</a>
+          {% elif material.kind in ['link', 'embed'] and material.external_url %}
+            <a href="{{ material.external_url }}" target="_blank" rel="noopener">Open current link</a>
+          {% else %}
+            <div class="text-muted">No file or link attached.</div>
+          {% endif %}
+          <hr>
+          <div class="small text-muted mb-1">Last updated</div>
+          <div>{{ (material.updated_at or material.created_at).strftime('%d %b %Y %I:%M %p') if (material.updated_at or material.created_at) else '-' }}</div>
+        </div>
       </div>
-      <div class="mb-3">
-        <label for="description" class="form-label">Description</label>
-        <textarea class="form-control" id="description" name="description" rows="3">{{ material.description or '' }}</textarea>
-      </div>
-      <div class="mb-3">
-        <label for="kind" class="form-label">Kind</label>
-        <select class="form-select" id="kind" name="kind" onchange="toggleKindFields()">
-          <option value="file" {% if material.kind == 'file' %}selected{% endif %}>File Upload</option>
-          <option value="link" {% if material.kind == 'link' %}selected{% endif %}>External Link</option>
-          <option value="embed" {% if material.kind == 'embed' %}selected{% endif %}>Embed Link</option>
-        </select>
-      </div>
-      <div class="mb-3" id="file_field">
-        <label for="file" class="form-label">Replace File</label>
-        <input type="file" class="form-control" id="file" name="file" />
-        {% if material.kind == 'file' and material.file_path %}
-          <div class="form-text">Current: <a href="{{ url_for('static', filename=material.file_path) }}" target="_blank">Download</a></div>
-        {% endif %}
-        <div class="form-text">Allowed: pdf, doc/x, ppt/x, xls/x, png, jpg, jpeg</div>
-      </div>
-      <div class="mb-3 d-none" id="url_field">
-        <label for="external_url" class="form-label">External URL</label>
-        <input type="url" class="form-control" id="external_url" name="external_url" value="{{ material.external_url or '' }}" placeholder="https://..." />
+
+      <div class="card">
+        <div class="card-header card-header-standard d-flex justify-content-between align-items-center">
+          <div class="card-title">Revision History</div>
+          <div class="small text-muted">{{ revisions|length }} saved</div>
+        </div>
+        <div class="card-body">
+          {% if revisions %}
+            <div class="d-grid gap-3">
+              {% for rev in revisions %}
+                <div class="border rounded p-3">
+                  <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+                    <div>
+                      <div class="fw-semibold">Version {{ rev.version }}</div>
+                      <div class="small text-muted">{{ rev.created_at.strftime('%d %b %Y %I:%M %p') if rev.created_at else '-' }}</div>
+                    </div>
+                    {% if loop.first %}
+                      <span class="badge bg-primary">Latest snapshot</span>
+                    {% endif %}
+                  </div>
+                  <div class="small mb-2"><strong>Title:</strong> {{ rev.title }}</div>
+                  <div class="small mb-2"><strong>Kind:</strong> {{ rev.kind|capitalize }}</div>
+                  {% if rev.description %}
+                    <div class="small text-muted mb-2">{{ rev.description }}</div>
+                  {% endif %}
+                  {% if rev.file_path %}
+                    <div class="small mb-2">Saved file snapshot available.</div>
+                  {% elif rev.external_url %}
+                    <div class="small mb-2">Saved link: <a href="{{ rev.external_url }}" target="_blank" rel="noopener">Open</a></div>
+                  {% endif %}
+                  <form method="post" action="{{ url_for('main.material_restore', material_id=material.material_id, version=rev.version) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                    <button type="submit" class="btn btn-outline-secondary btn-sm">Restore Version {{ rev.version }}</button>
+                  </form>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-muted">No saved revisions yet. A new snapshot will appear after the next successful update.</div>
+          {% endif %}
+        </div>
       </div>
     </div>
-    <div class="card-footer text-end">
-      <button type="submit" class="btn btn-primary btn-sm">Update</button>
-    </div>
-  </form>
+  </div>
 </div>
 
 <script>

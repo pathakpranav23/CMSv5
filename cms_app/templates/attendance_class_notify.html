@@ -1,0 +1,26 @@
+{% extends 'layout.html' %}
+{% block title %}Notify Students{% endblock %}
+{% block content %}
+<div class="container py-4" style="max-width: 900px;">
+  <div class="section-header d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div><h2 class="mb-1 title">Notify Students</h2><div class="text-muted">{{ subject.subject_name }} · Sem {{ division.semester }} · {{ division.division_code }}</div></div>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.attendance_class_insights', subject_id=subject.subject_id, division_id=division.division_id, category=category) }}">Cancel</a>
+  </div>
+  <div class="alert alert-info"><strong>{{ deliverable_recipients|length }} student{{ '' if deliverable_recipients|length == 1 else 's' }}</strong> will receive a private in-app notification. {% if skipped_recipients %}<div class="mt-1">{{ skipped_recipients|length }} selected student{{ '' if skipped_recipients|length == 1 else 's' }} will be skipped because no linked account is available.</div>{% endif %}</div>
+  <form method="post" class="card">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="action" value="send" />
+    <input type="hidden" name="subject_id" value="{{ subject.subject_id }}" />
+    <input type="hidden" name="division_id" value="{{ division.division_id }}" />
+    <input type="hidden" name="category" value="{{ category }}" />
+    {% for student in recipients %}<input type="hidden" name="selected_ids" value="{{ student.enrollment_no }}" />{% endfor %}
+    <div class="card-body">
+      <div class="mb-3"><label class="form-label" for="templateKey">Message template</label><select class="form-select" id="templateKey" name="template_key">{% for key, item in templates.items() %}<option value="{{ key }}" {% if key == selected_template_key %}selected{% endif %}>{{ item.label }}</option>{% endfor %}</select><div class="form-text">Use an approved template, or provide a short custom title and message below.</div></div>
+      <div class="mb-3"><label class="form-label" for="customTitle">Custom title <span class="text-muted">(optional)</span></label><input class="form-control" id="customTitle" name="custom_title" maxlength="128" placeholder="Leave blank to use the template title" /></div>
+      <div class="mb-3"><label class="form-label" for="customMessage">Custom message <span class="text-muted">(optional)</span></label><textarea class="form-control" id="customMessage" name="custom_message" rows="5" maxlength="1000" placeholder="Leave blank to use the selected template message"></textarea></div>
+      <div class="small text-muted">Messages are delivered individually. Recipient names and lists are not disclosed to other students.</div>
+    </div>
+    <div class="card-footer bg-white d-flex justify-content-end gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('main.attendance_class_insights', subject_id=subject.subject_id, division_id=division.division_id, category=category) }}">Cancel</a><button class="btn btn-primary" type="submit"><i class="bi bi-send me-1"></i>Send private notifications</button></div>
+  </form>
+</div>
+{% endblock %}

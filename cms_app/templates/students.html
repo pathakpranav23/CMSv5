@@ -1,6 +1,9 @@
 {% extends 'layout.html' %}
 {% block content %}
-{% set can_manage = current_user.is_authenticated and (current_user.role|lower in ['admin','principal']) %}
+{% set role_lower = (current_user.role|lower if current_user.is_authenticated else '') %}
+{% set can_manage = current_user.is_authenticated and (role_lower in ['admin','principal','clerk']) %}
+{% set can_bulk_manage = can_manage %}
+{% set can_view_contact = can_manage %}
 {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
 <div class="section-header d-flex justify-content-between align-items-center mb-3">
   <h2 class="mb-0 title d-flex align-items-center">{{ t('Students') }} <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h2>
@@ -17,7 +20,6 @@
       <div class="col-12 col-md-4 col-lg-5">
         <div class="input-group input-group-sm">
           <span class="input-group-text">{{ t('Program') }}</span>
-          {% set role_lower = (current_user.role or '')|lower %}
           {% if role_lower in ['clerk','principal'] %}
             <div class="form-control-plaintext">{{ (selected_program_id and program_map.get(selected_program_id)) or (program_list and program_list[0].program_name) }}</div>
             <input type="hidden" id="program_id" name="program_id" value="{{ selected_program_id or (program_list and program_list[0].program_id) }}" />
@@ -127,10 +129,9 @@
     {% if q_name %}• Name contains "{{ q_name }}"{% endif %}
     {% if selected_medium and selected_medium != 'all' %}• Medium is {{ selected_medium|capitalize }}{% endif %}
   </span>
-  <span class="ms-2"><code>scripts/import_students.py</code> imports Excel data.</span>
   
 
-{% if students and students|length > 0 %}
+{% if can_bulk_manage and students and students|length > 0 %}
 <form id="studentsBulkForm" method="post" action="{{ url_for('main.students_bulk_set_active') }}" class="mb-3">
   <input type="hidden" name="return_to" value="{{ request.full_path }}" />
   <div class="card border-0 shadow-sm">
@@ -189,7 +190,7 @@
   <table class="table table-sm table-striped align-middle">
     <thead>
       <tr>
-        <th><input type="checkbox" id="studentsSelectAll" onclick="toggleStudentsSelection(this)" /></th>
+        {% if can_bulk_manage %}<th><input type="checkbox" id="studentsSelectAll" onclick="toggleStudentsSelection(this)" /></th>{% endif %}
         <th>#</th>
         <th>Photo</th>
         <th>Enrollment No.</th>
@@ -201,15 +202,15 @@
         <th>Medium</th>
         <th>Division</th>
         <th>Semester</th>
-        <th>Mobile</th>
-        <th>Actions</th>
+        {% if can_view_contact %}<th>Mobile</th>{% endif %}
+        {% if can_manage %}<th>Actions</th>{% endif %}
       </tr>
     </thead>
     <tbody>
       {% for s in students %}
       {% set sem_div = division_map.get(s.division_id_fk) %}
       <tr>
-        <td><input type="checkbox" class="student-row-checkbox" name="selected_ids" value="{{ s.enrollment_no }}" form="studentsBulkForm" onchange="updateStudentsSelectedCount()" /></td>
+        {% if can_bulk_manage %}<td><input type="checkbox" class="student-row-checkbox" name="selected_ids" value="{{ s.enrollment_no }}" form="studentsBulkForm" onchange="updateStudentsSelectedCount()" /></td>{% endif %}
         <td>{{ loop.index }}</td>
         <td>
           {% if s.photo_url %}
@@ -235,15 +236,13 @@
         </td>
         <td>{{ sem_div[1] if sem_div else '' }}</td>
         <td>{{ sem_div[0] if sem_div else s.current_semester }}</td>
-        <td>{{ s.mobile }}</td>
-        <td class="text-nowrap">
-          {% if can_manage %}
-            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.students_edit', enrollment_no=s.enrollment_no) }}">Edit</a>
-            <form method="post" action="{{ url_for('main.students_delete', enrollment_no=s.enrollment_no) }}" class="d-inline" onsubmit="return confirm('Delete {{ s.enrollment_no }}?');">
-              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-            </form>
-          {% endif %}
-        </td>
+        {% if can_view_contact %}<td>{{ s.mobile }}</td>{% endif %}
+        {% if can_manage %}<td class="text-nowrap">
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.students_edit', enrollment_no=s.enrollment_no) }}">Edit</a>
+          <form method="post" action="{{ url_for('main.students_delete', enrollment_no=s.enrollment_no) }}" class="d-inline" onsubmit="return confirm('Delete {{ s.enrollment_no }}?');">
+            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+          </form>
+        </td>{% endif %}
       </tr>
       {% endfor %}
     </tbody>
@@ -259,7 +258,7 @@
     {% set next_page = selected_page + 1 %}
     <a class="btn btn-sm btn-outline-secondary" href="{{ base_url }}?program_id={{ selected_program_id or '' }}&semester={{ selected_semester or 'all' }}&medium={{ selected_medium or 'all' }}&enrollment_no={{ q_enrollment_no or '' }}&name={{ q_name or '' }}&limit={{ selected_limit }}&page={{ prev_page }}" {% if selected_page <= 1 %}disabled{% endif %}>Prev</a>
     <a class="btn btn-sm btn-outline-secondary" href="{{ base_url }}?program_id={{ selected_program_id or '' }}&semester={{ selected_semester or 'all' }}&medium={{ selected_medium or 'all' }}&enrollment_no={{ q_enrollment_no or '' }}&name={{ q_name or '' }}&limit={{ selected_limit }}&page={{ next_page }}" {% if end_idx >= total_count %}disabled{% endif %}>Next</a>
-    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.students_export_csv') }}?program_id={{ selected_program_id or '' }}&semester={{ selected_semester or 'all' }}&medium={{ selected_medium or 'all' }}&enrollment_no={{ q_enrollment_no or '' }}&name={{ q_name or '' }}">Export CSV</a>
+    {% if can_bulk_manage %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.students_export_csv') }}?program_id={{ selected_program_id or '' }}&semester={{ selected_semester or 'all' }}&medium={{ selected_medium or 'all' }}&enrollment_no={{ q_enrollment_no or '' }}&name={{ q_name or '' }}">Export CSV</a>{% endif %}
   </div>
 </div>
 {% else %}

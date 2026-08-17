@@ -18,6 +18,9 @@
                     </div>
                 </div>
                 <div class="d-flex gap-2 flex-wrap">
+                    <a href="{{ url_for('main.attendance_class_insights') }}" class="btn btn-outline-primary">
+                        <i class="bi bi-graph-up-arrow"></i> Class Insights
+                    </a>
                     <a href="{{ url_for('faculty.my_timetable') }}" class="btn btn-primary">
                         <i class="bi bi-calendar-week"></i> My Timetable
                     </a>
@@ -114,6 +117,9 @@
                                     <a href="{{ url_for('main.students', program_id=prog.program_id, semester=div.semester, division_id=div.division_id) }}" class="btn btn-sm btn-outline-secondary" title="View Students">
                                         <i class="bi bi-people"></i>
                                     </a>
+                                    <a href="{{ url_for('main.attendance_class_insights', subject_id=sub.subject_id, division_id=div.division_id) }}" class="btn btn-sm btn-outline-info" title="Class Insights">
+                                        <i class="bi bi-graph-up-arrow"></i>
+                                    </a>
                                 </td>
                                 </tr>
                                 {% endfor %}
@@ -148,6 +154,9 @@
                                     </a>
                                     <a href="{{ url_for('main.students', program_id=prog.program_id, semester=div.semester, division_id=div.division_id) }}" class="btn btn-sm btn-outline-secondary flex-grow-1">
                                         <i class="bi bi-people me-1"></i> Students
+                                    </a>
+                                    <a href="{{ url_for('main.attendance_class_insights', subject_id=sub.subject_id, division_id=div.division_id) }}" class="btn btn-sm btn-outline-info flex-grow-1">
+                                        <i class="bi bi-graph-up-arrow me-1"></i> Insights
                                     </a>
                                 </div>
                             </div>
