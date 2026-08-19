@@ -6,9 +6,12 @@ import os
 import csv
 import io
 import json
+import zipfile
+import re
+from xml.etree import ElementTree as ET
 from sqlalchemy import or_, select, and_, cast, Integer, false, update, MetaData, Table, inspect as sa_inspect
 from sqlalchemy.orm import selectinload
-from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementRevision, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, MaterialRevision, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification, StudentFollowUpTask, DataAuditLog
+from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementRevision, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, MaterialRevision, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification, StudentFollowUpTask, LessonPlanImportDraft, LessonPlan, LessonPlanUnit, LessonPlanTopic, LessonPlanDelivery, DataAuditLog
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
 from ..api_utils import api_success, api_error
@@ -1174,6 +1177,455 @@ def _material_user_can_manage_subject(subject) -> bool:
     if _user_is_admin_or_principal():
         return role != "principal" or getattr(current_user, "program_id_fk", None) == subject.program_id_fk
     return role == "faculty" and _user_is_faculty_assigned(subject.subject_id)
+
+
+def _lesson_plan_docx_extract(upload):
+    """Extract only table text from a DOCX Course File; never execute embedded content."""
+    if not zipfile.is_zipfile(upload.stream):
+        raise ValueError("The upload is not a valid DOCX file.")
+    upload.stream.seek(0)
+    with zipfile.ZipFile(upload.stream) as package:
+        if "word/document.xml" not in package.namelist():
+            raise ValueError("The DOCX does not contain a readable document body.")
+        xml = package.read("word/document.xml")
+    root = ET.fromstring(xml)
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    document_text = " ".join(part.text or "" for part in root.findall(".//w:t", namespace)).lower()
+    tables = []
+    for table in root.findall(".//w:tbl", namespace):
+        rows = []
+        for tr in table.findall("./w:tr", namespace):
+            cells = []
+            for tc in tr.findall("./w:tc", namespace):
+                text = " ".join(part.text or "" for part in tc.findall(".//w:t", namespace)).strip()
+                cells.append(re.sub(r"\s+", " ", text))
+            if any(cells):
+                rows.append(cells)
+        if rows:
+            tables.append(rows)
+    recognized = {"teaching_scheme": 0, "syllabus": 0, "lecturer_planning": 0, "lab_planning": 0, "assessment": 0, "extra_classes": 0, "resources_outcomes": 0}
+    topics = []
+    for table in tables:
+        joined = " ".join(" ".join(row) for row in table).lower()
+        if "teaching and examination scheme" in joined: recognized["teaching_scheme"] += 1
+        if "syllabus" in joined or "unit name" in joined: recognized["syllabus"] += 1
+        if "lecturer planning" in joined or ("planning date" in joined and "actual date" in joined):
+            recognized["lecturer_planning"] += 1
+            for row in table:
+                row_text = " | ".join(row)
+                if re.search(r"\b\d{1,3}\s*(?:min|minutes)\b", row_text, re.I) and len(row) >= 2:
+                    duration_match = re.search(r"\b(\d{1,3})\s*(?:min|minutes)\b", row_text, re.I)
+                    topics.append({
+                        "source_row": row_text,
+                        "unit_no": 1,
+                        "sequence_no": len(topics) + 1,
+                        "topic": row[-4] if len(row) >= 4 else row_text,
+                        "planned_minutes": int(duration_match.group(1)) if duration_match else 55,
+                    })
+        if "lab planning" in joined: recognized["lab_planning"] += 1
+        if "evaluation methodology" in joined or "test:-" in joined or "course evolution" in joined: recognized["assessment"] += 1
+        if "extra lecture" in joined: recognized["extra_classes"] += 1
+        if "reference book" in joined or "expected outcomes" in joined: recognized["resources_outcomes"] += 1
+    # Course File section headings can be ordinary paragraphs rather than table cells.
+    heading_terms = {
+        "teaching_scheme": "teaching and examination scheme",
+        "syllabus": "syllabus",
+        "lecturer_planning": "lecturer planning",
+        "lab_planning": "lab planning",
+        "assessment": "course evaluation",
+        "extra_classes": "extra lecture",
+        "resources_outcomes": "expected outcomes",
+    }
+    for key, term in heading_terms.items():
+        if term in document_text and not recognized[key]:
+            recognized[key] = 1
+    return {
+        "recognized": recognized,
+        "units": [{"unit_no": 1, "title": "Imported Course File topics", "planned_hours": None}],
+        "topic_candidates": topics[:100],
+        "table_count": len(tables),
+    }
+
+
+def _lesson_plan_excel_extract(upload):
+    """Validate the supplied Faculty template and map its planned topic rows into the common draft preview."""
+    from openpyxl import load_workbook
+    workbook = load_workbook(upload.stream, read_only=True, data_only=True)
+    sheet_names = list(workbook.sheetnames)
+    required = {"Units & Syllabus", "Lecturer Planning"}
+    missing = required.difference(workbook.sheetnames)
+    if missing:
+        raise ValueError("Missing required sheet(s): " + ", ".join(sorted(missing)))
+    planning = workbook["Lecturer Planning"]
+    headers = [planning.cell(4, col).value for col in range(1, 15)]
+    required_headers = {"Unit No.", "Topic Seq.", "Topic Title", "Planned Duration (min)"}
+    if not required_headers.issubset(set(headers)):
+        raise ValueError("Lecturer Planning does not match the CMS template headers.")
+    header_index = {value: index + 1 for index, value in enumerate(headers) if value}
+    topics = []
+    units = {}
+    errors = []
+    for row in range(5, min(planning.max_row, 504) + 1):
+        topic = planning.cell(row, header_index["Topic Title"]).value
+        if topic in (None, ""):
+            continue
+        duration = planning.cell(row, header_index["Planned Duration (min)"]).value
+        unit = planning.cell(row, header_index["Unit No."]).value
+        sequence = planning.cell(row, header_index["Topic Seq."]).value
+        if not unit or not sequence or not isinstance(duration, (int, float)) or duration <= 0:
+            errors.append(f"Row {row}: Unit, topic sequence, and a positive planned duration are required.")
+            continue
+        try:
+            unit_no = int(unit)
+            sequence_no = int(sequence)
+        except (TypeError, ValueError):
+            errors.append(f"Row {row}: Unit and topic sequence must be whole numbers.")
+            continue
+        topics.append({
+            "source_row": f"Unit {unit_no} · Topic {sequence_no} · {topic} · {duration:g} min",
+            "unit_no": unit_no,
+            "sequence_no": sequence_no,
+            "topic": str(topic).strip(),
+            "planned_minutes": int(duration),
+        })
+    syllabus = workbook["Units & Syllabus"]
+    syllabus_headers = [syllabus.cell(4, col).value for col in range(1, min(syllabus.max_column, 20) + 1)]
+    syllabus_index = {str(value).strip(): index + 1 for index, value in enumerate(syllabus_headers) if value}
+    unit_column = next((column for name, column in syllabus_index.items() if name.lower() in {"unit no.", "unit no", "unit"}), None)
+    title_column = next((column for name, column in syllabus_index.items() if "unit title" in name.lower() or "unit name" in name.lower()), None)
+    hours_column = next((column for name, column in syllabus_index.items() if "planned hours" in name.lower() or "hours" == name.lower()), None)
+    if unit_column:
+        for row in range(5, min(syllabus.max_row, 204) + 1):
+            raw_unit = syllabus.cell(row, unit_column).value
+            if raw_unit in (None, ""):
+                continue
+            try:
+                unit_no = int(raw_unit)
+            except (TypeError, ValueError):
+                continue
+            title = str(syllabus.cell(row, title_column).value or f"Unit {unit_no}").strip() if title_column else f"Unit {unit_no}"
+            hours = syllabus.cell(row, hours_column).value if hours_column else None
+            units[unit_no] = {"unit_no": unit_no, "title": title, "planned_hours": float(hours) if isinstance(hours, (int, float)) else None}
+    for topic in topics:
+        units.setdefault(topic["unit_no"], {"unit_no": topic["unit_no"], "title": f"Unit {topic['unit_no']}", "planned_hours": None})
+    workbook.close()
+    return {"recognized": {"teaching_scheme": 1 if "Course Overview" in sheet_names else 0, "syllabus": 1, "lecturer_planning": 1, "lab_planning": int("Lab Planning" in sheet_names), "assessment": int("Assessment Plan" in sheet_names), "extra_classes": int("Extra Classes" in sheet_names), "resources_outcomes": int("Resources & Outcomes" in sheet_names)}, "units": [units[key] for key in sorted(units)], "topic_candidates": topics[:100], "table_count": len(sheet_names), "validation_errors": errors[:50], "source_type": "excel"}
+
+
+@main_bp.route("/lesson-plans/import", methods=["GET", "POST"])
+@login_required
+@role_required("faculty")
+@csrf_required
+def lesson_plan_import():
+    assignments = db.session.execute(
+        select(CourseAssignment).filter_by(faculty_id_fk=current_user.user_id, is_active=True)
+        .order_by(CourseAssignment.academic_year.desc(), CourseAssignment.assignment_id.asc())
+    ).scalars().all()
+    contexts = []
+    for assignment in assignments:
+        subject = db.session.get(Subject, assignment.subject_id_fk)
+        division = db.session.get(Division, assignment.division_id_fk)
+        if subject and division:
+            contexts.append({"assignment": assignment, "subject": subject, "division": division})
+    if request.method == "GET":
+        return render_template("lesson_plan_import.html", contexts=contexts)
+    try:
+        assignment_id = int(request.form.get("assignment_id") or 0)
+    except ValueError:
+        assignment_id = 0
+    assignment = next((item["assignment"] for item in contexts if item["assignment"].assignment_id == assignment_id), None)
+    upload = request.files.get("file")
+    filename = secure_filename(upload.filename) if upload and upload.filename else ""
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if not assignment or not upload or extension not in {"docx", "xlsx"}:
+        flash("Choose a DOCX or CMS lesson-plan Excel file and one of your assigned class contexts.", "danger")
+        return render_template("lesson_plan_import.html", contexts=contexts)
+    upload.stream.seek(0, os.SEEK_END)
+    size = upload.stream.tell()
+    upload.stream.seek(0)
+    if size > 5 * 1024 * 1024:
+        flash("Lesson-plan DOCX files must be 5 MB or smaller.", "danger")
+        return render_template("lesson_plan_import.html", contexts=contexts)
+    try:
+        extraction = _lesson_plan_excel_extract(upload) if extension == "xlsx" else _lesson_plan_docx_extract(upload)
+        extraction["source_type"] = extension
+    except (ValueError, zipfile.BadZipFile, ET.ParseError):
+        flash("The file could not be read. Use the CMS Excel template or the standard Course File DOCX.", "danger")
+        return render_template("lesson_plan_import.html", contexts=contexts)
+    subject = db.session.get(Subject, assignment.subject_id_fk)
+    safe_name = filename
+    storage = os.path.join(current_app.instance_path, "lesson_plan_imports", str(current_user.user_id))
+    os.makedirs(storage, exist_ok=True)
+    stored_name = f"{secrets.token_urlsafe(12)}_{safe_name}"
+    destination = os.path.join(storage, stored_name)
+    upload.stream.seek(0)
+    upload.save(destination)
+    draft = LessonPlanImportDraft(faculty_user_id_fk=current_user.user_id, subject_id_fk=assignment.subject_id_fk, division_id_fk=assignment.division_id_fk, academic_year=assignment.academic_year or current_academic_year(), original_filename=safe_name, file_path=destination, extraction_json=json.dumps(extraction))
+    db.session.add(draft)
+    _bulk_audit_entry("lessonplan_import_extract", {"assignment_id": assignment.assignment_id, "subject_id": assignment.subject_id_fk, "division_id": assignment.division_id_fk}, {"table_count": extraction["table_count"], "topic_candidates": len(extraction["topic_candidates"])}, program_id=subject.program_id_fk, semester=division.semester)
+    db.session.commit()
+    return redirect(url_for("main.lesson_plan_import_review", draft_id=draft.draft_id))
+
+
+@main_bp.route("/lesson-plans")
+@login_required
+@role_required("faculty")
+def lesson_plan_list():
+    """Faculty landing page: only plans matching their currently active assignments."""
+    plans = db.session.execute(
+        select(LessonPlan)
+        .join(CourseAssignment, and_(
+            CourseAssignment.faculty_id_fk == LessonPlan.faculty_user_id_fk,
+            CourseAssignment.subject_id_fk == LessonPlan.subject_id_fk,
+            CourseAssignment.division_id_fk == LessonPlan.division_id_fk,
+            CourseAssignment.is_active == True,
+        ))
+        .where(LessonPlan.faculty_user_id_fk == current_user.user_id)
+        .order_by(LessonPlan.academic_year.desc(), LessonPlan.updated_at.desc())
+    ).scalars().all()
+    rows = []
+    for plan in plans:
+        subject = db.session.get(Subject, plan.subject_id_fk)
+        division = db.session.get(Division, plan.division_id_fk)
+        if subject and division:
+            rows.append({"plan": plan, "subject": subject, "division": division})
+    return render_template("lesson_plan_list.html", rows=rows)
+
+
+@main_bp.route("/lesson-plans/import/<int:draft_id>")
+@login_required
+@role_required("faculty")
+def lesson_plan_import_review(draft_id):
+    draft = db.session.get(LessonPlanImportDraft, draft_id)
+    if not draft or draft.faculty_user_id_fk != current_user.user_id:
+        abort(404)
+    extraction = json.loads(draft.extraction_json or "{}")
+    extraction.setdefault("units", [])
+    extraction.setdefault("topic_candidates", [])
+    return render_template("lesson_plan_import_review.html", draft=draft, extraction=extraction, subject=db.session.get(Subject, draft.subject_id_fk), division=db.session.get(Division, draft.division_id_fk))
+
+
+def _faculty_can_manage_lesson_plan(plan):
+    """A Faculty member must still hold the matching active assignment."""
+    if not plan or plan.faculty_user_id_fk != current_user.user_id:
+        return False
+    return db.session.scalar(
+        select(CourseAssignment.assignment_id).where(
+            CourseAssignment.faculty_id_fk == current_user.user_id,
+            CourseAssignment.subject_id_fk == plan.subject_id_fk,
+            CourseAssignment.division_id_fk == plan.division_id_fk,
+            CourseAssignment.is_active == True,
+        ).limit(1)
+    ) is not None
+
+
+def _lesson_plan_topic_from_form(index):
+    """Validate one editable import-review row without trusting extraction output."""
+    try:
+        unit_no = int(request.form.getlist("topic_unit_no")[index])
+        sequence_no = int(request.form.getlist("topic_sequence_no")[index])
+        planned_minutes = int(request.form.getlist("topic_planned_minutes")[index])
+    except (IndexError, TypeError, ValueError):
+        raise ValueError("Every topic needs a whole-number unit, sequence, and planned duration.")
+    title = (request.form.getlist("topic_title")[index] or "").strip()
+    date_value = (request.form.getlist("topic_planned_date")[index] or "").strip()
+    if unit_no < 1 or sequence_no < 1 or planned_minutes < 1 or not title:
+        raise ValueError("Every topic needs a positive unit, sequence, duration, and title.")
+    try:
+        planned_date = datetime.strptime(date_value, "%Y-%m-%d").date() if date_value else None
+    except ValueError:
+        raise ValueError("A planned date must use YYYY-MM-DD.")
+    return {"unit_no": unit_no, "sequence_no": sequence_no, "title": title[:500], "planned_minutes": planned_minutes, "planned_date": planned_date}
+
+
+@main_bp.route("/lesson-plans/import/<int:draft_id>/confirm", methods=["POST"])
+@login_required
+@role_required("faculty")
+@csrf_required
+def lesson_plan_import_confirm(draft_id):
+    draft = db.session.get(LessonPlanImportDraft, draft_id)
+    if not draft or draft.faculty_user_id_fk != current_user.user_id or draft.status != "draft":
+        abort(404)
+    assignment_exists = db.session.scalar(select(CourseAssignment.assignment_id).where(
+        CourseAssignment.faculty_id_fk == current_user.user_id,
+        CourseAssignment.subject_id_fk == draft.subject_id_fk,
+        CourseAssignment.division_id_fk == draft.division_id_fk,
+        CourseAssignment.is_active == True,
+    ).limit(1))
+    if not assignment_exists:
+        abort(403)
+    existing = db.session.scalar(select(LessonPlan).where(
+        LessonPlan.faculty_user_id_fk == current_user.user_id,
+        LessonPlan.subject_id_fk == draft.subject_id_fk,
+        LessonPlan.division_id_fk == draft.division_id_fk,
+        LessonPlan.academic_year == draft.academic_year,
+    ).limit(1))
+    if existing:
+        flash("A lesson plan already exists for this assigned class. Imports never overwrite delivered work; edit that workspace instead.", "warning")
+        return redirect(url_for("main.lesson_plan_workspace", plan_id=existing.plan_id))
+    unit_numbers = request.form.getlist("unit_no")
+    unit_titles = request.form.getlist("unit_title")
+    unit_hours = request.form.getlist("unit_planned_hours")
+    units = {}
+    try:
+        for index, raw_number in enumerate(unit_numbers):
+            number = int(raw_number)
+            title = (unit_titles[index] if index < len(unit_titles) else "").strip()
+            raw_hours = (unit_hours[index] if index < len(unit_hours) else "").strip()
+            if number < 1 or not title:
+                raise ValueError("Every unit needs a positive number and title.")
+            if number in units:
+                raise ValueError("Unit numbers must be unique.")
+            hours = float(raw_hours) if raw_hours else None
+            if hours is not None and hours < 0:
+                raise ValueError("Planned unit hours cannot be negative.")
+            units[number] = {"title": title[:255], "planned_hours": hours}
+        topic_count = len(request.form.getlist("topic_title"))
+        topics = [_lesson_plan_topic_from_form(index) for index in range(topic_count)]
+        if not units or not topics:
+            raise ValueError("Keep at least one unit and one topic before confirming the plan.")
+        used_positions = set()
+        for topic in topics:
+            if topic["unit_no"] not in units:
+                raise ValueError("Each topic must reference one of the listed units.")
+            position = (topic["unit_no"], topic["sequence_no"])
+            if position in used_positions:
+                raise ValueError("Topic sequence numbers must be unique within a unit.")
+            used_positions.add(position)
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("main.lesson_plan_import_review", draft_id=draft.draft_id))
+    plan = LessonPlan(faculty_user_id_fk=current_user.user_id, subject_id_fk=draft.subject_id_fk, division_id_fk=draft.division_id_fk, academic_year=draft.academic_year)
+    db.session.add(plan)
+    db.session.flush()
+    saved_units = {}
+    for sequence, number in enumerate(sorted(units), 1):
+        item = units[number]
+        unit = LessonPlanUnit(plan_id_fk=plan.plan_id, sequence_no=sequence, title=item["title"], planned_hours=item["planned_hours"])
+        db.session.add(unit)
+        db.session.flush()
+        saved_units[number] = unit
+    for topic in sorted(topics, key=lambda item: (item["unit_no"], item["sequence_no"])):
+        db.session.add(LessonPlanTopic(unit_id_fk=saved_units[topic["unit_no"]].unit_id, sequence_no=topic["sequence_no"], title=topic["title"], planned_minutes=topic["planned_minutes"], planned_date=topic["planned_date"]))
+    draft.status = "confirmed"; draft.reviewed_at = datetime.now(timezone.utc)
+    subject = db.session.get(Subject, draft.subject_id_fk)
+    division = db.session.get(Division, draft.division_id_fk)
+    _bulk_audit_entry("lessonplan_import_confirm", {"draft_id": draft.draft_id, "subject_id": draft.subject_id_fk, "division_id": draft.division_id_fk}, {"units": len(saved_units), "topics": len(topics)}, program_id=getattr(subject, "program_id_fk", None), semester=getattr(division, "semester", None))
+    db.session.commit()
+    return redirect(url_for("main.lesson_plan_workspace", plan_id=plan.plan_id))
+
+
+@main_bp.route("/lesson-plans/<int:plan_id>")
+@login_required
+@role_required("faculty")
+def lesson_plan_workspace(plan_id):
+    plan = db.session.get(LessonPlan, plan_id)
+    if not _faculty_can_manage_lesson_plan(plan): abort(404)
+    units = db.session.execute(select(LessonPlanUnit).filter_by(plan_id_fk=plan_id).order_by(LessonPlanUnit.sequence_no)).scalars().all()
+    topics = {u.unit_id: db.session.execute(select(LessonPlanTopic).filter_by(unit_id_fk=u.unit_id).order_by(LessonPlanTopic.sequence_no)).scalars().all() for u in units}
+    planned_minutes = sum(topic.planned_minutes or 0 for group in topics.values() for topic in group)
+    delivered_minutes = sum(topic.actual_minutes or 0 for group in topics.values() for topic in group if topic.status == "completed")
+    total_topics = sum(len(group) for group in topics.values())
+    completed_topics = sum(1 for group in topics.values() for topic in group if topic.status == "completed")
+    next_topic_by_unit = {unit.unit_id: next((topic for topic in topics[unit.unit_id] if topic.status in {"planned", "revised", "deferred"}), None) for unit in units}
+    return render_template("lesson_plan_workspace.html", plan=plan, subject=db.session.get(Subject, plan.subject_id_fk), division=db.session.get(Division, plan.division_id_fk), program=db.session.get(Program, db.session.get(Subject, plan.subject_id_fk).program_id_fk), units=units, topics=topics, planned_minutes=planned_minutes, delivered_minutes=delivered_minutes, completed_topics=completed_topics, total_topics=total_topics, next_topic_by_unit=next_topic_by_unit)
+
+
+def _lesson_plan_owned_topic(plan_id, topic_id):
+    plan = db.session.get(LessonPlan, plan_id)
+    topic = db.session.get(LessonPlanTopic, topic_id)
+    if not _faculty_can_manage_lesson_plan(plan) or not topic:
+        abort(404)
+    unit = db.session.get(LessonPlanUnit, topic.unit_id_fk)
+    if not unit or unit.plan_id_fk != plan.plan_id:
+        abort(404)
+    if plan.status == "locked":
+        flash("This lesson plan is locked and can no longer be changed.", "warning")
+        return plan, None
+    return plan, topic
+
+
+@main_bp.route("/lesson-plans/<int:plan_id>/topics/new", methods=["POST"])
+@login_required
+@role_required("faculty")
+@csrf_required
+def lesson_plan_topic_new(plan_id):
+    plan = db.session.get(LessonPlan, plan_id)
+    if not _faculty_can_manage_lesson_plan(plan):
+        abort(404)
+    if plan.status == "locked":
+        flash("This lesson plan is locked and can no longer be changed.", "warning")
+        return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
+    try:
+        unit_id = int(request.form.get("unit_id") or 0)
+        planned_minutes = int(request.form.get("planned_minutes") or 0)
+    except ValueError:
+        unit_id = planned_minutes = 0
+    unit = db.session.get(LessonPlanUnit, unit_id)
+    title = (request.form.get("title") or "").strip()
+    date_value = (request.form.get("planned_date") or "").strip()
+    if not unit or unit.plan_id_fk != plan_id or not title or planned_minutes < 1:
+        flash("Choose a valid unit and enter a topic title and positive planned duration.", "danger")
+        return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
+    try:
+        planned_date = datetime.strptime(date_value, "%Y-%m-%d").date() if date_value else None
+    except ValueError:
+        flash("Use a valid planned date.", "danger")
+        return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
+    sequence = (db.session.scalar(select(func.max(LessonPlanTopic.sequence_no)).where(LessonPlanTopic.unit_id_fk == unit_id)) or 0) + 1
+    db.session.add(LessonPlanTopic(unit_id_fk=unit_id, sequence_no=sequence, title=title[:500], planned_minutes=planned_minutes, planned_date=planned_date, status="planned"))
+    db.session.commit()
+    flash("Draft topic added to the lesson plan.", "success")
+    return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
+
+
+@main_bp.route("/lesson-plans/<int:plan_id>/topics/<int:topic_id>/deliver", methods=["POST"])
+@login_required
+@role_required("faculty")
+@csrf_required
+def lesson_plan_topic_deliver(plan_id, topic_id):
+    plan, topic = _lesson_plan_owned_topic(plan_id, topic_id)
+    if topic is None:
+        return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
+    try:
+        delivered_minutes = int(request.form.get("delivered_minutes") or 0)
+        delivered_on = datetime.strptime(request.form.get("delivered_on") or "", "%Y-%m-%d").date()
+    except ValueError:
+        flash("Enter a valid delivery date and positive delivered duration.", "danger")
+        return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
+    if delivered_minutes < 1:
+        flash("Delivered duration must be positive.", "danger")
+        return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
+    note = (request.form.get("delivery_note") or "").strip()
+    db.session.add(LessonPlanDelivery(topic_id_fk=topic.topic_id, delivered_on=delivered_on, delivered_minutes=delivered_minutes, note=note[:2000] or None))
+    topic.actual_date = delivered_on
+    topic.actual_minutes = (topic.actual_minutes or 0) + delivered_minutes
+    topic.status = "completed"
+    if note:
+        topic.delivery_note = note[:2000]
+    db.session.commit()
+    flash("Topic marked delivered. The delivery history is retained separately from the planned topic.", "success")
+    return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
+
+
+@main_bp.route("/lesson-plans/<int:plan_id>/topics/<int:topic_id>/status", methods=["POST"])
+@login_required
+@role_required("faculty")
+@csrf_required
+def lesson_plan_topic_status(plan_id, topic_id):
+    plan, topic = _lesson_plan_owned_topic(plan_id, topic_id)
+    if topic is None:
+        return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
+    status = (request.form.get("status") or "").strip().lower()
+    note = (request.form.get("delivery_note") or "").strip()
+    if status not in {"deferred", "revised"} or not note:
+        flash("Choose Defer or Revise and provide a note explaining the change.", "danger")
+        return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
+    topic.status = status
+    topic.delivery_note = note[:2000]
+    db.session.commit()
+    flash(f"Topic marked {status} with its revision note.", "success")
+    return redirect(url_for("main.lesson_plan_workspace", plan_id=plan_id))
 
 
 def _material_student_audience_count(subject_id: int, academic_year: str) -> int:

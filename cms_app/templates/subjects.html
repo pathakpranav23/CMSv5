@@ -134,7 +134,7 @@
         <div class="px-3 pt-3">
           <div class="alert alert-info mb-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div><strong>Teaching workspace.</strong> This list contains only subjects assigned to you. Curriculum settings and Faculty allocation are managed by Principal/Admin.</div>
-            <div class="d-flex gap-2"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.materials_hub') }}">Manage materials</a><a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.attendance_class_insights') }}">Class Insights</a></div>
+            <div class="d-flex gap-2"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.lesson_plan_list') }}">Lesson plans</a><a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.lesson_plan_import') }}">Import lesson plan</a><a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.materials_hub') }}">Manage materials</a><a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.attendance_class_insights') }}">Class Insights</a></div>
           </div>
         </div>
       {% endif %}

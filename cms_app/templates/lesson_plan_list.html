@@ -1,0 +1,8 @@
+{% extends 'layout.html' %}
+{% block title %}My Lesson Plans{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3"><div><h2 class="title mb-1">My Lesson Plans</h2><div class="text-muted">Only your currently assigned subject classes are shown.</div></div><a class="btn btn-primary" href="{{ url_for('main.lesson_plan_import') }}">Import lesson plan</a></div>
+  <div class="card"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Subject</th><th>Class</th><th>Academic year</th><th>Status</th><th></th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.subject.subject_name }}</td><td>Semester {{ row.division.semester }} · {{ row.division.division_code }}</td><td>{{ row.plan.academic_year }}</td><td><span class="badge bg-{% if row.plan.status == 'active' %}success{% elif row.plan.status == 'locked' %}secondary{% else %}warning text-dark{% endif %}">{{ row.plan.status|title }}</span></td><td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.lesson_plan_workspace', plan_id=row.plan.plan_id) }}">Open workspace</a></td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-4">No lesson plans yet. Import an Excel workbook or Course File DOCX for an assigned class.</td></tr>{% endfor %}</tbody></table></div></div>
+</div>
+{% endblock %}

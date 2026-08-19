@@ -549,6 +549,68 @@ class StudentFollowUpTask(db.Model):
     resolved_at = db.Column(db.DateTime)
 
 
+class LessonPlanImportDraft(db.Model):
+    """Private, Faculty-owned DOCX extraction awaiting review and confirmation."""
+    __tablename__ = "lesson_plan_import_drafts"
+
+    draft_id = db.Column(db.Integer, primary_key=True)
+    faculty_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)
+    subject_id_fk = db.Column(db.Integer, db.ForeignKey("subjects.subject_id"), nullable=False)
+    division_id_fk = db.Column(db.Integer, db.ForeignKey("divisions.division_id"), nullable=False)
+    academic_year = db.Column(db.String(16), nullable=False)
+    original_filename = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(255), nullable=False)
+    extraction_json = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(16), nullable=False, default="draft")
+    created_at = db.Column(db.DateTime, default=utc_now)
+    reviewed_at = db.Column(db.DateTime)
+
+
+class LessonPlan(db.Model):
+    __tablename__ = "lesson_plans"
+    plan_id = db.Column(db.Integer, primary_key=True)
+    faculty_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)
+    subject_id_fk = db.Column(db.Integer, db.ForeignKey("subjects.subject_id"), nullable=False)
+    division_id_fk = db.Column(db.Integer, db.ForeignKey("divisions.division_id"), nullable=False)
+    academic_year = db.Column(db.String(16), nullable=False)
+    status = db.Column(db.String(16), nullable=False, default="draft")
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+
+
+class LessonPlanUnit(db.Model):
+    __tablename__ = "lesson_plan_units"
+    unit_id = db.Column(db.Integer, primary_key=True)
+    plan_id_fk = db.Column(db.Integer, db.ForeignKey("lesson_plans.plan_id"), nullable=False)
+    sequence_no = db.Column(db.Integer, nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    planned_hours = db.Column(db.Float)
+
+
+class LessonPlanTopic(db.Model):
+    __tablename__ = "lesson_plan_topics"
+    topic_id = db.Column(db.Integer, primary_key=True)
+    unit_id_fk = db.Column(db.Integer, db.ForeignKey("lesson_plan_units.unit_id"), nullable=False)
+    sequence_no = db.Column(db.Integer, nullable=False)
+    title = db.Column(db.String(500), nullable=False)
+    planned_minutes = db.Column(db.Integer)
+    planned_date = db.Column(db.Date)
+    status = db.Column(db.String(16), nullable=False, default="planned")
+    actual_date = db.Column(db.Date)
+    actual_minutes = db.Column(db.Integer)
+    delivery_note = db.Column(db.Text)
+
+
+class LessonPlanDelivery(db.Model):
+    __tablename__ = "lesson_plan_deliveries"
+    delivery_id = db.Column(db.Integer, primary_key=True)
+    topic_id_fk = db.Column(db.Integer, db.ForeignKey("lesson_plan_topics.topic_id"), nullable=False)
+    delivered_on = db.Column(db.Date, nullable=False)
+    delivered_minutes = db.Column(db.Integer, nullable=False)
+    note = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utc_now)
+
+
 class Announcement(db.Model):
     __tablename__ = "announcements"
     announcement_id = db.Column(db.Integer, primary_key=True)

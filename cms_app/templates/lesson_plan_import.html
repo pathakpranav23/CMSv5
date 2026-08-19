@@ -1,0 +1,11 @@
+{% extends 'layout.html' %}
+{% block title %}Import Lesson Plan{% endblock %}
+{% block content %}
+<div class="container py-4"><div class="section-header mb-3"><h2 class="title mb-1">Import Lesson Plan</h2><div class="text-muted">Choose the structured CMS Excel template or an existing institution Course File DOCX. Both create a private review draft only.</div></div>
+<div class="card"><form method="post" enctype="multipart/form-data" class="card-body"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+<div class="mb-3"><label class="form-label">Assigned class</label><select name="assignment_id" class="form-select" required><option value="">Choose assigned class</option>{% for item in contexts %}<option value="{{ item.assignment.assignment_id }}">{{ item.subject.subject_name }} · Sem {{ item.division.semester }} · {{ item.division.division_code }} · {{ item.assignment.academic_year }}</option>{% endfor %}</select></div>
+<div class="row g-3 mb-3"><div class="col-md-6"><div class="border rounded p-3 h-100"><strong>Excel template — Recommended</strong><div class="small text-muted">Directly validates Units & Syllabus and Lecturer Planning rows.</div></div></div><div class="col-md-6"><div class="border rounded p-3 h-100"><strong>Existing Course File DOCX</strong><div class="small text-muted">Extracts recognised sections and topic candidates for your review.</div></div></div></div>
+<div class="mb-3"><label class="form-label">Lesson-plan file</label><input class="form-control" type="file" name="file" accept=".xlsx,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required /><div class="form-text">Maximum 5 MB. The original remains private; nothing is published until you review and confirm the draft.</div></div>
+<button class="btn btn-primary">Create review draft</button> <a class="btn btn-outline-secondary" href="{{ url_for('main.subjects_list') }}">Cancel</a>
+</form></div></div>
+{% endblock %}
