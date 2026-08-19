@@ -35,7 +35,7 @@
     <div class="row mb-4">
         <!-- Lectures This Week -->
         <div class="col-sm-4 col-12 mb-3">
-            <div class="card shadow-sm h-100">
+            <div class="card shadow-sm h-100 signal-stat signal-stat--teal">
                 <div class="card-body d-flex align-items-center justify-content-between">
                     <div>
                         <div class="small text-muted text-uppercase mb-1">Lectures (This Week)</div>
@@ -50,7 +50,7 @@
 
         <!-- Lectures This Month -->
         <div class="col-sm-4 col-12 mb-3">
-            <div class="card shadow-sm h-100">
+            <div class="card shadow-sm h-100 signal-stat signal-stat--teal">
                 <div class="card-body d-flex align-items-center justify-content-between">
                     <div>
                         <div class="small text-muted text-uppercase mb-1">Lectures (This Month)</div>
@@ -65,7 +65,7 @@
 
         <!-- Total Lectures -->
         <div class="col-sm-4 col-12 mb-3">
-            <div class="card shadow-sm h-100">
+            <div class="card shadow-sm h-100 signal-stat signal-stat--violet">
                 <div class="card-body d-flex align-items-center justify-content-between">
                     <div>
                         <div class="small text-muted text-uppercase mb-1">Total Lectures (Sem)</div>
@@ -80,9 +80,9 @@
     </div>
 
     <div class="row mb-4">
-        <div class="col-lg-4 mb-3"><div class="card shadow-sm h-100"><div class="card-header bg-white py-3 d-flex justify-content-between align-items-center"><h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-calendar-day me-2"></i>Today’s Classes</h6><a href="{{ url_for('faculty.my_timetable') }}" class="small">Timetable</a></div><div class="card-body">{% if today_classes %}{% for item in today_classes %}<div class="d-flex justify-content-between align-items-center {% if not loop.last %}border-bottom pb-2 mb-2{% endif %}"><div><div class="fw-semibold">Period {{ item.period_no }} · {{ item.subject_name }}</div><div class="small text-muted">Division {{ item.division_code }}{% if item.room_no %} · Room {{ item.room_no }}{% endif %}</div></div><a href="{{ url_for('main.attendance_mark', subject_id=item.subject_id, division_id=item.division_id) }}" class="btn btn-sm btn-outline-primary">Attendance</a></div>{% endfor %}{% else %}<div class="text-muted small">No assigned timetable class today.</div>{% endif %}</div></div></div>
-        <div class="col-lg-4 mb-3"><div class="card shadow-sm h-100"><div class="card-header bg-white py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-exclamation-circle me-2"></i>Needs Attention</h6></div><div class="card-body"><div class="d-flex justify-content-between align-items-center {% if plans_missing %}border-bottom pb-2 mb-2{% endif %}"><div><div class="fw-semibold">Attendance follow-ups</div><div class="small text-muted">Students below the 60% threshold</div></div><a href="{{ url_for('main.attendance_class_insights') }}" class="badge text-bg-warning text-decoration-none">{{ at_risk_students|length }}</a></div>{% if plans_missing %}<div class="d-flex justify-content-between align-items-center"><div><div class="fw-semibold">Lesson plans to set up</div><div class="small text-muted">Assigned classes without a plan</div></div><a href="{{ url_for('main.lesson_plan_import') }}" class="badge text-bg-secondary text-decoration-none">{{ plans_missing }}</a></div>{% else %}<div class="small text-success"><i class="bi bi-check-circle me-1"></i>Every assigned class has a lesson plan.</div>{% endif %}</div></div></div>
-        <div class="col-lg-4 mb-3"><div class="card shadow-sm h-100"><div class="card-header bg-white py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-lightning-charge me-2"></i>Quick Actions</h6></div><div class="list-group list-group-flush"><a href="{{ url_for('main.lesson_plan_list') }}" class="list-group-item list-group-item-action"><i class="bi bi-journal-check me-2 text-success"></i>Open Lesson Plans</a><a href="{{ url_for('main.materials_hub') }}" class="list-group-item list-group-item-action"><i class="bi bi-upload me-2 text-secondary"></i>Upload Material</a><a href="{{ url_for('main.module_announcements') }}" class="list-group-item list-group-item-action"><i class="bi bi-megaphone me-2 text-secondary"></i>Class Announcement</a></div></div></div>
+        <div class="col-lg-4 mb-3"><div class="card shadow-sm h-100 signal-card signal-card--teal"><div class="card-header bg-white py-3 d-flex justify-content-between align-items-center"><h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-calendar-day me-2"></i>Today’s Classes</h6><a href="{{ url_for('faculty.my_timetable') }}" class="small">Timetable</a></div><div class="card-body">{% if today_classes %}{% for item in today_classes %}<div class="d-flex justify-content-between align-items-center {% if not loop.last %}border-bottom pb-2 mb-2{% endif %}"><div><div class="fw-semibold">Period {{ item.period_no }} · {{ item.subject_name }}</div><div class="small text-muted">Division {{ item.division_code }}{% if item.room_no %} · Room {{ item.room_no }}{% endif %}</div></div><a href="{{ url_for('main.attendance_mark', subject_id=item.subject_id, division_id=item.division_id, semester=item.semester) }}" class="btn btn-sm btn-outline-primary">Attendance</a></div>{% endfor %}{% else %}<div class="text-muted small">No assigned timetable class today.</div>{% endif %}</div></div></div>
+        <div class="col-lg-4 mb-3"><div class="card shadow-sm h-100 signal-card signal-card--amber"><div class="card-header bg-white py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-exclamation-circle me-2"></i>Needs Attention</h6></div><div class="card-body"><div class="d-flex justify-content-between align-items-center {% if plans_missing %}border-bottom pb-2 mb-2{% endif %}"><div><div class="fw-semibold">Attendance follow-ups</div><div class="small text-muted">Students below the 60% threshold</div></div><a href="{{ url_for('main.attendance_class_insights') }}" class="badge text-bg-warning text-decoration-none">{{ at_risk_students|length }}</a></div>{% if plans_missing %}<div class="d-flex justify-content-between align-items-center"><div><div class="fw-semibold">Lesson plans to set up</div><div class="small text-muted">Assigned classes without a plan</div></div><a href="{{ url_for('main.lesson_plan_import') }}" class="badge text-bg-secondary text-decoration-none">{{ plans_missing }}</a></div>{% else %}<div class="small text-success"><i class="bi bi-check-circle me-1"></i>Every assigned class has a lesson plan.</div>{% endif %}</div></div></div>
+        <div class="col-lg-4 mb-3"><div class="card shadow-sm h-100 signal-card signal-card--violet"><div class="card-header bg-white py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-lightning-charge me-2"></i>Quick Actions</h6></div><div class="list-group list-group-flush"><a href="{{ url_for('main.lesson_plan_list') }}" class="list-group-item list-group-item-action"><i class="bi bi-journal-check me-2 text-success"></i>Open Lesson Plans</a><a href="{{ url_for('main.materials_hub') }}" class="list-group-item list-group-item-action"><i class="bi bi-upload me-2 text-secondary"></i>Upload Material</a><a href="{{ url_for('main.module_announcements') }}" class="list-group-item list-group-item-action"><i class="bi bi-megaphone me-2 text-secondary"></i>Class Announcement</a></div></div></div>
     </div>
 
     <div class="row">

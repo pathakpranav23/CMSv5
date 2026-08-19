@@ -2607,3 +2607,235 @@ body[data-theme="pastelgrid"].page-login .card,
     transition-duration: 0ms !important;
   }
 }
+
+/* ========================================================================== */
+/* Academic Signal — calm, editorial workboard theme                           */
+/* ========================================================================== */
+body[data-theme="college_saas"],
+body[data-theme="lightblue"],
+body[data-theme="academic_signal"] {
+  --surface-bg: #f7f3eb;
+  --text-color: #172d3b;
+  --text-muted: #61707a;
+  --border-color: #d9d0c1;
+  --nav-bg: #152b3a;
+  --nav-fg: #f7f3eb;
+  --card-header-bg: #fbf8f2;
+  --card-border: #ddd4c5;
+  --card-bg: #fffdf8;
+  --shadow-soft: 0 10px 26px rgba(27, 45, 55, 0.08);
+  --shadow-strong: 0 18px 40px rgba(27, 45, 55, 0.12);
+  --focus-ring: 0 0 0 0.25rem rgba(22, 140, 132, 0.22);
+  --signal-teal: #168c84;
+  --signal-violet: #6750a4;
+  --signal-amber: #c58114;
+  --signal-coral: #c95c54;
+  background-color: var(--surface-bg);
+  background-image:
+    linear-gradient(rgba(21, 43, 58, 0.026) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(21, 43, 58, 0.026) 1px, transparent 1px);
+  background-size: 28px 28px;
+  background-attachment: fixed;
+}
+
+body[data-theme="college_saas"] .app-main,
+body[data-theme="lightblue"] .app-main,
+body[data-theme="academic_signal"] .app-main {
+  background: rgba(247, 243, 235, 0.72);
+}
+
+body[data-theme="college_saas"] .sidebar,
+body[data-theme="lightblue"] .sidebar,
+body[data-theme="academic_signal"] .sidebar {
+  width: 244px;
+  padding: 1.25rem 0.8rem;
+  background: #152b3a;
+  border-right: 1px solid rgba(244, 236, 221, 0.15);
+  box-shadow: none;
+}
+
+body[data-theme="college_saas"] .app-main,
+body[data-theme="lightblue"] .app-main,
+body[data-theme="academic_signal"] .app-main { margin-left: 244px; }
+
+body[data-theme="college_saas"] .sidebar .brand,
+body[data-theme="lightblue"] .sidebar .brand,
+body[data-theme="academic_signal"] .sidebar .brand { padding: 0.2rem 0.45rem 1rem; margin-bottom: 0.55rem; }
+
+body[data-theme="college_saas"] .sidebar-user-link,
+body[data-theme="lightblue"] .sidebar-user-link,
+body[data-theme="academic_signal"] .sidebar-user-link { border-radius: 8px; color: var(--nav-fg); }
+body[data-theme="college_saas"] .sidebar-user-link:hover,
+body[data-theme="lightblue"] .sidebar-user-link:hover,
+body[data-theme="academic_signal"] .sidebar-user-link:hover { background: rgba(255,255,255,0.075); }
+body[data-theme="college_saas"] .sidebar-avatar,
+body[data-theme="lightblue"] .sidebar-avatar,
+body[data-theme="academic_signal"] .sidebar-avatar { background: rgba(22, 140, 132, 0.2); border-color: rgba(89, 218, 204, 0.28); }
+body[data-theme="college_saas"] .sidebar-avatar span,
+body[data-theme="lightblue"] .sidebar-avatar span,
+body[data-theme="academic_signal"] .sidebar-avatar span { color: #f7f3eb; }
+body[data-theme="college_saas"] .sidebar-user-role,
+body[data-theme="lightblue"] .sidebar-user-role,
+body[data-theme="academic_signal"] .sidebar-user-role { color: rgba(247, 243, 235, 0.62); }
+
+body[data-theme="college_saas"] .sidebar .nav a,
+body[data-theme="lightblue"] .sidebar .nav a,
+body[data-theme="academic_signal"] .sidebar .nav a { border-radius: 7px; padding: 0.56rem 0.68rem; color: rgba(247, 243, 235, 0.9); }
+body[data-theme="college_saas"] .sidebar .nav a:hover,
+body[data-theme="lightblue"] .sidebar .nav a:hover,
+body[data-theme="academic_signal"] .sidebar .nav a:hover { background: rgba(255,255,255,0.08); color: #fffdf8; }
+body[data-theme="college_saas"] .sidebar .nav a[aria-current="page"],
+body[data-theme="college_saas"] .sidebar .nav a.is-active,
+body[data-theme="lightblue"] .sidebar .nav a[aria-current="page"],
+body[data-theme="lightblue"] .sidebar .nav a.is-active,
+body[data-theme="academic_signal"] .sidebar .nav a[aria-current="page"],
+body[data-theme="academic_signal"] .sidebar .nav a.is-active { background: rgba(22, 140, 132, 0.24); box-shadow: inset 3px 0 0 #4ed4c6; }
+body[data-theme="college_saas"] .sidebar .module-icon,
+body[data-theme="lightblue"] .sidebar .module-icon,
+body[data-theme="academic_signal"] .sidebar .module-icon { width: 20px; height: 20px; border: 0; background: transparent; color: #9fcec8; }
+body[data-theme="college_saas"] .sidebar .module-icon .text-primary,
+body[data-theme="college_saas"] .sidebar .module-icon .text-warning,
+body[data-theme="college_saas"] .sidebar .module-icon .text-danger,
+body[data-theme="lightblue"] .sidebar .module-icon i,
+body[data-theme="academic_signal"] .sidebar .module-icon i { color: inherit !important; }
+
+body[data-theme="college_saas"] .enhanced-nav,
+body[data-theme="lightblue"] .enhanced-nav,
+body[data-theme="academic_signal"] .enhanced-nav {
+  min-height: 64px;
+  background: rgba(255, 253, 248, 0.94);
+  border-bottom-color: #ddd4c5 !important;
+  box-shadow: 0 4px 16px rgba(27, 45, 55, 0.04);
+}
+body[data-theme="college_saas"] .enhanced-nav .coin-btn,
+body[data-theme="lightblue"] .enhanced-nav .coin-btn,
+body[data-theme="academic_signal"] .enhanced-nav .coin-btn { border-color: #d9d0c1; background: transparent; color: #172d3b; box-shadow: none; }
+
+body[data-theme="college_saas"] .card,
+body[data-theme="lightblue"] .card,
+body[data-theme="academic_signal"] .card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-soft);
+}
+body[data-theme="college_saas"] .card-header,
+body[data-theme="lightblue"] .card-header,
+body[data-theme="academic_signal"] .card-header {
+  background: var(--card-header-bg);
+  border-bottom: 1px solid var(--card-border);
+  border-radius: 12px 12px 0 0 !important;
+  color: #1c5962;
+}
+body[data-theme="college_saas"] .section-header .title,
+body[data-theme="lightblue"] .section-header .title,
+body[data-theme="academic_signal"] .section-header .title,
+body[data-theme="college_saas"] .faculty-hero h1,
+body[data-theme="lightblue"] .faculty-hero h1,
+body[data-theme="academic_signal"] .faculty-hero h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  color: #17364a;
+  letter-spacing: -0.025em;
+}
+
+body[data-theme="college_saas"] .btn,
+body[data-theme="lightblue"] .btn,
+body[data-theme="academic_signal"] .btn { border-radius: 7px; font-weight: 650; box-shadow: none; }
+body[data-theme="college_saas"] .btn-primary,
+body[data-theme="lightblue"] .btn-primary,
+body[data-theme="academic_signal"] .btn-primary { background: #17364a; border-color: #17364a; }
+body[data-theme="college_saas"] .btn-primary:hover,
+body[data-theme="lightblue"] .btn-primary:hover,
+body[data-theme="academic_signal"] .btn-primary:hover { background: #102b3b; border-color: #102b3b; }
+body[data-theme="college_saas"] .btn-outline-primary,
+body[data-theme="lightblue"] .btn-outline-primary,
+body[data-theme="academic_signal"] .btn-outline-primary { color: #176f6a; border-color: #61aaa1; }
+body[data-theme="college_saas"] .btn-outline-primary:hover,
+body[data-theme="lightblue"] .btn-outline-primary:hover,
+body[data-theme="academic_signal"] .btn-outline-primary:hover { color: #fff; background: #176f6a; border-color: #176f6a; }
+
+body[data-theme="college_saas"] .form-control,
+body[data-theme="college_saas"] .form-select,
+body[data-theme="lightblue"] .form-control,
+body[data-theme="lightblue"] .form-select,
+body[data-theme="academic_signal"] .form-control,
+body[data-theme="academic_signal"] .form-select { background-color: #fffdf8; border-color: #cfc5b4; border-radius: 7px; color: #172d3b; }
+body[data-theme="college_saas"] .form-control:focus,
+body[data-theme="college_saas"] .form-select:focus,
+body[data-theme="lightblue"] .form-control:focus,
+body[data-theme="lightblue"] .form-select:focus,
+body[data-theme="academic_signal"] .form-control:focus,
+body[data-theme="academic_signal"] .form-select:focus { border-color: #168c84; box-shadow: var(--focus-ring); }
+
+body[data-theme="college_saas"] .table,
+body[data-theme="lightblue"] .table,
+body[data-theme="academic_signal"] .table { --bs-table-bg: transparent; --bs-table-border-color: #e3dccf; color: #172d3b; }
+body[data-theme="college_saas"] .table thead,
+body[data-theme="lightblue"] .table thead,
+body[data-theme="academic_signal"] .table thead { background: #f3ede2; color: #53636a; text-transform: uppercase; font-size: 0.76rem; letter-spacing: 0.055em; }
+
+body[data-theme="college_saas"] .faculty-hero .hero-card,
+body[data-theme="lightblue"] .faculty-hero .hero-card,
+body[data-theme="academic_signal"] .faculty-hero .hero-card { border-left: 4px solid #6750a4; }
+body[data-theme="college_saas"] .faculty-hero .small.text-muted.text-uppercase,
+body[data-theme="lightblue"] .faculty-hero .small.text-muted.text-uppercase,
+body[data-theme="academic_signal"] .faculty-hero .small.text-muted.text-uppercase { color: #6750a4 !important; font-weight: 700; }
+
+body[data-theme="college_saas"] .badge,
+body[data-theme="lightblue"] .badge,
+body[data-theme="academic_signal"] .badge { font-weight: 700; letter-spacing: 0.01em; }
+body[data-theme="college_saas"] .text-primary,
+body[data-theme="lightblue"] .text-primary,
+body[data-theme="academic_signal"] .text-primary { color: #176f6a !important; }
+body[data-theme="college_saas"] .progress,
+body[data-theme="lightblue"] .progress,
+body[data-theme="academic_signal"] .progress { background: #e8e1d5; border-radius: 999px; }
+body[data-theme="college_saas"] .progress-bar,
+body[data-theme="lightblue"] .progress-bar,
+body[data-theme="academic_signal"] .progress-bar { background-color: var(--signal-teal); }
+
+body[data-theme="college_saas"] .signal-stat,
+body[data-theme="lightblue"] .signal-stat,
+body[data-theme="academic_signal"] .signal-stat { border-left: 3px solid var(--signal-teal); }
+body[data-theme="college_saas"] .signal-stat--violet,
+body[data-theme="lightblue"] .signal-stat--violet,
+body[data-theme="academic_signal"] .signal-stat--violet { border-left-color: var(--signal-violet); }
+body[data-theme="college_saas"] .signal-card,
+body[data-theme="lightblue"] .signal-card,
+body[data-theme="academic_signal"] .signal-card { overflow: hidden; }
+body[data-theme="college_saas"] .signal-card--teal,
+body[data-theme="lightblue"] .signal-card--teal,
+body[data-theme="academic_signal"] .signal-card--teal { border-left: 4px solid var(--signal-teal); }
+body[data-theme="college_saas"] .signal-card--amber,
+body[data-theme="lightblue"] .signal-card--amber,
+body[data-theme="academic_signal"] .signal-card--amber { border-left: 4px solid var(--signal-amber); }
+body[data-theme="college_saas"] .signal-card--violet,
+body[data-theme="lightblue"] .signal-card--violet,
+body[data-theme="academic_signal"] .signal-card--violet { border-left: 4px solid var(--signal-violet); }
+
+@media (max-width: 991.98px) {
+  body[data-theme="college_saas"] .sidebar,
+  body[data-theme="lightblue"] .sidebar,
+  body[data-theme="academic_signal"] .sidebar { width: min(292px, 86vw); }
+  body[data-theme="college_saas"] .app-main,
+  body[data-theme="lightblue"] .app-main,
+  body[data-theme="academic_signal"] .app-main { margin-left: 0; background: rgba(247, 243, 235, 0.86); }
+  body[data-theme="college_saas"] .mobile-topbar,
+  body[data-theme="lightblue"] .mobile-topbar,
+  body[data-theme="academic_signal"] .mobile-topbar { background: #152b3a !important; border-bottom: 1px solid rgba(255,255,255,0.12); }
+}
+
+@media (max-width: 575.98px) {
+  body[data-theme="college_saas"],
+  body[data-theme="lightblue"],
+  body[data-theme="academic_signal"] { background-size: 20px 20px; }
+  body[data-theme="college_saas"] .container,
+  body[data-theme="lightblue"] .container,
+  body[data-theme="academic_signal"] .container { padding-left: 0.9rem; padding-right: 0.9rem; }
+  body[data-theme="college_saas"] .card,
+  body[data-theme="lightblue"] .card,
+  body[data-theme="academic_signal"] .card { border-radius: 10px; }
+  body[data-theme="college_saas"] .faculty-hero h1,
+  body[data-theme="lightblue"] .faculty-hero h1,
+  body[data-theme="academic_signal"] .faculty-hero h1 { font-size: 1.55rem; }
+}

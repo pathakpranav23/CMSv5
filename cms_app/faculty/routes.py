@@ -291,7 +291,7 @@ def dashboard():
             dict(row) for row in db.session.execute(
                 select(
                     TimetableSlot.period_no.label("period_no"), TimetableSlot.room_no.label("room_no"),
-                    Subject.subject_name.label("subject_name"), Division.division_code.label("division_code"),
+                    Subject.subject_name.label("subject_name"), Division.division_code.label("division_code"), Division.semester.label("semester"),
                     Subject.subject_id.label("subject_id"), Division.division_id.label("division_id"),
                 )
                 .join(Subject, Subject.subject_id == TimetableSlot.subject_id_fk)
