@@ -1,0 +1,10 @@
+{% extends 'layout.html' %}
+{% block title %}Roster Sync Requests{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header mb-3"><h2 class="title mb-1">Compulsory Roster Sync Requests</h2><div class="text-muted">Clerk can resolve approved operational requests. Elective subjects are never included here.</div></div>
+  <div class="card"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Subject / class</th><th>Academic year</th><th>Enrolled at request</th><th>Expected</th><th>Requested</th><th></th></tr></thead><tbody>
+  {% for item in requests %}<tr><td><strong>{{ item.subject.subject_name }}</strong><div class="small text-muted">Semester {{ item.division.semester }} · Division {{ item.division.division_code }} · Compulsory</div></td><td>{{ item.request.academic_year }}</td><td>{{ item.request.enrolled_count_at_request }}</td><td>{{ item.request.expected_count }}</td><td>{{ item.request.created_at.strftime('%d %b %Y') if item.request.created_at else '—' }}</td><td><a class="btn btn-sm btn-primary" href="{{ url_for('main.enrollment_sync_request_preview', request_id=item.request.request_id) }}">Preview sync</a></td></tr>{% else %}<tr><td colspan="6" class="text-center text-muted py-4">No open compulsory roster-sync requests.</td></tr>{% endfor %}
+  </tbody></table></div></div>
+</div>
+{% endblock %}

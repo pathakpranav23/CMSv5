@@ -18,6 +18,9 @@
                     </div>
                 </div>
                 <div class="d-flex gap-2 flex-wrap">
+                    <a href="{{ url_for('main.lesson_plan_list') }}" class="btn btn-outline-success">
+                        <i class="bi bi-journal-check"></i> Lesson Plans
+                    </a>
                     <a href="{{ url_for('main.attendance_class_insights') }}" class="btn btn-outline-primary">
                         <i class="bi bi-graph-up-arrow"></i> Class Insights
                     </a>
@@ -76,6 +79,12 @@
         </div>
     </div>
 
+    <div class="row mb-4">
+        <div class="col-lg-4 mb-3"><div class="card shadow-sm h-100"><div class="card-header bg-white py-3 d-flex justify-content-between align-items-center"><h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-calendar-day me-2"></i>Today’s Classes</h6><a href="{{ url_for('faculty.my_timetable') }}" class="small">Timetable</a></div><div class="card-body">{% if today_classes %}{% for item in today_classes %}<div class="d-flex justify-content-between align-items-center {% if not loop.last %}border-bottom pb-2 mb-2{% endif %}"><div><div class="fw-semibold">Period {{ item.period_no }} · {{ item.subject_name }}</div><div class="small text-muted">Division {{ item.division_code }}{% if item.room_no %} · Room {{ item.room_no }}{% endif %}</div></div><a href="{{ url_for('main.attendance_mark', subject_id=item.subject_id, division_id=item.division_id) }}" class="btn btn-sm btn-outline-primary">Attendance</a></div>{% endfor %}{% else %}<div class="text-muted small">No assigned timetable class today.</div>{% endif %}</div></div></div>
+        <div class="col-lg-4 mb-3"><div class="card shadow-sm h-100"><div class="card-header bg-white py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-exclamation-circle me-2"></i>Needs Attention</h6></div><div class="card-body"><div class="d-flex justify-content-between align-items-center {% if plans_missing %}border-bottom pb-2 mb-2{% endif %}"><div><div class="fw-semibold">Attendance follow-ups</div><div class="small text-muted">Students below the 60% threshold</div></div><a href="{{ url_for('main.attendance_class_insights') }}" class="badge text-bg-warning text-decoration-none">{{ at_risk_students|length }}</a></div>{% if plans_missing %}<div class="d-flex justify-content-between align-items-center"><div><div class="fw-semibold">Lesson plans to set up</div><div class="small text-muted">Assigned classes without a plan</div></div><a href="{{ url_for('main.lesson_plan_import') }}" class="badge text-bg-secondary text-decoration-none">{{ plans_missing }}</a></div>{% else %}<div class="small text-success"><i class="bi bi-check-circle me-1"></i>Every assigned class has a lesson plan.</div>{% endif %}</div></div></div>
+        <div class="col-lg-4 mb-3"><div class="card shadow-sm h-100"><div class="card-header bg-white py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-lightning-charge me-2"></i>Quick Actions</h6></div><div class="list-group list-group-flush"><a href="{{ url_for('main.lesson_plan_list') }}" class="list-group-item list-group-item-action"><i class="bi bi-journal-check me-2 text-success"></i>Open Lesson Plans</a><a href="{{ url_for('main.materials_hub') }}" class="list-group-item list-group-item-action"><i class="bi bi-upload me-2 text-secondary"></i>Upload Material</a><a href="{{ url_for('main.module_announcements') }}" class="list-group-item list-group-item-action"><i class="bi bi-megaphone me-2 text-secondary"></i>Class Announcement</a></div></div></div>
+    </div>
+
     <div class="row">
         <!-- Assigned Courses Card -->
         <div class="col-md-8">
@@ -111,7 +120,7 @@
                                         <span class="badge bg-info text-dark">{{ div.division_code }}</span>
                                     </td>
                                     <td>
-                                    <a href="{{ url_for('main.attendance_mark', subject_id=sub.subject_id, division_id=div.division_id) }}" class="btn btn-sm btn-outline-primary" title="Mark Attendance">
+                                    <a href="{{ url_for('main.attendance_mark', subject_id=sub.subject_id, division_id=div.division_id, semester=div.semester) }}" class="btn btn-sm btn-outline-primary" title="Mark Attendance">
                                         <i class="bi bi-check-square"></i>
                                     </a>
                                     <a href="{{ url_for('main.students', program_id=prog.program_id, semester=div.semester, division_id=div.division_id) }}" class="btn btn-sm btn-outline-secondary" title="View Students">
@@ -119,6 +128,9 @@
                                     </a>
                                     <a href="{{ url_for('main.attendance_class_insights', subject_id=sub.subject_id, division_id=div.division_id) }}" class="btn btn-sm btn-outline-info" title="Class Insights">
                                         <i class="bi bi-graph-up-arrow"></i>
+                                    </a>
+                                    <a href="{{ url_for('main.lesson_plan_list') }}" class="btn btn-sm btn-outline-success" title="Lesson Plan">
+                                        <i class="bi bi-journal-check"></i>
                                     </a>
                                 </td>
                                 </tr>
@@ -149,7 +161,7 @@
                                 </div>
 
                                 <div class="d-grid gap-2 d-flex">
-                                    <a href="{{ url_for('main.attendance_mark', subject_id=sub.subject_id, division_id=div.division_id) }}" class="btn btn-sm btn-outline-primary flex-grow-1">
+                                    <a href="{{ url_for('main.attendance_mark', subject_id=sub.subject_id, division_id=div.division_id, semester=div.semester) }}" class="btn btn-sm btn-outline-primary flex-grow-1">
                                         <i class="bi bi-check-square me-1"></i> Attendance
                                     </a>
                                     <a href="{{ url_for('main.students', program_id=prog.program_id, semester=div.semester, division_id=div.division_id) }}" class="btn btn-sm btn-outline-secondary flex-grow-1">
@@ -157,6 +169,9 @@
                                     </a>
                                     <a href="{{ url_for('main.attendance_class_insights', subject_id=sub.subject_id, division_id=div.division_id) }}" class="btn btn-sm btn-outline-info flex-grow-1">
                                         <i class="bi bi-graph-up-arrow me-1"></i> Insights
+                                    </a>
+                                    <a href="{{ url_for('main.lesson_plan_list') }}" class="btn btn-sm btn-outline-success flex-grow-1">
+                                        <i class="bi bi-journal-check me-1"></i> Plan
                                     </a>
                                 </div>
                             </div>
@@ -249,21 +264,6 @@
                     <div class="alert alert-info small mb-2">
                         <i class="bi bi-info-circle-fill me-1"></i> Exam marks entry deadline is approaching.
                     </div>
-                    {% endif %}
-                </div>
-            </div>
-            <div class="card shadow-sm mb-4">
-                <div class="card-header bg-white py-3">
-                    <h6 class="m-0 font-weight-bold text-primary">Quick Actions</h6>
-                </div>
-                <div class="list-group list-group-flush">
-                    <a href="{{ url_for('main.materials_hub') }}" class="list-group-item list-group-item-action">
-                        <i class="bi bi-upload me-2 text-secondary"></i> Upload Material
-                    </a>
-                    {% if exams_enabled %}
-                    <a href="{{ url_for('exams.dashboard') }}" class="list-group-item list-group-item-action">
-                         <i class="bi bi-graph-up me-2 text-secondary"></i> View Results
-                    </a>
                     {% endif %}
                 </div>
             </div>

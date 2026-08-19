@@ -170,6 +170,25 @@
         <div class="card-header d-flex align-items-center justify-content-between">
           <span>Roster{% if subject %}: {{ subject.subject_name }}{% endif %}{% if division %} — {{ division.division_code }}{% endif %} — {{ selected.date }}</span>
           <div class="d-flex gap-2">
+            {% if (current_user.role|lower) == 'faculty' and selected.subject_id and selected.division_id %}
+              {% if lesson_plan_topics %}
+              <div style="min-width: 250px;">
+                <label class="visually-hidden" for="lessonPlanTopic">Topic covered</label>
+                <select name="lesson_plan_topic_id" id="lessonPlanTopic" class="form-select form-select-sm">
+                  <option value="">Attendance only — no topic</option>
+                  {% for item in lesson_plan_topics %}
+                    <option value="{{ item.topic.topic_id }}" {% if selected_lesson_topic_id == item.topic.topic_id %}selected{% endif %}>Unit {{ item.unit.sequence_no }} · {{ item.topic.sequence_no }}. {{ item.topic.title }} ({{ item.topic.planned_minutes or 55 }} min)</option>
+                  {% endfor %}
+                </select>
+                <div class="form-check mt-1">
+                  <input class="form-check-input" type="checkbox" name="mark_topic_delivered" value="1" id="markTopicDelivered">
+                  <label class="form-check-label small" for="markTopicDelivered">Also mark selected topic delivered</label>
+                </div>
+              </div>
+              {% else %}
+              <a class="btn btn-outline-success btn-sm" href="{{ url_for('main.lesson_plan_import') }}" title="Create a lesson plan for this assigned class"><i class="bi bi-journal-plus"></i> Add lesson plan</a>
+              {% endif %}
+            {% endif %}
             <select name="period_no" class="form-select form-select-sm" style="width:auto" required>
               <option value="">Select lecture…</option>
               {% for s in schedule %}
@@ -186,7 +205,20 @@
               {% if division %}in Division {{ division.division_code }}{% endif %}
               {% if subject %}for {{ subject.subject_name }}{% endif %}
               | AY {{ selected.academic_year }}. Missing active enrollments: {{ roster_alert.missing }}.
-              <span class="d-block mt-1 small">Tip: Use Enroll Core to refresh enrollments after rebalancing or subject updates.</span>
+              {% if (current_user.role|lower) == 'faculty' and subject and division and not subject.is_elective %}
+                <form method="post" action="{{ url_for('main.attendance_roster_sync_request') }}" class="mt-2">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="subject_id" value="{{ subject.subject_id }}">
+                  <input type="hidden" name="division_id" value="{{ division.division_id }}">
+                  <input type="hidden" name="academic_year" value="{{ selected.academic_year }}">
+                  <button class="btn btn-sm btn-warning">Request roster sync from Clerk</button>
+                  <span class="small ms-1">Faculty cannot alter enrollments.</span>
+                </form>
+              {% elif subject and subject.is_elective %}
+                <span class="d-block mt-1 small">This is an elective subject. Student choices must be managed by Clerk/Admin; no bulk sync is offered.</span>
+              {% else %}
+                <span class="d-block mt-1 small">Open the Clerk roster-sync queue to preview and resolve this compulsory-subject roster.</span>
+              {% endif %}
             </div>
           {% endif %}
           {% if roster and roster|length > 0 %}

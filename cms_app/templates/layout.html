@@ -106,23 +106,12 @@
             {% if exams_enabled and ((current_user.role|lower) in ['admin','principal','clerk','faculty'] or current_user.is_super_admin) %}
               <li><a href="{{ url_for('exams.dashboard') }}"><span class="module-icon"><i class="bi bi-mortarboard text-primary"></i></span><span class="label">{{ t('Exams') }}</span></a><br class="nav-break"></li>
             {% endif %}
-            <li>
-              <a data-bs-toggle="collapse" href="#navAcademicsMore" role="button" aria-expanded="false" aria-controls="navAcademicsMore">
-                <span class="module-icon"><i class="bi bi-chevron-down text-primary"></i></span>
-                <span class="label">{{ t('More') }}</span>
-              </a>
-              <br class="nav-break">
-              <div class="collapse" id="navAcademicsMore">
-                <ul class="nav d-block ps-2">
-                  <li><a href="{{ url_for('main.module_students') }}"><span class="module-icon"><i class="bi bi-people text-primary"></i></span><span class="label">{{ t('Students') }}</span></a><br class="nav-break"></li>
-                  <li><a href="{{ url_for('main.module_subjects') }}"><span class="module-icon"><i class="bi bi-journal-bookmark text-primary"></i></span><span class="label">{{ t('Subjects') }}</span></a><br class="nav-break"></li>
-                  <li><a href="{{ url_for('main.module_faculty') }}"><span class="module-icon"><i class="bi bi-person-badge text-primary"></i></span><span class="label">{{ t('Staff') }}</span></a><br class="nav-break"></li>
-                  {% if (current_user.role|lower) in ['admin','principal'] %}
-                  <li><a href="{{ url_for('timetable.manage') }}"><span class="module-icon"><i class="bi bi-calendar-week text-primary"></i></span><span class="label">{{ t('Timetable') }}</span></a><br class="nav-break"></li>
-                  {% endif %}
-                </ul>
-              </div>
-            </li>
+            <li><a href="{{ url_for('main.module_students') }}"><span class="module-icon"><i class="bi bi-people text-primary"></i></span><span class="label">{{ t('Students') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.module_subjects') }}"><span class="module-icon"><i class="bi bi-journal-bookmark text-primary"></i></span><span class="label">{{ t('Subjects') }}</span></a><br class="nav-break"></li>
+            <li><a href="{{ url_for('main.module_faculty') }}"><span class="module-icon"><i class="bi bi-person-badge text-primary"></i></span><span class="label">{{ t('Staff') }}</span></a><br class="nav-break"></li>
+            {% if (current_user.role|lower) in ['admin','principal'] %}
+            <li><a href="{{ url_for('timetable.manage') }}"><span class="module-icon"><i class="bi bi-calendar-week text-primary"></i></span><span class="label">{{ t('Timetable') }}</span></a><br class="nav-break"></li>
+            {% endif %}
           </div>
 
           <!-- Group 2: Administration (Warning/Gold Theme) -->

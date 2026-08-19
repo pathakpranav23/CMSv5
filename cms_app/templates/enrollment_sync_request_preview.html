@@ -1,0 +1,10 @@
+{% extends 'layout.html' %}
+{% block title %}Preview Compulsory Roster Sync{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3"><div><h2 class="title mb-1">Preview compulsory roster sync</h2><div class="text-muted">{{ subject.subject_name }} · Semester {{ division.semester }} · Division {{ division.division_code }} · {{ sync_request.academic_year }}</div></div><a class="btn btn-outline-secondary" href="{{ url_for('main.enrollment_sync_requests') }}">Back to requests</a></div>
+  <div class="alert alert-info"><strong>Approved operational action.</strong> This will enroll only the {{ preview|length }} active students currently in this division and semester. Elective choice records are not changed.</div>
+  <div class="card mb-3"><div class="card-header">Affected students ({{ preview|length }})</div><div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Enrollment no.</th><th>Student</th><th>Result</th></tr></thead><tbody>{% for item in preview %}<tr><td>{{ item.student.enrollment_no }}</td><td>{{ item.student.full_name }}</td><td><span class="badge bg-{% if item.action == 'create' %}success{% elif item.action == 'reactivate' %}warning text-dark{% else %}secondary{% endif %}">{{ item.action|title }}</span></td></tr>{% else %}<tr><td colspan="3" class="text-muted text-center py-3">No eligible active students remain in this division.</td></tr>{% endfor %}</tbody></table></div></div>
+  <form method="post" action="{{ url_for('main.enrollment_sync_request_execute', request_id=sync_request.request_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label class="form-label" for="clerkNote">Clerk note <span class="text-muted">(optional)</span></label><textarea class="form-control mb-3" id="clerkNote" name="clerk_note" rows="2" placeholder="Example: Verified Division A core roster"></textarea><button class="btn btn-success" {% if not preview %}disabled{% endif %}>Confirm compulsory roster sync</button></form>
+</div>
+{% endblock %}

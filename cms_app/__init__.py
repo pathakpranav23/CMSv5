@@ -1160,6 +1160,9 @@ def create_app():
             if 'period_no' not in att_cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE attendance ADD COLUMN period_no INTEGER")
+            if 'lesson_plan_topic_id_fk' not in att_cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE attendance ADD COLUMN lesson_plan_topic_id_fk INTEGER REFERENCES lesson_plan_topics(topic_id)")
 
             # 5. FeeStructures table
             fee_cols = [c['name'] for c in inspector.get_columns('fee_structures')]

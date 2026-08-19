@@ -1,7 +1,7 @@
 from flask import render_template, flash, redirect, url_for, request, current_app
 from flask_login import login_required, current_user
 from .. import db
-from ..models import Faculty, CourseAssignment, Subject, Division, Program, TimetableSlot, TimetableSettings, Attendance, Student
+from ..models import Faculty, CourseAssignment, Subject, Division, Program, TimetableSlot, TimetableSettings, Attendance, Student, LessonPlan
 from ..decorators import role_required
 from . import faculty_bp
 from sqlalchemy import and_, func, case, distinct, select, or_
@@ -281,13 +281,43 @@ def dashboard():
                 })
         students_snapshot.sort(key=lambda x: (x["program_code"], x["semester"], x["division_code"]))
 
+    # Compact dashboard queue: only today's teaching and items needing action.
+    today_classes = []
+    plans_missing = 0
+    if assigned_pairs:
+        today_name = date.today().strftime("%a")
+        assignment_conditions = [and_(TimetableSlot.subject_id_fk == subject_id, TimetableSlot.division_id_fk == division_id) for subject_id, division_id in assigned_pairs]
+        today_classes = [
+            dict(row) for row in db.session.execute(
+                select(
+                    TimetableSlot.period_no.label("period_no"), TimetableSlot.room_no.label("room_no"),
+                    Subject.subject_name.label("subject_name"), Division.division_code.label("division_code"),
+                    Subject.subject_id.label("subject_id"), Division.division_id.label("division_id"),
+                )
+                .join(Subject, Subject.subject_id == TimetableSlot.subject_id_fk)
+                .join(Division, Division.division_id == TimetableSlot.division_id_fk)
+                .where(TimetableSlot.day_of_week == today_name, or_(*assignment_conditions))
+                .order_by(TimetableSlot.period_no)
+            ).mappings().all()
+        ]
+        for assignment, _, _, _ in assignments:
+            has_plan = db.session.scalar(select(LessonPlan.plan_id).where(
+                LessonPlan.faculty_user_id_fk == current_user.user_id,
+                LessonPlan.subject_id_fk == assignment.subject_id_fk,
+                LessonPlan.division_id_fk == assignment.division_id_fk,
+            ).limit(1))
+            if not has_plan:
+                plans_missing += 1
+
     return render_template(
         "faculty/dashboard.html", 
         faculty=faculty, 
         assignments=assignments,
         lecture_stats=lecture_stats,
         at_risk_students=at_risk_students,
-        students_snapshot=students_snapshot
+        students_snapshot=students_snapshot,
+        today_classes=today_classes,
+        plans_missing=plans_missing,
     )
 
 @faculty_bp.route("/timetable")

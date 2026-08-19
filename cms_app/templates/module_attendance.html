@@ -31,6 +31,9 @@
               <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_class_insights') }}">Class Insights</a>
               <a class="list-group-item list-group-item-action" href="{{ url_for('main.attendance_report_faculty') }}">My Attendance Report</a>
             {% endif %}
+            {% if (role or '') in ['admin','principal','clerk'] %}
+              <a class="list-group-item list-group-item-action" href="{{ url_for('main.enrollment_sync_requests') }}">Compulsory Roster Sync Requests</a>
+            {% endif %}
           </div>
         </div>
       </div>

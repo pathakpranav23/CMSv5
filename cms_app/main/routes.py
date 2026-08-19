@@ -11,7 +11,7 @@ import re
 from xml.etree import ElementTree as ET
 from sqlalchemy import or_, select, and_, cast, Integer, false, update, MetaData, Table, inspect as sa_inspect
 from sqlalchemy.orm import selectinload
-from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementRevision, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, MaterialRevision, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification, StudentFollowUpTask, LessonPlanImportDraft, LessonPlan, LessonPlanUnit, LessonPlanTopic, LessonPlanDelivery, DataAuditLog
+from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementRevision, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, MaterialRevision, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification, StudentFollowUpTask, EnrollmentSyncRequest, LessonPlanImportDraft, LessonPlan, LessonPlanUnit, LessonPlanTopic, LessonPlanDelivery, DataAuditLog
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
 from ..api_utils import api_success, api_error
@@ -13105,6 +13105,176 @@ def user_map_program(user_id: int):
         flash("Failed to update Principal program mapping.", "danger")
     return redirect(url_for("main.users_list", role="Principal", program_id=pid))
 
+def _core_sync_candidates(subject, division):
+    """The only students eligible for a compulsory roster sync in this class."""
+    if not subject or not division:
+        return []
+    return db.session.execute(
+        select(Student).where(
+            Student.program_id_fk == subject.program_id_fk,
+            Student.division_id_fk == division.division_id,
+            Student.current_semester == subject.semester,
+            Student.is_active == True,
+        ).order_by(Student.roll_no, Student.enrollment_no)
+    ).scalars().all()
+
+
+def _user_can_manage_core_sync(subject):
+    if not subject or not _subject_in_current_tenant(subject):
+        return False
+    role = (getattr(current_user, "role", "") or "").lower()
+    if role == "admin" or getattr(current_user, "is_super_admin", False):
+        return True
+    if role in {"principal", "clerk"}:
+        scoped_program = getattr(current_user, "program_id_fk", None)
+        return not scoped_program or scoped_program == subject.program_id_fk
+    return False
+
+
+@main_bp.route("/attendance/roster-sync-request", methods=["POST"])
+@login_required
+@role_required("faculty")
+@csrf_required
+def attendance_roster_sync_request():
+    try:
+        subject_id = int(request.form.get("subject_id") or 0)
+        division_id = int(request.form.get("division_id") or 0)
+    except ValueError:
+        abort(400)
+    academic_year = (request.form.get("academic_year") or "").strip()
+    subject = db.session.get(Subject, subject_id)
+    division = db.session.get(Division, division_id)
+    assignment = db.session.scalar(select(CourseAssignment.assignment_id).where(
+        CourseAssignment.faculty_id_fk == current_user.user_id,
+        CourseAssignment.subject_id_fk == subject_id,
+        CourseAssignment.division_id_fk == division_id,
+        CourseAssignment.is_active == True,
+    ).limit(1))
+    if not subject or not division or not academic_year or not assignment or subject.is_elective or division.program_id_fk != subject.program_id_fk:
+        abort(403)
+    eligible = _core_sync_candidates(subject, division)
+    enrolled_count = db.session.scalar(select(func.count()).select_from(StudentSubjectEnrollment).where(
+        StudentSubjectEnrollment.subject_id_fk == subject_id,
+        StudentSubjectEnrollment.division_id_fk == division_id,
+        StudentSubjectEnrollment.academic_year == academic_year,
+        StudentSubjectEnrollment.is_active == True,
+    )) or 0
+    open_request = db.session.scalar(select(EnrollmentSyncRequest).where(
+        EnrollmentSyncRequest.subject_id_fk == subject_id,
+        EnrollmentSyncRequest.division_id_fk == division_id,
+        EnrollmentSyncRequest.academic_year == academic_year,
+        EnrollmentSyncRequest.status == "open",
+    ).limit(1))
+    if open_request:
+        flash("A roster-sync request for this class is already waiting for Clerk action.", "info")
+    else:
+        db.session.add(EnrollmentSyncRequest(
+            subject_id_fk=subject_id,
+            division_id_fk=division_id,
+            academic_year=academic_year,
+            requested_by_user_id_fk=current_user.user_id,
+            expected_count=len(eligible),
+            enrolled_count_at_request=enrolled_count,
+        ))
+        db.session.commit()
+        flash("Roster-sync request sent to Clerk. Attendance remains protected until the compulsory roster is confirmed.", "success")
+    return redirect(url_for("main.attendance_mark", subject_id=subject_id, division_id=division_id, semester=subject.semester, academic_year=academic_year))
+
+
+@main_bp.route("/enrollment-sync-requests")
+@login_required
+@role_required("admin", "principal", "clerk")
+def enrollment_sync_requests():
+    requests_q = select(EnrollmentSyncRequest).where(EnrollmentSyncRequest.status == "open").order_by(EnrollmentSyncRequest.created_at.asc())
+    requests = []
+    for sync_request in db.session.execute(requests_q).scalars().all():
+        subject = db.session.get(Subject, sync_request.subject_id_fk)
+        division = db.session.get(Division, sync_request.division_id_fk)
+        if subject and division and _user_can_manage_core_sync(subject):
+            requests.append({"request": sync_request, "subject": subject, "division": division})
+    return render_template("enrollment_sync_requests.html", requests=requests)
+
+
+@main_bp.route("/enrollment-sync-requests/<int:request_id>/preview")
+@login_required
+@role_required("admin", "principal", "clerk")
+def enrollment_sync_request_preview(request_id):
+    sync_request = db.session.get(EnrollmentSyncRequest, request_id)
+    subject = db.session.get(Subject, sync_request.subject_id_fk) if sync_request else None
+    division = db.session.get(Division, sync_request.division_id_fk) if sync_request else None
+    if not sync_request or not subject or not division or not _user_can_manage_core_sync(subject):
+        abort(404)
+    if subject.is_elective:
+        flash("Elective subjects are choice-based and cannot use the compulsory roster-sync process.", "warning")
+        return redirect(url_for("main.enrollment_sync_requests"))
+    eligible = _core_sync_candidates(subject, division)
+    existing = {
+        row.student_id_fk: row for row in db.session.execute(select(StudentSubjectEnrollment).where(
+            StudentSubjectEnrollment.subject_id_fk == subject.subject_id,
+            StudentSubjectEnrollment.academic_year == sync_request.academic_year,
+            StudentSubjectEnrollment.student_id_fk.in_([student.enrollment_no for student in eligible]) if eligible else false(),
+        )).scalars().all()
+    }
+    preview = []
+    for student in eligible:
+        enrollment = existing.get(student.enrollment_no)
+        preview.append({"student": student, "action": "reactivate" if enrollment and not enrollment.is_active else ("update" if enrollment else "create")})
+    return render_template("enrollment_sync_request_preview.html", sync_request=sync_request, subject=subject, division=division, preview=preview)
+
+
+@main_bp.route("/enrollment-sync-requests/<int:request_id>/execute", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk")
+@csrf_required
+def enrollment_sync_request_execute(request_id):
+    sync_request = db.session.get(EnrollmentSyncRequest, request_id)
+    subject = db.session.get(Subject, sync_request.subject_id_fk) if sync_request else None
+    division = db.session.get(Division, sync_request.division_id_fk) if sync_request else None
+    if not sync_request or sync_request.status != "open" or not subject or not division or not _user_can_manage_core_sync(subject):
+        abort(404)
+    if subject.is_elective:
+        abort(403)
+    eligible = _core_sync_candidates(subject, division)
+    existing = {
+        row.student_id_fk: row for row in db.session.execute(select(StudentSubjectEnrollment).where(
+            StudentSubjectEnrollment.subject_id_fk == subject.subject_id,
+            StudentSubjectEnrollment.academic_year == sync_request.academic_year,
+            StudentSubjectEnrollment.student_id_fk.in_([student.enrollment_no for student in eligible]) if eligible else false(),
+        )).scalars().all()
+    }
+    created = reactivated = updated = 0
+    for student in eligible:
+        enrollment = existing.get(student.enrollment_no)
+        if enrollment:
+            if not enrollment.is_active:
+                reactivated += 1
+            else:
+                updated += 1
+            enrollment.division_id_fk = division.division_id
+            enrollment.semester = subject.semester
+            enrollment.is_active = True
+            enrollment.source = "clerk_core_sync"
+        else:
+            db.session.add(StudentSubjectEnrollment(
+                student_id_fk=student.enrollment_no,
+                subject_id_fk=subject.subject_id,
+                semester=subject.semester,
+                division_id_fk=division.division_id,
+                academic_year=sync_request.academic_year,
+                is_active=True,
+                source="clerk_core_sync",
+            ))
+            created += 1
+    sync_request.status = "completed"
+    sync_request.resolved_by_user_id_fk = current_user.user_id
+    sync_request.resolved_at = datetime.now(timezone.utc)
+    sync_request.clerk_note = (request.form.get("clerk_note") or "").strip()[:2000] or None
+    _bulk_audit_entry("core_roster_sync", {"request_id": request_id, "subject_id": subject.subject_id, "division_id": division.division_id, "academic_year": sync_request.academic_year}, {"eligible": len(eligible), "created": created, "reactivated": reactivated, "updated": updated}, program_id=subject.program_id_fk, semester=subject.semester)
+    db.session.commit()
+    flash(f"Compulsory roster synced: {created} created, {reactivated} reactivated, {updated} confirmed.", "success")
+    return redirect(url_for("main.enrollment_sync_requests"))
+
+
 @main_bp.route("/attendance/mark", methods=["GET", "POST"])
 @login_required
 @role_required("admin", "principal", "faculty")
@@ -13308,6 +13478,10 @@ def attendance_mark():
     roster = []
     subject = db.session.get(Subject, selected_subject_id) if selected_subject_id else None
     division = db.session.get(Division, selected_division_id) if selected_division_id else None
+    # Dashboard and timetable shortcuts already know the subject; infer its semester
+    # so the client-side selector does not reset to “Select Semester first”.
+    if not selected_semester and subject:
+        selected_semester = subject.semester
     schedule = make_schedule()
     # Parse selected date or default to today
     from datetime import date
@@ -13315,6 +13489,46 @@ def attendance_mark():
         selected_date = datetime.strptime(selected_date_str, "%Y-%m-%d").date() if selected_date_str else date.today()
     except Exception:
         selected_date = date.today()
+
+    # Faculty can optionally connect this attendance session to one topic from
+    # their own matching lesson plan.  Admin/Principal attendance remains topic-free.
+    lesson_plan_topics = []
+    lesson_plan_topic_map = {}
+    requested_topic_value = request.values.get("lesson_plan_topic_id")
+    topic_choice_supplied = requested_topic_value is not None
+    try:
+        selected_lesson_topic_id = int(requested_topic_value) if requested_topic_value else None
+    except (TypeError, ValueError):
+        selected_lesson_topic_id = None
+    if role == "faculty" and selected_subject_id and selected_division_id:
+        assigned_context = db.session.scalar(select(CourseAssignment.assignment_id).where(
+            CourseAssignment.faculty_id_fk == current_user.user_id,
+            CourseAssignment.subject_id_fk == selected_subject_id,
+            CourseAssignment.division_id_fk == selected_division_id,
+            CourseAssignment.is_active == True,
+        ).limit(1))
+        if assigned_context:
+            plan = db.session.scalar(select(LessonPlan).where(
+                LessonPlan.faculty_user_id_fk == current_user.user_id,
+                LessonPlan.subject_id_fk == selected_subject_id,
+                LessonPlan.division_id_fk == selected_division_id,
+                LessonPlan.academic_year == selected_year,
+            ).order_by(LessonPlan.updated_at.desc()).limit(1))
+            if plan:
+                topic_rows = db.session.execute(
+                    select(LessonPlanTopic, LessonPlanUnit)
+                    .join(LessonPlanUnit, LessonPlanUnit.unit_id == LessonPlanTopic.unit_id_fk)
+                    .where(
+                        LessonPlanUnit.plan_id_fk == plan.plan_id,
+                        LessonPlanTopic.status.in_(["planned", "deferred", "revised"]),
+                    )
+                    .order_by(LessonPlanUnit.sequence_no, LessonPlanTopic.sequence_no)
+                ).all()
+                for topic, unit in topic_rows:
+                    lesson_plan_topics.append({"topic": topic, "unit": unit})
+                    lesson_plan_topic_map[topic.topic_id] = topic
+                if not topic_choice_supplied and lesson_plan_topics:
+                    selected_lesson_topic_id = lesson_plan_topics[0]["topic"].topic_id
 
     # Build roster via active enrollments for selected subject+year
     if selected_subject_id and selected_year:
@@ -13416,6 +13630,11 @@ def attendance_mark():
                 for sid, items in per_student.items():
                     keep = items[0]
                     current_status_by_student[sid] = (keep.status or "").upper() or "P"
+                # Existing saved sessions should keep their current topic on reload.
+                if not topic_choice_supplied:
+                    existing_topic_ids = {att.lesson_plan_topic_id_fk for att in current_rows if att.lesson_plan_topic_id_fk}
+                    if len(existing_topic_ids) == 1 and next(iter(existing_topic_ids)) in lesson_plan_topic_map:
+                        selected_lesson_topic_id = next(iter(existing_topic_ids))
 
                 last_q = select(Attendance).filter(
                     Attendance.student_id_fk.in_(student_ids),
@@ -13462,6 +13681,11 @@ def attendance_mark():
             errors.append("Select subject and lecture period.")
         if not roster:
             errors.append("No students found to mark.")
+        if requested_topic_value and selected_lesson_topic_id not in lesson_plan_topic_map:
+            errors.append("Choose a topic from your assigned lesson plan, or select Attendance only.")
+        mark_topic_delivered = request.form.get("mark_topic_delivered") == "1"
+        if mark_topic_delivered and not selected_lesson_topic_id:
+            errors.append("Choose a lesson-plan topic before marking it delivered.")
         if not errors:
             # Persist attendance for each student
             today = selected_date
@@ -13510,6 +13734,7 @@ def attendance_mark():
                     att.status = st
                     att.division_id_fk = div_id
                     att.semester = semester_val
+                    att.lesson_plan_topic_id_fk = selected_lesson_topic_id
                     updated += 1
                 else:
                     att = Attendance(
@@ -13520,13 +13745,32 @@ def attendance_mark():
                         status=st,
                         semester=semester_val,
                         period_no=selected_period,
+                        lesson_plan_topic_id_fk=selected_lesson_topic_id,
                     )
                     db.session.add(att)
                     created += 1
             try:
+                if mark_topic_delivered:
+                    topic = lesson_plan_topic_map[selected_lesson_topic_id]
+                    existing_delivery = db.session.scalar(select(LessonPlanDelivery.delivery_id).where(
+                        LessonPlanDelivery.topic_id_fk == topic.topic_id,
+                        LessonPlanDelivery.delivered_on == today,
+                    ).limit(1))
+                    if not existing_delivery:
+                        delivered_minutes = topic.planned_minutes or 55
+                        db.session.add(LessonPlanDelivery(
+                            topic_id_fk=topic.topic_id,
+                            delivered_on=today,
+                            delivered_minutes=delivered_minutes,
+                            note=f"Attendance session · Lecture {selected_period}",
+                        ))
+                        topic.actual_date = today
+                        topic.actual_minutes = (topic.actual_minutes or 0) + delivered_minutes
+                        topic.status = "completed"
                 db.session.commit()
-                flash(f"Attendance saved. Present {present_count}/{total_count}. ({created} added, {updated} updated)", "success")
-                return redirect(url_for("main.attendance_mark", subject_id=selected_subject_id, division_id=(division.division_id if division else ""), academic_year=selected_year, period_no=selected_period, date=today.strftime("%Y-%m-%d")))
+                delivery_note = " Topic marked delivered." if mark_topic_delivered else ""
+                flash(f"Attendance saved. Present {present_count}/{total_count}. ({created} added, {updated} updated){delivery_note}", "success")
+                return redirect(url_for("main.attendance_mark", subject_id=selected_subject_id, division_id=(division.division_id if division else ""), academic_year=selected_year, period_no=selected_period, date=today.strftime("%Y-%m-%d"), lesson_plan_topic_id=selected_lesson_topic_id or 0))
             except Exception:
                 db.session.rollback()
                 errors.append("Failed to save attendance. Please try again.")
@@ -13574,6 +13818,8 @@ def attendance_mark():
         roster=roster,
         errors=errors,
         roster_alert=roster_alert,
+        lesson_plan_topics=lesson_plan_topics,
+        selected_lesson_topic_id=selected_lesson_topic_id,
         selected={
             "subject_id": selected_subject_id,
             "division_id": selected_division_id,

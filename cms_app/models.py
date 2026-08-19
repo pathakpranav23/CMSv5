@@ -286,6 +286,8 @@ class Attendance(db.Model):
     status = db.Column(db.String(2)) # P, A, L...
     semester = db.Column(db.Integer)
     period_no = db.Column(db.Integer)
+    # Nullable so historic attendance and attendance-only sessions remain valid.
+    lesson_plan_topic_id_fk = db.Column(db.Integer, db.ForeignKey("lesson_plan_topics.topic_id"), index=True)
 
 
 class StudentSubjectEnrollment(db.Model):
@@ -546,6 +548,24 @@ class StudentFollowUpTask(db.Model):
     resolved_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    resolved_at = db.Column(db.DateTime)
+
+
+class EnrollmentSyncRequest(db.Model):
+    """Faculty-to-Clerk operational request for a compulsory-subject roster sync."""
+    __tablename__ = "enrollment_sync_requests"
+
+    request_id = db.Column(db.Integer, primary_key=True)
+    subject_id_fk = db.Column(db.Integer, db.ForeignKey("subjects.subject_id"), nullable=False)
+    division_id_fk = db.Column(db.Integer, db.ForeignKey("divisions.division_id"), nullable=False)
+    academic_year = db.Column(db.String(16), nullable=False)
+    requested_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"), nullable=False)
+    status = db.Column(db.String(16), nullable=False, default="open")  # open | completed | exception
+    expected_count = db.Column(db.Integer, nullable=False, default=0)
+    enrolled_count_at_request = db.Column(db.Integer, nullable=False, default=0)
+    clerk_note = db.Column(db.Text)
+    resolved_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    created_at = db.Column(db.DateTime, default=utc_now)
     resolved_at = db.Column(db.DateTime)
 
 
