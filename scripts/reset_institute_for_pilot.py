@@ -273,7 +273,10 @@ def _apply(connection: sqlite3.Connection, scope: dict[str, object], app_root: P
     payment_where, payment_params = _or_where([_in_where("enrollment_no", students), _in_where("program_id_fk", programs)])
     plan_where, plan_params = _or_where([_in_where("subject_id_fk", subjects), _in_where("division_id_fk", divisions)])
     material_where, material_params = _in_where("subject_id_fk", subjects)
-    announcement_where, announcement_params = _or_where([("trust_id_fk = ?", [trust_id]), _in_where("program_id_fk", programs)])
+    # Scope announcements only through this institute's programs.  Some legacy
+    # databases do not have announcements.trust_id_fk, and trust-wide notices may
+    # belong to another institute under the same Trust.
+    announcement_where, announcement_params = _in_where("program_id_fk", programs)
 
     payment_rows = _rows(connection, f"SELECT payment_id, proof_image_path FROM fee_payments WHERE {payment_where}", payment_params) if "fee_payments" in tables else []
     payment_ids = _ids(payment_rows, "payment_id")
