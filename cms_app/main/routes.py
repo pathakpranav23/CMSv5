@@ -5083,6 +5083,7 @@ def dashboard():
 
     # Role-based infographics datasets
     charts = {}
+    dashboard_data_unavailable = False
     try:
         # Build program map for labels (Scoped to Trust)
         def _get_program_map_scoped():
@@ -5155,9 +5156,10 @@ def dashboard():
                 data.append({"label": name, "value": cnt})
             return data
 
-        # Income vs Expenses per year (income from fees; expenses demo if none)
-        def _income_vs_expenses_annual():
-            # Income by year from fees
+        # Annual fee collection is based on recorded payments only.  This product
+        # does not yet maintain an expense ledger, so it must never invent an
+        # income-versus-expense figure for an institution.
+        def _annual_fee_collection():
             income = {}
             years = set()
             try:
@@ -5173,16 +5175,8 @@ def dashboard():
                     continue
                 years.add(yr)
                 income[yr] = income.get(yr, 0.0) + float(amt or 0.0)
-            if not years:
-                # Demo: last 3 years with synthetic values
-                base = now.year
-                years = {base-2, base-1, base}
-                income = {base-2: 1200000.0, base-1: 1500000.0, base: 1750000.0}
             labels = sorted(list(years))
-            income_series = [round(income.get(y, 0.0), 2) for y in labels]
-            # Expenses demo: 70-85% of income
-            expenses_series = [round(v * 0.78, 2) for v in income_series]
-            return {"labels": labels, "income": income_series, "expenses": expenses_series}
+            return {"labels": labels, "collection": [round(income.get(y, 0.0), 2) for y in labels]}
 
         def _gender_by_program():
             data = []
@@ -5587,7 +5581,7 @@ def dashboard():
                     "students_by_program": [{"label": prog_map.get(chart_program_id), "value": _students_for_program(chart_program_id)}],
                     "fees_by_program": [{"label": prog_map.get(chart_program_id), "value": _fees_for_program(chart_program_id)}],
                     "staff_by_program": [{"label": prog_map.get(chart_program_id), "value": _staff_for_program(chart_program_id)}],
-                    "income_vs_expenses": _income_vs_expenses_annual(),
+                    "annual_fee_collection": _annual_fee_collection(),
                     "gender_by_program": _gender_by_program(),
                     "category_gender_by_program": _category_gender_by_program(),
                 }
@@ -5596,7 +5590,7 @@ def dashboard():
                     "students_by_program": _students_by_program(),
                     "fees_by_program": _fees_by_program(),
                     "staff_by_program": _staff_by_program(),
-                    "income_vs_expenses": _income_vs_expenses_annual(),
+                    "annual_fee_collection": _annual_fee_collection(),
                     "gender_by_program": _gender_by_program(),
                     "category_gender_by_program": _category_gender_by_program(),
                 }
@@ -5782,13 +5776,9 @@ def dashboard():
                 except Exception:
                     charts["faculty_notices"] = []
     except Exception:
-        # Fallback demo when any unexpected error occurs
-        charts = {
-            "students_by_program": [{"label": "BCA", "value": 220}, {"label": "BBA", "value": 180}, {"label": "B.Com", "value": 260}],
-            "fees_by_program": [{"label": "BCA", "value": 1200000.0}, {"label": "BBA", "value": 950000.0}, {"label": "B.Com", "value": 1380000.0}],
-            "staff_by_program": [{"label": "BCA", "value": 24}, {"label": "BBA", "value": 18}, {"label": "B.Com", "value": 22}],
-            "income_vs_expenses": {"labels": [now.year-2, now.year-1, now.year], "income": [1200000.0, 1500000.0, 1750000.0], "expenses": [900000.0, 1100000.0, 1300000.0]},
-        }
+        current_app.logger.exception("Dashboard chart data could not be loaded")
+        charts = {}
+        dashboard_data_unavailable = True
     # Unread notifications for student dashboard
     notifications = []
     notifications_vm = []
@@ -5941,6 +5931,7 @@ def dashboard():
         notifications=notifications,
         notifications_vm=notifications_vm,
         charts=charts,
+        dashboard_data_unavailable=dashboard_data_unavailable,
         charts_semester_scope=(charts_semester_scope if (role_lower == 'admin') else None),
         student_view=student_view,
         acting_trust=acting_trust,

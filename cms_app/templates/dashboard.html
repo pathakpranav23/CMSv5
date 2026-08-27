@@ -49,6 +49,12 @@
     </div>
   {% endif %}
 
+  {% if dashboard_data_unavailable %}
+    <div class="alert alert-warning" role="alert">
+      Dashboard data could not be loaded. No estimated or sample figures are being shown. Refresh the page; if the issue continues, contact the administrator.
+    </div>
+  {% endif %}
+
   {% if announcements and (announcements|length) > 0 %}
     {% for a in announcements %}
       <div class="alert alert-{{ a.severity or 'info' }} d-flex justify-content-between align-items-center" role="alert">
@@ -359,37 +365,31 @@
         </div>
         <div class="col">
           <div class="card">
-            <div class="card-header card-header-standard"><div class="card-title">{{ t('Annual Income vs Expenses') }}</div></div>
+            <div class="card-header card-header-standard"><div class="card-title">{{ t('Annual Fee Collection') }}</div></div>
             <div class="card-body">
-              {% set annual = charts.income_vs_expenses %}
+              {% set annual = charts.annual_fee_collection %}
               {% if annual and annual.labels %}
                 <div class="table-responsive">
                   <table class="table table-sm align-middle mb-0">
                     <thead class="table-light">
                       <tr>
-                        <th>{{ t('Month') }}</th>
-                        <th class="text-end">{{ t('Income') }}</th>
-                        <th class="text-end">{{ t('Expenses') }}</th>
-                        <th class="text-end">{{ t('Net') }}</th>
+                        <th>{{ t('Year') }}</th>
+                        <th class="text-end">{{ t('Recorded Collection') }}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {% for idx in range(annual.labels|length) %}
-                        {% set income = annual.income[idx] if idx < (annual.income|length) else 0 %}
-                        {% set expenses = annual.expenses[idx] if idx < (annual.expenses|length) else 0 %}
-                        {% set net = income - expenses %}
+                        {% set collection = annual.collection[idx] if idx < (annual.collection|length) else 0 %}
                         <tr>
                           <td>{{ annual.labels[idx] }}</td>
-                          <td class="text-end">{{ income }}</td>
-                          <td class="text-end">{{ expenses }}</td>
-                          <td class="text-end {% if net < 0 %}text-danger{% else %}text-success{% endif %}">{{ net }}</td>
+                          <td class="text-end">{{ collection }}</td>
                         </tr>
                       {% endfor %}
                     </tbody>
                   </table>
                 </div>
               {% else %}
-                <div class="text-muted small">{{ t('No finance data available.') }}</div>
+                <div class="text-muted small">{{ t('No recorded fee collection data is available yet.') }}</div>
               {% endif %}
             </div>
           </div>
