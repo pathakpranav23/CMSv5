@@ -19,6 +19,7 @@ opens the delete transaction.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sqlite3
@@ -61,7 +62,6 @@ def _require_tables(connection: sqlite3.Connection) -> None:
     required = {
         "trusts", "institutes", "programs", "students", "users", "attendance",
         "student_subject_enrollments", "fee_payments", "fees_records", "notifications",
-        "data_audit_log",
     }
     missing = sorted(required - _table_names(connection))
     if missing:
@@ -139,6 +139,26 @@ def _backup_uploads(paths: list[Path], backup_dir: Path) -> Path:
         f"Backup of {copied} pilot-reset upload paths created {datetime.now(timezone.utc).isoformat()}\n",
         encoding="utf-8",
     )
+    return destination
+
+
+def _write_reset_manifest(backup_dir: Path, database: Path, scope: dict[str, object], deleted: dict[str, int], audit_in_database: bool) -> Path:
+    """Retain an auditable reset record even on a legacy database without DataAuditLog."""
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    destination = backup_dir / f"pilot_reset_manifest_{stamp}.json"
+    payload = {
+        "event": "pilot_reset",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "database": str(database),
+        "trust_id": scope["trust_id"],
+        "institute_id": scope["institute_id"],
+        "academic_setup_preserved": True,
+        "deleted_rows": deleted,
+        "database_audit_entry_written": audit_in_database,
+        "note": "External manifest used because data_audit_log was unavailable." if not audit_in_database else "Database audit entry written.",
+    }
+    destination.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return destination
 
 
@@ -231,7 +251,7 @@ def _preview(connection: sqlite3.Connection, scope: dict[str, object]) -> dict[s
     return report
 
 
-def _apply(connection: sqlite3.Connection, scope: dict[str, object], app_root: Path) -> tuple[dict[str, int], list[Path]]:
+def _apply(connection: sqlite3.Connection, scope: dict[str, object], app_root: Path) -> tuple[dict[str, int], list[Path], bool]:
     """Perform one transaction. Any missing dependent table causes a rollback."""
     tables = _table_names(connection)
     students = scope["student_ids"]
@@ -316,19 +336,23 @@ def _apply(connection: sqlite3.Connection, scope: dict[str, object], app_root: P
     delete_if_present("student accounts", "users", _in_where("user_id", student_users)[0], _in_where("user_id", student_users)[1])
 
     # Add the retained audit marker last, inside the same transaction as all deletes.
-    marker_counts = ", ".join(f"{name}={count}" for name, count in sorted(deleted.items()))
-    connection.execute(
-        "INSERT INTO data_audit_log (action, actor_user_id_fk, actor_role, trust_id_fk, selection_json, counts_json, created_at) "
-        "VALUES (?, NULL, ?, ?, ?, ?, ?)",
-        (
-            "pilot_reset",
-            "system",
-            trust_id,
-            '{"scope":"institution pilot reset","academic_setup":"preserved"}',
-            '{"deleted":"' + marker_counts.replace('"', "'") + '"}',
-            datetime.now(timezone.utc).isoformat(),
-        ),
-    )
+    # Legacy deployments may not yet have DataAuditLog; in that case main() writes
+    # a signed-off external manifest next to the mandatory database backup instead.
+    audit_in_database = "data_audit_log" in tables
+    if audit_in_database:
+        marker_counts = ", ".join(f"{name}={count}" for name, count in sorted(deleted.items()))
+        connection.execute(
+            "INSERT INTO data_audit_log (action, actor_user_id_fk, actor_role, trust_id_fk, selection_json, counts_json, created_at) "
+            "VALUES (?, NULL, ?, ?, ?, ?, ?)",
+            (
+                "pilot_reset",
+                "system",
+                trust_id,
+                '{"scope":"institution pilot reset","academic_setup":"preserved"}',
+                '{"deleted":"' + marker_counts.replace('"', "'") + '"}',
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
 
     static_root = app_root / "cms_app" / "static"
     instance_root = app_root / "instance"
@@ -354,7 +378,7 @@ def _apply(connection: sqlite3.Connection, scope: dict[str, object], app_root: P
     ))
     for announcement_id in announcement_ids:
         uploads.append((static_root / "uploads" / "announcements" / str(announcement_id)).resolve())
-    return deleted, uploads
+    return deleted, uploads, audit_in_database
 
 
 def _remove_uploads(paths: list[Path], app_root: Path) -> tuple[int, list[str]]:
@@ -431,10 +455,12 @@ def main() -> int:
         _require_tables(connection)
         scope = _context(connection, args.trust, args.institute)
         with connection:
-            deleted, uploads = _apply(connection, scope, app_root)
+            deleted, uploads, audit_in_database = _apply(connection, scope, app_root)
+        manifest = _write_reset_manifest(backup_dir, database, scope, deleted, audit_in_database)
         print("\nReset committed. Deleted rows:")
         for label, count in sorted(deleted.items()):
             print(f"  {label}: {count}")
+        print(f"Reset audit manifest: {manifest}")
         if args.delete_uploads:
             upload_backup = _backup_uploads(uploads, backup_dir)
             print(f"Referenced uploads backed up: {upload_backup}")
