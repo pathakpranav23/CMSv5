@@ -25,6 +25,7 @@ import math
 from io import BytesIO
 import time
 import secrets
+import hashlib
 from types import SimpleNamespace
 
 _rate_test_counters = {}
@@ -129,6 +130,8 @@ _STUDENT_FIELD_NAMES = [
     "photo_url",
     "permanent_address",
     "current_semester",
+    "admission_academic_year",
+    "intake_batch_id_fk",
     "medium_tag",
     "aadhar_no",
     "category",
@@ -8853,6 +8856,14 @@ def students():
         bulk_division_list = db.session.execute(
             bulk_divisions_q.order_by(Division.semester, Division.division_code)
         ).scalars().all()
+    can_assign_division = role_name in {"admin", "principal", "clerk"}
+    if role_name == "faculty" and selected_program_id and selected_semester not in ("all", ""):
+        try:
+            can_assign_division = _can_manage_division_allocation(
+                int(selected_program_id), int(selected_semester), ""
+            )
+        except (TypeError, ValueError):
+            can_assign_division = False
 
     # Division Filter
     if selected_division_id and selected_division_id != "all":
@@ -8927,6 +8938,7 @@ def students():
         sort_by=sort_by,
         division_list=division_list,
         bulk_division_list=bulk_division_list,
+        can_assign_division=can_assign_division,
         selected_limit=selected_limit,
         selected_page=selected_page,
         total_count=total_count,
@@ -9211,7 +9223,7 @@ def students_bulk_export():
 
 @main_bp.route("/students/bulk/assign-division", methods=["POST"])
 @login_required
-@role_required("admin", "principal", "clerk")
+@role_required("admin", "principal", "clerk", "faculty")
 def students_bulk_assign_division():
     selected_ids = _bulk_request_ids()
     target_division_raw = str(_bulk_request_value("target_division_id", "")).strip()
@@ -9227,12 +9239,32 @@ def students_bulk_assign_division():
     if not target_division:
         flash("Target division not found.", "danger")
         return redirect(_bulk_redirect_target("main.students"))
-    if not _bulk_program_in_current_scope(target_division.program_id_fk):
+    assignment_role = (getattr(current_user, "role", "") or "").strip().lower()
+    target_program = db.session.get(Program, target_division.program_id_fk)
+    target_trust_id = getattr(getattr(target_program, "institute", None), "trust_id_fk", None)
+    tenant_matches = not _effective_trust_id() or not target_trust_id or int(_effective_trust_id()) == int(target_trust_id)
+    if (assignment_role != "faculty" and not _bulk_program_in_current_scope(target_division.program_id_fk)) or not tenant_matches:
         flash("You are not authorized to assign students to that division.", "danger")
+        return redirect(_bulk_redirect_target("main.students"))
+    if not _can_manage_division_allocation(
+        target_division.program_id_fk,
+        target_division.semester,
+        target_division.medium_tag or "",
+    ):
+        flash("Only Admin, Clerk, Principal, or the assigned Class Coordinator may change this division.", "danger")
         return redirect(_bulk_redirect_target("main.students"))
 
     results = []
-    student_map = _fetch_bulk_students_mapping_map(selected_ids)
+    if assignment_role == "faculty":
+        student_map = {
+            enrollment_no: row
+            for enrollment_no, row in _fetch_students_mapping_map(selected_ids).items()
+            if row.get("program_id_fk") == target_division.program_id_fk
+            and row.get("current_semester") == target_division.semester
+            and (not _effective_trust_id() or not row.get("trust_id_fk") or int(row.get("trust_id_fk")) == int(_effective_trust_id()))
+        }
+    else:
+        student_map = _fetch_bulk_students_mapping_map(selected_ids)
     for enrollment_no in selected_ids:
         row = student_map.get(enrollment_no)
         if not row:
@@ -9241,11 +9273,72 @@ def students_bulk_assign_division():
         if row.get("program_id_fk") != target_division.program_id_fk:
             results.append({"id": enrollment_no, "status": "failed", "message": "Student program does not match target division"})
             continue
+        if row.get("current_semester") != target_division.semester:
+            results.append({"id": enrollment_no, "status": "failed", "message": "Student semester does not match target division"})
+            continue
+        student_medium = (row.get("medium_tag") or "").strip().lower()
+        division_medium = (target_division.medium_tag or "").strip().lower()
+        if division_medium and student_medium and division_medium != student_medium:
+            results.append({"id": enrollment_no, "status": "failed", "message": "Student MOI does not match target division"})
+            continue
+
+        # The admission-year intake defines the permitted division count and
+        # standard class size. Historical students without a recorded intake
+        # remain manageable through the compatible division master record.
+        from ..models import ProgramIntakeBatch
+        intake_batch = None
+        intake_batch_id = row.get("intake_batch_id_fk")
+        if intake_batch_id:
+            intake_batch = db.session.get(ProgramIntakeBatch, intake_batch_id)
+        if not intake_batch and row.get("admission_academic_year"):
+            candidates = db.session.execute(
+                select(ProgramIntakeBatch).filter_by(
+                    program_id_fk=target_division.program_id_fk,
+                    admission_academic_year=row.get("admission_academic_year"),
+                    status="active",
+                )
+            ).scalars().all()
+            intake_batch = next(
+                (batch for batch in candidates if (batch.medium_tag or "").strip().lower() == student_medium),
+                None,
+            ) or next((batch for batch in candidates if not (batch.medium_tag or "").strip()), None)
+        effective_capacity = int(target_division.capacity or 0)
+        if intake_batch:
+            effective_capacity = int(intake_batch.default_division_capacity or effective_capacity or 0)
+            permitted_count = int(math.ceil(int(intake_batch.approved_intake or 0) / effective_capacity)) if effective_capacity else 0
+            code = (target_division.division_code or "").strip().upper()
+            code_position = ord(code) - ord("A") + 1 if len(code) == 1 and "A" <= code <= "Z" else None
+            if not code_position or code_position > permitted_count:
+                results.append({
+                    "id": enrollment_no,
+                    "status": "failed",
+                    "message": f"Division {code or '?'} is not permitted by the student's {intake_batch.admission_academic_year} intake setup",
+                })
+                continue
         before_division = row.get("division_id_fk")
         if before_division == target_division.division_id:
             results.append({"id": enrollment_no, "status": "skipped", "message": "Already in target division"})
             continue
+        active_assigned = db.session.scalar(
+            select(func.count()).select_from(Student).filter(
+                Student.division_id_fk == target_division.division_id,
+                Student.program_id_fk == target_division.program_id_fk,
+                Student.current_semester == target_division.semester,
+                Student.is_active.is_(True),
+            )
+        ) or 0
+        if effective_capacity and active_assigned >= effective_capacity:
+            results.append({"id": enrollment_no, "status": "failed", "message": "Target division is at capacity"})
+            continue
         _update_student_row(enrollment_no, {"division_id_fk": target_division.division_id})
+        for enrollment in db.session.execute(
+            select(StudentSubjectEnrollment).filter_by(
+                student_id_fk=enrollment_no,
+                semester=target_division.semester,
+                is_active=True,
+            )
+        ).scalars().all():
+            enrollment.division_id_fk = target_division.division_id
         results.append({
             "id": enrollment_no,
             "status": "success",
@@ -9295,7 +9388,7 @@ def students_bulk_promote_semester():
         if current_semester == target_semester:
             results.append({"id": enrollment_no, "status": "skipped", "message": "Already in target semester"})
             continue
-        _update_student_row(enrollment_no, {"current_semester": target_semester})
+        _update_student_row(enrollment_no, {"current_semester": target_semester, "division_id_fk": None})
         if row.get("program_id_fk"):
             touched_program_ids.add(int(row.get("program_id_fk")))
         results.append({
@@ -9315,15 +9408,12 @@ def students_bulk_promote_semester():
         semester=target_semester,
     )
     db.session.commit()
-    for program_id in sorted(touched_program_ids):
-        program = db.session.get(Program, program_id)
-        if program:
-            _rebalance_program_divisions_for_semester(program, target_semester)
     if _bulk_wants_json():
         return jsonify(payload)
     flash(
         f"Bulk students action 'promote-semester' completed. Success: {payload['summary']['succeeded']}, "
-        f"Failed: {payload['summary']['failed']}, Skipped: {payload['summary']['skipped']}.",
+        f"Failed: {payload['summary']['failed']}, Skipped: {payload['summary']['skipped']}. "
+        "Promoted students are unassigned until the approved division allocation is previewed and applied.",
         "success" if payload["summary"]["failed"] == 0 else "warning",
     )
     return redirect(_bulk_redirect_target("main.students"))
@@ -12230,7 +12320,7 @@ def students_semester_promotion():
             updated = int(
                 getattr(
                     db.session.execute(
-                        student_table.update().where(*base_filters).values(current_semester=to_semester)
+                        student_table.update().where(*base_filters).values(current_semester=to_semester, division_id_fk=None)
                     ),
                     "rowcount",
                     0,
@@ -12239,9 +12329,12 @@ def students_semester_promotion():
             )
             try:
                 db.session.commit()
-                _rebalance_program_divisions_for_semester(selected_program, to_semester)
                 try:
-                    flash(f"Promoted {updated} students from Sem {from_semester} to Sem {to_semester}.", "success")
+                    flash(
+                        f"Promoted {updated} students from Sem {from_semester} to Sem {to_semester}. "
+                        "Students are unassigned until the approved division allocation is previewed and applied.",
+                        "success",
+                    )
                 except Exception:
                     pass
                 return redirect(url_for("main.students", program_id=selected_program.program_id, semester=to_semester))
@@ -12351,6 +12444,30 @@ def subject_toggle_elective(subject_id: int):
 def _get_serializer():
     secret = current_app.config.get("SECRET_KEY") or getattr(current_app, "secret_key", None) or "dev-secret-key"
     return URLSafeTimedSerializer(secret)
+
+
+def _student_import_draft_dir():
+    draft_dir = os.path.join(current_app.instance_path, "student_import_drafts")
+    os.makedirs(draft_dir, exist_ok=True)
+    return draft_dir
+
+
+def _student_import_file_hash(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _student_import_token(draft_id):
+    return _get_serializer().dumps({"draft_id": draft_id}, salt="student-import-confirm")
+
+
+def _student_import_manifest_path(draft_id):
+    if not re.fullmatch(r"[0-9a-f]{32}", draft_id or ""):
+        raise ValueError("Invalid import draft identifier.")
+    return os.path.join(_student_import_draft_dir(), f"{draft_id}.json")
 
 # Admin: User Management
 @main_bp.route("/admin/users")
@@ -15671,6 +15788,7 @@ def admin_workflow_new_academic_year():
         "logbook": "main.admin_logbook",
         "student_lifecycle": "main.student_lifecycle",
         "staff_lifecycle": "main.staff_lifecycle",
+        "intake_carry_forward": "main.academic_year_intake_carry_forward",
     }
     for k, ep in endpoints.items():
         try:
@@ -15678,6 +15796,97 @@ def admin_workflow_new_academic_year():
         except BuildError:
             urls[k] = None
     return render_template("workflow_new_academic_year.html", role=role, urls=urls)
+
+
+def _next_academic_year_label(value):
+    match = re.fullmatch(r"(\d{4})-(\d{2})", (value or "").strip())
+    if not match:
+        return ""
+    start = int(match.group(1)) + 1
+    return f"{start}-{(start + 1) % 100:02d}"
+
+
+@main_bp.route("/admin/workflows/new-academic-year/intakes", methods=["GET", "POST"])
+@login_required
+@role_required("admin", "principal")
+@csrf_required
+def academic_year_intake_carry_forward():
+    """Preview and copy prior program-year intake settings as inactive drafts."""
+    from ..models import ProgramIntakeBatch
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    source_year = (request.values.get("source_year") or current_academic_year()).strip()
+    target_year = (request.values.get("target_year") or _next_academic_year_label(source_year)).strip()
+    valid_source = bool(re.fullmatch(r"\d{4}-\d{2}", source_year))
+    valid_target = target_year == _next_academic_year_label(source_year)
+    if not valid_source or not valid_target:
+        flash("Choose consecutive academic years, for example 2026-27 to 2027-28.", "danger")
+        return redirect(url_for("main.academic_year_intake_carry_forward"))
+
+    program_query = select(Program).order_by(Program.program_name.asc())
+    effective_trust_id = _effective_trust_id()
+    if role == "principal":
+        program_query = program_query.filter(Program.program_id == int(getattr(current_user, "program_id_fk", 0) or 0))
+    elif effective_trust_id:
+        program_query = (
+            program_query.join(Institute, Program.institute_id_fk == Institute.institute_id)
+            .filter(Institute.trust_id_fk == effective_trust_id)
+        )
+    programs = db.session.execute(program_query).scalars().all()
+    program_ids = [program.program_id for program in programs]
+    source_batches = db.session.execute(
+        select(ProgramIntakeBatch)
+        .filter(ProgramIntakeBatch.program_id_fk.in_(program_ids or [-1]))
+        .filter_by(admission_academic_year=source_year)
+        .order_by(ProgramIntakeBatch.program_id_fk, ProgramIntakeBatch.medium_tag)
+    ).scalars().all()
+    existing_targets = db.session.execute(
+        select(ProgramIntakeBatch)
+        .filter(ProgramIntakeBatch.program_id_fk.in_(program_ids or [-1]))
+        .filter_by(admission_academic_year=target_year)
+    ).scalars().all()
+    target_keys = {(batch.program_id_fk, (batch.medium_tag or "").strip().lower()) for batch in existing_targets}
+    program_map = {program.program_id: program for program in programs}
+    preview_rows = [{
+        "source": batch,
+        "program": program_map.get(batch.program_id_fk),
+        "already_exists": (batch.program_id_fk, (batch.medium_tag or "").strip().lower()) in target_keys,
+        "maximum_divisions": int(math.ceil(int(batch.approved_intake or 0) / int(batch.default_division_capacity or 1))),
+    } for batch in source_batches]
+
+    if request.method == "POST":
+        created = 0
+        skipped = 0
+        for row in preview_rows:
+            source = row["source"]
+            if row["already_exists"]:
+                skipped += 1
+                continue
+            db.session.add(ProgramIntakeBatch(
+                program_id_fk=source.program_id_fk,
+                admission_academic_year=target_year,
+                approved_intake=source.approved_intake,
+                default_division_capacity=source.default_division_capacity,
+                medium_tag=source.medium_tag or "",
+                status="draft",
+            ))
+            created += 1
+        _bulk_audit_entry(
+            "academic_year_intake_draft_copy",
+            {"source_year": source_year, "target_year": target_year},
+            {"created": created, "skipped_existing": skipped},
+        )
+        db.session.commit()
+        flash(f"Created {created} draft intake setup(s) for {target_year}; skipped {skipped} existing setup(s). Review each draft before activation.", "success")
+        return redirect(url_for("main.academic_year_intake_carry_forward", source_year=source_year, target_year=target_year))
+
+    return render_template(
+        "academic_year_intake_carry_forward.html",
+        source_year=source_year,
+        target_year=target_year,
+        preview_rows=preview_rows,
+        existing_target_count=len(existing_targets),
+    )
 
 # Programs management (Admin-only)
 @main_bp.route("/programs")
@@ -15836,18 +16045,27 @@ def program_new():
 @role_required("admin")
 def program_edit(program_id: int):
     from ..models import Program, Institute
-    if not getattr(current_user, "is_super_admin", False):
-        abort(403)
     p = db.session.get(Program, program_id)
     if not p:
         abort(404)
     inst = _fetch_institute_row(p.institute_id_fk) if p.institute_id_fk else None
     trust_id = (inst.get("trust_id_fk") if inst else None)
+    is_super_admin = bool(getattr(current_user, "is_super_admin", False))
+    if not is_super_admin:
+        try:
+            user_trust_id = int(getattr(current_user, "trust_id_fk", None) or 0)
+            program_trust_id = int(trust_id or 0)
+        except (TypeError, ValueError):
+            user_trust_id = program_trust_id = 0
+        if not user_trust_id or user_trust_id != program_trust_id:
+            abort(403)
     institutes = []
     if trust_id:
         institutes = _list_institutes_for_trust(trust_id)
     if request.method == "POST":
-        name = (request.form.get("program_name") or "").strip()
+        # Tenant Admin may correct operational duration during onboarding, but
+        # cannot rename or move a program. Those remain Super Admin actions.
+        name = (request.form.get("program_name") or "").strip() if is_super_admin else (p.program_name or "").strip()
         duration_raw = (request.form.get("program_duration_years") or "").strip()
         inst_id_raw = (request.form.get("institute_id_fk") or "").strip()
         errors = []
@@ -15867,7 +16085,7 @@ def program_edit(program_id: int):
         except Exception:
             duration = p.program_duration_years or 3
         try:
-            new_inst_id = int(inst_id_raw) if inst_id_raw else p.institute_id_fk
+            new_inst_id = int(inst_id_raw) if (is_super_admin and inst_id_raw) else p.institute_id_fk
         except Exception:
             new_inst_id = p.institute_id_fk
         if trust_id and new_inst_id:
@@ -15875,11 +16093,18 @@ def program_edit(program_id: int):
             if not ok:
                 errors.append("Invalid institute selection for this trust.")
         if errors:
-            return render_template("program_edit.html", errors=errors, program=p, institutes=institutes, trust_id=trust_id, form={"program_name": name, "program_duration_years": duration_raw, "institute_id_fk": inst_id_raw})
+            return render_template("program_edit.html", errors=errors, program=p, institutes=institutes, trust_id=trust_id, tenant_duration_only=(not is_super_admin), form={"program_name": name, "program_duration_years": duration_raw, "institute_id_fk": inst_id_raw})
         try:
+            old_duration = p.program_duration_years
             p.program_name = name
             p.program_duration_years = duration
             p.institute_id_fk = new_inst_id
+            _bulk_audit_entry(
+                "program_duration_update" if not is_super_admin else "program_update",
+                {"program_id": p.program_id, "duration_years": old_duration},
+                {"duration_years": duration},
+                program_id=p.program_id,
+            )
             db.session.commit()
             try:
                 current_app.logger.info(
@@ -15892,9 +16117,16 @@ def program_edit(program_id: int):
         except Exception:
             db.session.rollback()
             flash("Failed to update program.", "danger")
-            return render_template("program_edit.html", errors=["Database error. Please try again."], program=p, institutes=institutes, trust_id=trust_id, form={"program_name": name, "program_duration_years": duration_raw, "institute_id_fk": inst_id_raw})
+            return render_template("program_edit.html", errors=["Database error. Please try again."], program=p, institutes=institutes, trust_id=trust_id, tenant_duration_only=(not is_super_admin), form={"program_name": name, "program_duration_years": duration_raw, "institute_id_fk": inst_id_raw})
     # GET
-    return render_template("program_edit.html", program=p, institutes=institutes, trust_id=trust_id, form={"institute_id_fk": (str(p.institute_id_fk) if p.institute_id_fk else "")})
+    return render_template(
+        "program_edit.html",
+        program=p,
+        institutes=institutes,
+        trust_id=trust_id,
+        tenant_duration_only=(not is_super_admin),
+        form={"institute_id_fk": (str(p.institute_id_fk) if p.institute_id_fk else "")},
+    )
 
 @main_bp.route("/programs/<int:program_id>/delete", methods=["POST"])
 @login_required
@@ -15957,9 +16189,10 @@ def program_delete(program_id: int):
 @main_bp.route("/clerk/students/import", methods=["GET", "POST"])
 @login_required
 @role_required("admin", "principal", "clerk")
+@csrf_required
 @limiter.limit("10 per minute")
 def students_import():
-    from ..models import Program
+    from ..models import Program, ProgramIntakeBatch
     role = (getattr(current_user, "role", "") or "").strip().lower()
     effective_trust_id = _effective_trust_id()
     if getattr(current_user, "is_super_admin", False) and not effective_trust_id:
@@ -16007,9 +16240,24 @@ def students_import():
     if request.method == "POST":
         program_id_raw = (request.form.get("program_id_fk") or "").strip()
         semester_hint_raw = (request.form.get("semester_hint") or "").strip()
+        import_mode = (request.form.get("import_mode") or "").strip().lower()
+        admission_academic_year = (request.form.get("admission_academic_year") or "").strip()
+        medium_hint = (request.form.get("medium_hint") or "").strip()
+        division_hint = (request.form.get("division_hint") or "").strip().upper()
         upload = request.files.get("file")
-        dry_run_flag = ((request.form.get("dry_run") or "").strip().lower() in {"1","true","on"})
+        # Validation and preview is mandatory. Committing happens only through
+        # the signed confirmation endpoint below.
+        dry_run_flag = True
         errors = []
+        form_values = {
+            "program_id_fk": program_id_raw,
+            "semester_hint": semester_hint_raw,
+            "import_mode": import_mode,
+            "admission_academic_year": admission_academic_year,
+            "medium_hint": medium_hint,
+            "division_hint": division_hint,
+            "dry_run": dry_run_flag,
+        }
         # Parse inputs
         selected_program = None
         try:
@@ -16037,6 +16285,48 @@ def students_import():
             semester_hint = None
         if not selected_program:
             errors.append("Please select a program.")
+        if import_mode not in {"new", "existing"}:
+            errors.append("Please select whether these are new admissions or existing students.")
+        year_match = re.fullmatch(r"(\d{4})-(\d{2})", admission_academic_year)
+        if not year_match or int(year_match.group(2)) != (int(year_match.group(1)) + 1) % 100:
+            errors.append("Enter a valid admission academic year, for example 2025-26.")
+        if not semester_hint:
+            errors.append("Please select the students' exact current semester.")
+        elif selected_program and semester_hint > max(int(selected_program.program_duration_years or 1), 1) * 2:
+            errors.append(
+                f"Semester {semester_hint} is outside the configured {selected_program.program_duration_years or 1}-year "
+                f"structure for {selected_program.program_name}. Correct the program duration first."
+            )
+        if not medium_hint:
+            errors.append("Please select the medium of instruction (MOI).")
+        intake_guidance = None
+        if not errors and import_mode == "new" and selected_program:
+            batches = db.session.execute(
+                select(ProgramIntakeBatch).filter_by(
+                    program_id_fk=selected_program.program_id,
+                    admission_academic_year=admission_academic_year,
+                    status="active",
+                )
+            ).scalars().all()
+            matching_batch = next(
+                (batch for batch in batches if (batch.medium_tag or "").strip().lower() == medium_hint.lower()),
+                None,
+            ) or next((batch for batch in batches if not (batch.medium_tag or "").strip()), None)
+            if not matching_batch:
+                errors.append("New admissions require an active approved-intake record for the selected program, academic year, and MOI.")
+                if role in {"admin", "principal"}:
+                    intake_guidance = {
+                        "authorized": True,
+                        "url": url_for(
+                            "main.program_intakes",
+                            program_id=selected_program.program_id,
+                            admission_academic_year=admission_academic_year,
+                            medium_tag=medium_hint,
+                            return_to=url_for("main.students_import"),
+                        ),
+                    }
+                else:
+                    intake_guidance = {"authorized": False}
         if not upload:
             errors.append("Please upload an Excel file.")
         else:
@@ -16045,17 +16335,17 @@ def students_import():
             if ext not in {"xlsx", "xls"}:
                 errors.append("File must be an Excel (.xlsx/.xls).")
         if errors:
-            return render_template("students_import.html", programs=programs, errors=errors, form={"program_id_fk": program_id_raw, "semester_hint": semester_hint_raw, "dry_run": dry_run_flag})
+            return render_template("students_import.html", programs=programs, errors=errors, form=form_values, current_year=current_academic_year(), intake_guidance=intake_guidance)
         # Save file
         try:
-            base_dir = os.path.join(current_app.static_folder, "imports", "students")
-            os.makedirs(base_dir, exist_ok=True)
+            base_dir = _student_import_draft_dir()
             filename = secure_filename(upload.filename)
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            save_path = os.path.join(base_dir, f"{ts}_{filename}")
+            draft_id = secrets.token_hex(16)
+            extension = os.path.splitext(filename)[1].lower()
+            save_path = os.path.join(base_dir, f"{draft_id}{extension}")
             upload.save(save_path)
         except Exception:
-            return render_template("students_import.html", programs=programs, errors=["Failed to save uploaded file."], form={"program_id_fk": program_id_raw, "semester_hint": semester_hint_raw, "dry_run": dry_run_flag})
+            return render_template("students_import.html", programs=programs, errors=["Failed to save uploaded file."], form=form_values, current_year=current_academic_year())
         # Perform import
         try:
             from scripts.import_students import import_excel
@@ -16065,15 +16355,54 @@ def students_import():
                 trust_id=effective_trust_id,
                 semester_hint=semester_hint,
                 dry_run=dry_run_flag,
+                import_mode=import_mode,
+                admission_academic_year_hint=admission_academic_year,
+                medium_hint=medium_hint,
+                division_hint=division_hint,
+                replace_scope=False,
             )
             try:
                 report["dry_run"] = dry_run_flag
+                report["file_name"] = filename
             except Exception:
                 pass
-            if not dry_run_flag:
-                db.session.commit()
-            else:
-                db.session.rollback()
+            # A uniform admission-year mismatch is a form-scope error, not 100+
+            # independent row errors. Return to the form and put the user at the
+            # field that must be corrected.
+            if not (report.get("created") or report.get("updated")) and report.get("errors"):
+                year_conflicts = []
+                other_errors = []
+                conflict_pattern = re.compile(
+                    r"^Row \d+: admission year '([^']+)' conflicts with selected '([^']+)'; skipped$"
+                )
+                for report_error in report.get("errors") or []:
+                    conflict_match = conflict_pattern.match(str(report_error))
+                    if conflict_match:
+                        year_conflicts.append(conflict_match.groups())
+                    else:
+                        other_errors.append(report_error)
+                workbook_years = {pair[0] for pair in year_conflicts}
+                selected_years = {pair[1] for pair in year_conflicts}
+                if year_conflicts and not other_errors and len(workbook_years) == 1 and len(selected_years) == 1:
+                    from scripts.import_students import normalize_academic_year
+                    workbook_year_raw = next(iter(workbook_years))
+                    expected_year = normalize_academic_year(workbook_year_raw)
+                    selected_year = next(iter(selected_years))
+                    correction_message = (
+                        f"Admission academic year mismatch: the uploaded file contains '{workbook_year_raw}' "
+                        f"(academic year {expected_year}), but you selected {selected_year}. "
+                        f"Change Admission academic year to {expected_year}, then select and upload the same file again."
+                    )
+                    return render_template(
+                        "students_import.html",
+                        programs=programs,
+                        errors=[correction_message],
+                        form=form_values,
+                        current_year=current_academic_year(),
+                        focus_field="admission_academic_year",
+                        suggested_admission_year=expected_year,
+                    )
+            db.session.rollback()
             try:
                 from ..models import ImportLog
                 lg = ImportLog(
@@ -16081,7 +16410,7 @@ def students_import():
                     kind="students",
                     program_id_fk=(selected_program.program_id if selected_program else None),
                     semester=semester_hint,
-                    medium_tag=None,
+                    medium_tag=medium_hint,
                     path=save_path,
                     dry_run=dry_run_flag,
                     created_count=report.get("created") or 0,
@@ -16093,12 +16422,185 @@ def students_import():
                 db.session.commit()
             except Exception:
                 db.session.rollback()
-            return render_template("students_import_result.html", programs=programs, report=report)
+            confirmation_token = None
+            if not (report.get("errors_count") or report.get("skipped")):
+                manifest = {
+                    "draft_id": draft_id,
+                    "status": "validated",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "user_id": getattr(current_user, "user_id", None),
+                    "trust_id": effective_trust_id,
+                    "program_id": selected_program.program_id,
+                    "semester": semester_hint,
+                    "import_mode": import_mode,
+                    "admission_academic_year": admission_academic_year,
+                    "medium_hint": medium_hint,
+                    "division_hint": division_hint,
+                    "file_name": filename,
+                    "file_path": save_path,
+                    "file_sha256": _student_import_file_hash(save_path),
+                    "validation": {
+                        key: int(report.get(key) or 0)
+                        for key in ("created", "updated", "skipped", "errors_count", "divisions_created")
+                    },
+                }
+                with open(_student_import_manifest_path(draft_id), "w", encoding="utf-8") as manifest_file:
+                    json.dump(manifest, manifest_file, indent=2)
+                confirmation_token = _student_import_token(draft_id)
+            return render_template(
+                "students_import_result.html",
+                programs=programs,
+                report=report,
+                confirmation_token=confirmation_token,
+            )
         except Exception as e:
             db.session.rollback()
-            return render_template("students_import.html", programs=programs, errors=[f"Import failed: {e}"], form={"program_id_fk": program_id_raw, "semester_hint": semester_hint_raw, "dry_run": dry_run_flag})
+            return render_template("students_import.html", programs=programs, errors=[f"Import failed: {e}"], form=form_values, current_year=current_academic_year())
     # GET
-    return render_template("students_import.html", programs=programs)
+    return render_template("students_import.html", programs=programs, current_year=current_academic_year())
+
+
+@main_bp.route("/clerk/students/import/confirm", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk")
+@csrf_required
+@limiter.limit("10 per minute")
+def students_import_confirm():
+    token = (request.form.get("confirmation_token") or "").strip()
+    try:
+        token_data = _get_serializer().loads(token, salt="student-import-confirm", max_age=3600)
+        draft_id = token_data.get("draft_id")
+        manifest_path = _student_import_manifest_path(draft_id)
+        with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+            manifest = json.load(manifest_file)
+    except SignatureExpired:
+        flash("This validated import has expired. Validate the file again.", "warning")
+        return redirect(url_for("main.students_import"))
+    except (BadSignature, OSError, ValueError, json.JSONDecodeError):
+        flash("This import confirmation is invalid or unavailable. Validate the file again.", "danger")
+        return redirect(url_for("main.students_import"))
+
+    effective_trust_id = _effective_trust_id()
+    if (
+        manifest.get("status") != "validated"
+        or int(manifest.get("user_id") or 0) != int(getattr(current_user, "user_id", 0) or 0)
+        or int(manifest.get("trust_id") or 0) != int(effective_trust_id or 0)
+    ):
+        flash("This validated import cannot be executed in the current user or trust context.", "danger")
+        return redirect(url_for("main.students_import"))
+
+    resolved_file = os.path.realpath(manifest.get("file_path") or "")
+    draft_root = os.path.realpath(_student_import_draft_dir())
+    if os.path.commonpath([draft_root, resolved_file]) != draft_root or not os.path.isfile(resolved_file):
+        flash("The validated upload is no longer available. Validate the file again.", "warning")
+        return redirect(url_for("main.students_import"))
+
+    lock_path = manifest_path + ".lock"
+    try:
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(lock_fd)
+    except FileExistsError:
+        flash("This import is already being processed.", "warning")
+        return redirect(url_for("main.students_import"))
+
+    try:
+        if _student_import_file_hash(resolved_file) != manifest.get("file_sha256"):
+            raise ValueError("The uploaded file changed after validation.")
+
+        program = db.session.get(Program, int(manifest["program_id"]))
+        if not program:
+            raise ValueError("The selected program no longer exists.")
+        current_role = (getattr(current_user, "role", "") or "").strip().lower()
+        if current_role in {"principal", "clerk"}:
+            current_program_id = int(getattr(current_user, "program_id_fk", 0) or 0)
+            if current_program_id != int(program.program_id):
+                raise ValueError("Your assigned program changed after validation. Validate the file again.")
+        if effective_trust_id:
+            allowed_program = db.session.execute(
+                select(Program)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Program.program_id == program.program_id, Institute.trust_id_fk == effective_trust_id)
+            ).scalars().first()
+            if not allowed_program:
+                raise ValueError("The selected program is outside the current trust.")
+
+        from scripts.import_students import import_excel
+        import_args = {
+            "path": resolved_file,
+            "program_id": program.program_id,
+            "trust_id": effective_trust_id,
+            "semester_hint": int(manifest["semester"]),
+            "import_mode": manifest["import_mode"],
+            "admission_academic_year_hint": manifest["admission_academic_year"],
+            "medium_hint": manifest["medium_hint"],
+            "division_hint": manifest.get("division_hint") or "",
+            "replace_scope": False,
+        }
+        recheck = import_excel(dry_run=True, **import_args)
+        recheck_summary = {
+            key: int(recheck.get(key) or 0)
+            for key in ("created", "updated", "skipped", "errors_count", "divisions_created")
+        }
+        if recheck_summary != manifest.get("validation") or recheck_summary["errors_count"] or recheck_summary["skipped"]:
+            raise ValueError("Data or validation results changed after preview. Validate the file again.")
+
+        manifest["status"] = "processing"
+        manifest["processing_at"] = datetime.now(timezone.utc).isoformat()
+        with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+            json.dump(manifest, manifest_file, indent=2)
+
+        report = import_excel(dry_run=False, **import_args)
+        manifest["status"] = "completed"
+        manifest["completed_at"] = datetime.now(timezone.utc).isoformat()
+        manifest["execution"] = {
+            key: int(report.get(key) or 0)
+            for key in ("created", "updated", "skipped", "errors_count", "divisions_created")
+        }
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+                json.dump(manifest, manifest_file, indent=2)
+        except Exception:
+            current_app.logger.exception("Student import committed but completion manifest could not be updated: %s", draft_id)
+
+        try:
+            from ..models import ImportLog
+            db.session.add(ImportLog(
+                user_id_fk=getattr(current_user, "user_id", None),
+                kind="students",
+                program_id_fk=program.program_id,
+                semester=int(manifest["semester"]),
+                medium_tag=manifest["medium_hint"],
+                path=resolved_file,
+                dry_run=False,
+                created_count=report.get("created") or 0,
+                updated_count=report.get("updated") or 0,
+                skipped_count=report.get("skipped") or 0,
+                errors_count=report.get("errors_count") or 0,
+                extra_json=json.dumps({"draft_id": draft_id, "file_sha256": manifest["file_sha256"]}),
+            ))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        report["dry_run"] = False
+        report["executed"] = True
+        report["file_name"] = manifest.get("file_name")
+        return render_template("students_import_result.html", programs=[], report=report)
+    except Exception as exc:
+        db.session.rollback()
+        try:
+            manifest["status"] = "stale"
+            manifest["failure"] = str(exc)
+            with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+                json.dump(manifest, manifest_file, indent=2)
+        except Exception:
+            pass
+        flash(f"Import was not executed: {exc}", "danger")
+        return redirect(url_for("main.students_import"))
+    finally:
+        try:
+            os.remove(lock_path)
+        except OSError:
+            pass
 
 # Clerk bulk subject import (upload)
 @main_bp.route("/clerk/subjects/import", methods=["GET", "POST"])
@@ -16335,8 +16837,8 @@ def students_import_template():
     # Provide a minimal CSV template for convenience
     import io
     sample = io.StringIO()
-    sample.write("Enrollment No,Surname,Student Name,Father Name,Division,Semester,Mobile,DOB,Gender,Medium\n")
-    sample.write("2021BBA001,Doe,John,Richard,A,3,9876543210,2003-01-15,Male,English\n")
+    sample.write("Enrollment No,Surname,Student Name,Father Name,Division,Semester,Admission Academic Year,Mobile,DOB,Gender,Medium\n")
+    sample.write("2021BBA001,Doe,John,Richard,A,3,2024-25,9876543210,2003-01-15,Male,English\n")
     data = sample.getvalue().encode("utf-8")
     return Response(
         data,
@@ -16357,9 +16859,9 @@ def students_import_template_xlsx():
     wb = Workbook()
     ws = wb.active
     ws.title = "Students"
-    ws.append(["Enrollment No", "Surname", "Student Name", "Father Name", "Division", "Semester", "Mobile", "DOB", "Gender", "Medium"])
-    ws.append(["2021BBA001", "Doe", "John", "Richard", "A", 3, "9876543210", "2003-01-15", "Male", "English"])
-    ws.append(["2021BBA002", "Patel", "Abhay", "Rajesh", "A", 3, "9988776655", "2003-02-20", "Male", "English"])
+    ws.append(["Enrollment No", "Surname", "Student Name", "Father Name", "Division", "Semester", "Admission Academic Year", "Mobile", "DOB", "Gender", "Medium"])
+    ws.append(["2021BBA001", "Doe", "John", "Richard", "A", 3, "2024-25", "9876543210", "2003-01-15", "Male", "English"])
+    ws.append(["2021BBA002", "Patel", "Abhay", "Rajesh", "A", 3, "2024-25", "9988776655", "2003-02-20", "Male", "English"])
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -17560,7 +18062,7 @@ def fees_structure_compare():
 # Divisions/Sections module
 @main_bp.route("/modules/divisions")
 @login_required
-@role_required("admin", "principal", "clerk")
+@role_required("admin", "principal", "clerk", "faculty")
 def module_divisions():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     effective_trust_id = None
@@ -17579,7 +18081,15 @@ def module_divisions():
     program_id_arg = (request.args.get("program_id") or "").strip()
     if role in ("principal", "clerk"):
         program_id_arg = str(user_program_id or "")
-    ctx = _program_dropdown_context(program_id_arg, include_admin_all=False, warn_unmapped=False, fallback_to_first=True, prefer_user_program_default=True)
+    # Admins must choose a program explicitly. Principal/Clerk remain locked to
+    # their mapped program by _program_dropdown_context.
+    ctx = _program_dropdown_context(
+        program_id_arg,
+        include_admin_all=False,
+        warn_unmapped=False,
+        fallback_to_first=False,
+        prefer_user_program_default=(role != "admin"),
+    )
     selected_program_id = ctx.get("selected_program_id")
     q = select(Division)
     if effective_trust_id:
@@ -17591,23 +18101,20 @@ def module_divisions():
     if selected_program_id:
         q = q.where(Division.program_id_fk == selected_program_id)
     divisions = db.session.execute(q).scalars().all()
-    total_capacity = 0
-    total_enrolled = 0
-    for d in divisions:
-        cap = int(d.capacity or 0)
-        total_capacity += cap
-        try:
-            scq = select(func.count()).select_from(Student).filter_by(division_id_fk=d.division_id)
-            if effective_trust_id:
-                scq = scq.filter(Student.trust_id_fk == effective_trust_id)
-            enrolled = db.session.scalar(scq)
-        except Exception:
-            enrolled = 0
-        total_enrolled += enrolled
-    overall_pct = round((total_enrolled * 100.0 / total_capacity), 1) if total_capacity else None
+    active_students = 0
+    if selected_program_id:
+        student_scope = select(func.count()).select_from(Student).filter(
+            Student.program_id_fk == selected_program_id,
+            Student.is_active.is_(True),
+        )
+        if effective_trust_id:
+            student_scope = student_scope.filter(Student.trust_id_fk == effective_trust_id)
+        active_students = int(db.session.scalar(student_scope) or 0)
     # Load existing planning for this program
-    from ..models import ProgramDivisionPlan, Program
+    from ..models import ProgramDivisionPlan, Program, ProgramIntakeBatch
     plans = []
+    edit_plan = None
+    intake_batches = []
     selected_program = None
     if selected_program_id:
         selected_program = db.session.get(Program, selected_program_id)
@@ -17618,20 +18125,350 @@ def module_divisions():
                 .order_by(ProgramDivisionPlan.semester.asc())
             ).scalars().all()
         )
+        try:
+            edit_plan_id = int((request.args.get("edit_plan_id") or "").strip())
+        except (TypeError, ValueError):
+            edit_plan_id = 0
+        if edit_plan_id:
+            candidate = db.session.get(ProgramDivisionPlan, edit_plan_id)
+            if candidate and candidate.program_id_fk == selected_program_id:
+                edit_plan = candidate
+            else:
+                flash("The selected division rule is not available for this program.", "danger")
+        intake_batches = db.session.execute(
+            select(ProgramIntakeBatch)
+            .filter_by(program_id_fk=selected_program_id)
+            .order_by(ProgramIntakeBatch.admission_academic_year.desc(), ProgramIntakeBatch.medium_tag.asc())
+        ).scalars().all()
     return render_template(
         "module_divisions.html",
         role=role,
-        usage_summary={"total_capacity": total_capacity, "total_enrolled": total_enrolled, "overall_pct": overall_pct},
+        programs=ctx.get("program_list") or [],
+        usage_summary=(
+            {
+                "division_count": len(divisions),
+                "active_students": active_students,
+            }
+            if selected_program else None
+        ),
         division_plans=plans,
+        edit_plan=edit_plan,
+        intake_batches=intake_batches,
         selected_program=selected_program,
+        current_academic_year_value=current_academic_year(),
     )
 
 
-@main_bp.route("/modules/divisions/planning/save", methods=["POST"]) 
+def _can_manage_division_allocation(program_id, semester, medium_tag=""):
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role in {"admin", "principal", "clerk"}:
+        if not _bulk_program_in_current_scope(program_id):
+            return False
+        if role in {"principal", "clerk"}:
+            return int(getattr(current_user, "program_id_fk", 0) or 0) == int(program_id)
+        return True
+    if role != "faculty":
+        return False
+    coordinator_query = select(SemesterCoordinator).filter(
+        SemesterCoordinator.program_id_fk == int(program_id),
+        SemesterCoordinator.semester == int(semester),
+        SemesterCoordinator.faculty_user_id_fk == int(getattr(current_user, "user_id", 0) or 0),
+        SemesterCoordinator.academic_year == current_academic_year(),
+        SemesterCoordinator.is_active.is_(True),
+    )
+    medium = (medium_tag or "").strip()
+    if medium:
+        coordinator_query = coordinator_query.filter(
+            or_(SemesterCoordinator.medium_tag == medium, SemesterCoordinator.medium_tag.is_(None), SemesterCoordinator.medium_tag == "")
+        )
+    return db.session.execute(coordinator_query).scalars().first() is not None
+
+
+@main_bp.route("/modules/program-intakes")
 @login_required
-@role_required("admin", "principal", "clerk")
+@role_required("admin", "principal")
+def program_intakes():
+    """Maintain sanctioned intake separately from operational division allocation."""
+    from ..models import ProgramIntakeBatch
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    try:
+        program_id = int((request.args.get("program_id") or "").strip())
+    except (TypeError, ValueError):
+        program_id = 0
+    if role == "principal":
+        try:
+            program_id = int(getattr(current_user, "program_id_fk", None) or 0)
+        except Exception:
+            program_id = 0
+    if not program_id or not _bulk_program_in_current_scope(program_id):
+        flash("Select an authorized program first.", "danger")
+        return redirect(url_for("main.module_divisions"))
+    selected_program = db.session.get(Program, program_id)
+    intake_batches = db.session.execute(
+        select(ProgramIntakeBatch)
+        .filter_by(program_id_fk=program_id)
+        .order_by(ProgramIntakeBatch.admission_academic_year.desc(), ProgramIntakeBatch.medium_tag.asc())
+    ).scalars().all()
+    linked_counts = dict(db.session.execute(
+        select(Student.intake_batch_id_fk, func.count())
+        .filter(Student.intake_batch_id_fk.in_([batch.intake_batch_id for batch in intake_batches]))
+        .group_by(Student.intake_batch_id_fk)
+    ).all()) if intake_batches else {}
+    edit_batch = None
+    try:
+        edit_id = int((request.args.get("edit_id") or "").strip())
+    except (TypeError, ValueError):
+        edit_id = 0
+    if edit_id:
+        candidate = db.session.get(ProgramIntakeBatch, edit_id)
+        if candidate and candidate.program_id_fk == program_id:
+            edit_batch = candidate
+        else:
+            flash("The selected intake record is not available in this program.", "danger")
+    prefill_year = (request.args.get("admission_academic_year") or "").strip()
+    prefill_medium = (request.args.get("medium_tag") or "").strip()
+    return_to = (request.args.get("return_to") or "").strip()
+    if not return_to.startswith("/") or return_to.startswith("//"):
+        return_to = ""
+    return render_template(
+        "program_intakes.html",
+        selected_program=selected_program,
+        intake_batches=intake_batches,
+        linked_counts=linked_counts,
+        edit_batch=edit_batch,
+        prefill_year=prefill_year,
+        prefill_medium=prefill_medium,
+        return_to=return_to,
+    )
+
+
+@main_bp.route("/modules/divisions/intake/save", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+@csrf_required
+def program_intake_batch_save():
+    from ..models import ProgramIntakeBatch
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    try:
+        program_id = int((request.form.get("program_id") or "").strip())
+    except (TypeError, ValueError):
+        program_id = 0
+    if role == "principal":
+        try:
+            program_id = int(getattr(current_user, "program_id_fk", None) or 0)
+        except Exception:
+            program_id = 0
+    if not program_id or not _bulk_program_in_current_scope(program_id):
+        flash("You are not authorized to configure intake for that program.", "danger")
+        return redirect(url_for("main.module_divisions"))
+    academic_year = (request.form.get("admission_academic_year") or "").strip()
+    medium_tag = (request.form.get("medium_tag") or "").strip()
+    status = (request.form.get("status") or "active").strip().lower()
+    return_to = (request.form.get("return_to") or "").strip()
+    if not return_to.startswith("/") or return_to.startswith("//"):
+        return_to = ""
+    try:
+        intake_batch_id = int((request.form.get("intake_batch_id") or "").strip())
+    except (TypeError, ValueError):
+        intake_batch_id = 0
+    try:
+        approved_intake = int((request.form.get("approved_intake") or "").strip())
+        division_capacity = int((request.form.get("default_division_capacity") or "").strip())
+    except (TypeError, ValueError):
+        approved_intake = division_capacity = 0
+    year_match = re.fullmatch(r"(\d{4})-(\d{2})", academic_year)
+    year_valid = bool(year_match and int(year_match.group(2)) == (int(year_match.group(1)) + 1) % 100)
+    if not year_valid or approved_intake < 1 or division_capacity < 1 or status not in {"draft", "active", "closed"}:
+        flash("Use a valid academic year (for example 2026-27), positive capacities, and a valid status.", "danger")
+        return redirect(url_for("main.program_intakes", program_id=program_id, return_to=return_to))
+    batch = db.session.get(ProgramIntakeBatch, intake_batch_id) if intake_batch_id else None
+    if batch and batch.program_id_fk != program_id:
+        abort(403)
+    duplicate = db.session.execute(
+        select(ProgramIntakeBatch).filter_by(
+            program_id_fk=program_id,
+            admission_academic_year=academic_year,
+            medium_tag=medium_tag,
+        )
+    ).scalars().first()
+    if duplicate and (not batch or duplicate.intake_batch_id != batch.intake_batch_id):
+        flash("An intake record already exists for that admission year and MOI.", "danger")
+        return redirect(url_for("main.program_intakes", program_id=program_id, edit_id=(intake_batch_id or ""), return_to=return_to))
+    if not batch:
+        batch = duplicate
+    before = None
+    if batch:
+        before = {"admission_academic_year": batch.admission_academic_year, "medium_tag": batch.medium_tag, "approved_intake": batch.approved_intake, "division_capacity": batch.default_division_capacity, "status": batch.status}
+        batch.admission_academic_year = academic_year
+        batch.medium_tag = medium_tag
+        batch.approved_intake = approved_intake
+        batch.default_division_capacity = division_capacity
+        batch.status = status
+    else:
+        batch = ProgramIntakeBatch(
+            program_id_fk=program_id,
+            admission_academic_year=academic_year,
+            approved_intake=approved_intake,
+            default_division_capacity=division_capacity,
+            medium_tag=medium_tag,
+            status=status,
+        )
+        db.session.add(batch)
+    if status == "active":
+        batch.approved_by_user_id_fk = getattr(current_user, "user_id", None)
+        batch.approved_at = datetime.now(timezone.utc)
+    _bulk_audit_entry(
+        "program_intake_batch_save",
+        {"program_id": program_id, "academic_year": academic_year, "medium_tag": medium_tag, "before": before},
+        {"approved_intake": approved_intake, "division_capacity": division_capacity, "status": status},
+        program_id=program_id,
+    )
+    db.session.commit()
+    flash("Annual intake setup saved. Existing students were not automatically mapped.", "success")
+    return redirect(url_for("main.program_intakes", program_id=program_id, return_to=return_to))
+
+
+@main_bp.route("/modules/program-intakes/<int:intake_batch_id>/status", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+@csrf_required
+def program_intake_batch_status(intake_batch_id: int):
+    from ..models import ProgramIntakeBatch
+
+    batch = db.session.get(ProgramIntakeBatch, intake_batch_id)
+    if not batch or not _bulk_program_in_current_scope(batch.program_id_fk):
+        abort(404)
+    status = (request.form.get("status") or "").strip().lower()
+    if status not in {"active", "closed"}:
+        abort(400)
+    old_status = batch.status
+    batch.status = status
+    if status == "active":
+        batch.approved_by_user_id_fk = getattr(current_user, "user_id", None)
+        batch.approved_at = datetime.now(timezone.utc)
+    _bulk_audit_entry(
+        "program_intake_status",
+        {"intake_batch_id": intake_batch_id, "old_status": old_status},
+        {"new_status": status},
+        program_id=batch.program_id_fk,
+    )
+    db.session.commit()
+    flash(f"Intake record {status}.", "success")
+    return redirect(url_for("main.program_intakes", program_id=batch.program_id_fk))
+
+
+@main_bp.route("/modules/program-intakes/<int:intake_batch_id>/delete", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+@csrf_required
+def program_intake_batch_delete(intake_batch_id: int):
+    from ..models import ProgramIntakeBatch
+
+    batch = db.session.get(ProgramIntakeBatch, intake_batch_id)
+    if not batch or not _bulk_program_in_current_scope(batch.program_id_fk):
+        abort(404)
+    linked_students = int(db.session.scalar(
+        select(func.count()).select_from(Student).filter_by(intake_batch_id_fk=intake_batch_id)
+    ) or 0)
+    if linked_students:
+        flash(f"Cannot delete this intake; {linked_students} student(s) are linked to it. Close it instead.", "danger")
+        return redirect(url_for("main.program_intakes", program_id=batch.program_id_fk))
+    program_id = batch.program_id_fk
+    snapshot = {
+        "intake_batch_id": batch.intake_batch_id,
+        "admission_academic_year": batch.admission_academic_year,
+        "medium_tag": batch.medium_tag,
+        "approved_intake": batch.approved_intake,
+        "division_capacity": batch.default_division_capacity,
+        "status": batch.status,
+    }
+    db.session.delete(batch)
+    _bulk_audit_entry("program_intake_delete", snapshot, {"deleted": 1}, program_id=program_id)
+    db.session.commit()
+    flash("Unused intake record deleted.", "success")
+    return redirect(url_for("main.program_intakes", program_id=program_id))
+
+
+@main_bp.route("/modules/divisions/opening-cohorts")
+@login_required
+@role_required("admin", "principal")
+def opening_cohort_preview():
+    from ..services.opening_cohorts import build_opening_cohort_preview
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    try:
+        program_id = int((request.args.get("program_id") or "").strip())
+    except (TypeError, ValueError):
+        program_id = 0
+    if role == "principal":
+        try:
+            program_id = int(getattr(current_user, "program_id_fk", None) or 0)
+        except Exception:
+            program_id = 0
+    if not program_id or not _bulk_program_in_current_scope(program_id):
+        flash("Select an authorized program first.", "danger")
+        return redirect(url_for("main.module_divisions"))
+    academic_year = (request.args.get("current_academic_year") or current_academic_year()).strip()
+    try:
+        preview = build_opening_cohort_preview(program_id, academic_year, _effective_trust_id())
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("main.module_divisions", program_id=program_id))
+    return render_template("opening_cohort_preview.html", preview=preview)
+
+
+@main_bp.route("/modules/divisions/opening-cohorts/apply", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+def opening_cohort_apply():
+    from ..services.opening_cohorts import apply_opening_cohort_preview, build_opening_cohort_preview
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    try:
+        program_id = int((request.form.get("program_id") or "").strip())
+    except (TypeError, ValueError):
+        program_id = 0
+    if role == "principal":
+        try:
+            program_id = int(getattr(current_user, "program_id_fk", None) or 0)
+        except Exception:
+            program_id = 0
+    if not program_id or not _bulk_program_in_current_scope(program_id):
+        flash("You are not authorized to apply this cohort mapping.", "danger")
+        return redirect(url_for("main.module_divisions"))
+    academic_year = (request.form.get("current_academic_year") or "").strip()
+    try:
+        preview = build_opening_cohort_preview(program_id, academic_year, _effective_trust_id())
+        updated = apply_opening_cohort_preview(preview, (request.form.get("fingerprint") or "").strip())
+        _bulk_audit_entry(
+            "opening_cohort_mapping_apply",
+            {"program_id": program_id, "current_academic_year": academic_year},
+            {"students_mapped": updated, "exceptions_preserved": len(preview.exceptions)},
+            program_id=program_id,
+        )
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+        return redirect(url_for("main.opening_cohort_preview", program_id=program_id, current_academic_year=academic_year))
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Opening cohort mapping failed")
+        flash("Opening cohort mapping failed; no changes were committed.", "danger")
+        return redirect(url_for("main.opening_cohort_preview", program_id=program_id, current_academic_year=academic_year))
+    flash(f"Opening cohort mapping completed for {updated} student(s).", "success")
+    return redirect(url_for("main.module_divisions", program_id=program_id))
+
+
+@main_bp.route("/modules/divisions/planning/save", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+@csrf_required
 def divisions_planning_save():
     from ..models import ProgramDivisionPlan, Program
+    from ..services.division_allocation import _division_codes
     role = (getattr(current_user, "role", "") or "").strip().lower()
     effective_trust_id = None
     if getattr(current_user, "is_authenticated", False):
@@ -17700,10 +18537,19 @@ def divisions_planning_save():
     if not semester or not capacity or not num_divisions:
         flash("Please provide semester, capacity per division, and number of divisions.", "danger")
         return redirect(url_for("main.module_divisions", program_id=program_id))
+    if semester < 1 or semester > 8 or capacity < 1 or num_divisions < 1 or roll_max < 1:
+        flash("Semester must be 1–8 and all capacity/division limits must be positive.", "danger")
+        return redirect(url_for("main.module_divisions", program_id=program_id))
 
     # Upsert plan
     plan = db.session.execute(select(ProgramDivisionPlan).filter_by(program_id_fk=program_id, semester=semester)).scalars().first()
+    before_rule = None
     if plan:
+        before_rule = {
+            "capacity_per_division": plan.capacity_per_division,
+            "num_divisions": plan.num_divisions,
+            "roll_max_per_division": plan.roll_max_per_division,
+        }
         plan.capacity_per_division = capacity
         plan.num_divisions = num_divisions
         plan.roll_max_per_division = roll_max
@@ -17716,228 +18562,273 @@ def divisions_planning_save():
             roll_max_per_division=roll_max,
         )
         db.session.add(plan)
+    existing_divisions = db.session.execute(
+        select(Division).filter_by(program_id_fk=program_id, semester=semester)
+    ).scalars().all()
+    existing_by_code = {(division.division_code or "").strip().upper(): division for division in existing_divisions}
+    for code in _division_codes(num_divisions):
+        division = existing_by_code.get(code)
+        if division:
+            division.capacity = capacity
+        else:
+            db.session.add(Division(
+                program_id_fk=program_id,
+                semester=semester,
+                division_code=code,
+                capacity=capacity,
+            ))
+    _bulk_audit_entry(
+        "division_rule_update" if before_rule else "division_rule_create",
+        {"program_id": program_id, "semester": semester, "before": before_rule},
+        {
+            "capacity_per_division": capacity,
+            "num_divisions": num_divisions,
+            "roll_max_per_division": roll_max,
+        },
+        program_id=program_id,
+        semester=semester,
+    )
     db.session.commit()
     flash("Division planning saved.", "success")
     return redirect(url_for("main.module_divisions", program_id=program_id))
 
 
-@main_bp.route("/divisions/rebalance", methods=["POST"]) 
+@main_bp.route("/modules/divisions/planning/<int:plan_id>/delete", methods=["POST"])
 @login_required
-@role_required("admin", "principal", "clerk")
+@role_required("admin", "principal")
+@csrf_required
+def divisions_planning_delete(plan_id):
+    from ..models import ProgramDivisionPlan
+    plan = db.session.get(ProgramDivisionPlan, plan_id)
+    if not plan or not _bulk_program_in_current_scope(plan.program_id_fk):
+        flash("Division rule not found or outside your authorized program.", "danger")
+        return redirect(url_for("main.module_divisions"))
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role == "principal" and int(getattr(current_user, "program_id_fk", 0) or 0) != int(plan.program_id_fk):
+        flash("You are not authorized to delete this division rule.", "danger")
+        return redirect(url_for("main.module_divisions"))
+
+    linked_students = db.session.scalar(
+        select(func.count()).select_from(Student).filter(
+            Student.program_id_fk == plan.program_id_fk,
+            Student.current_semester == plan.semester,
+            Student.is_active.is_(True),
+        )
+    ) or 0
+    division_ids = db.session.execute(
+        select(Division.division_id).filter_by(program_id_fk=plan.program_id_fk, semester=plan.semester)
+    ).scalars().all()
+    operational_links = 0
+    if division_ids:
+        operational_links += db.session.scalar(
+            select(func.count()).select_from(CourseAssignment).filter(CourseAssignment.division_id_fk.in_(division_ids))
+        ) or 0
+        operational_links += db.session.scalar(
+            select(func.count()).select_from(Attendance).filter(Attendance.division_id_fk.in_(division_ids))
+        ) or 0
+        operational_links += db.session.scalar(
+            select(func.count()).select_from(StudentSubjectEnrollment).filter(StudentSubjectEnrollment.division_id_fk.in_(division_ids))
+        ) or 0
+    if linked_students or operational_links:
+        flash(
+            "This division rule is in use and cannot be deleted. Edit the rule instead; existing student, attendance, timetable, or subject-allocation data is preserved.",
+            "danger",
+        )
+        return redirect(url_for("main.module_divisions", program_id=plan.program_id_fk))
+
+    program_id = plan.program_id_fk
+    semester = plan.semester
+    before = {
+        "num_divisions": plan.num_divisions,
+        "capacity_per_division": plan.capacity_per_division,
+        "roll_max_per_division": plan.roll_max_per_division,
+    }
+    db.session.delete(plan)
+    _bulk_audit_entry(
+        "division_rule_delete",
+        {"program_id": program_id, "semester": semester},
+        before,
+        program_id=program_id,
+        semester=semester,
+    )
+    db.session.commit()
+    flash("Unused division rule deleted. Existing division records were not deleted.", "success")
+    return redirect(url_for("main.module_divisions", program_id=program_id))
+
+
+@main_bp.route("/divisions/rebalance", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk", "faculty")
+@csrf_required
 def divisions_rebalance():
-    # Divide students across divisions per semester using per-program planning.
-    # Fallback: BCA uses capacity 67 if no plan; others require principal-set plan.
-    from ..models import Program, Division, Student, ProgramDivisionPlan
-    import math
+    """Render a non-mutating, intake-aware allocation preview."""
+    from ..services.division_allocation import build_allocation_preview
+
     role = (getattr(current_user, "role", "") or "").strip().lower()
     try:
-        user_program_id = int(getattr(current_user, "program_id_fk", None) or 0) or None
-    except Exception:
-        user_program_id = None
-
-    # Scope program: principal/clerk must have program; admin can accept program_id arg or fallback to their program if set
-    program_id_arg = (request.args.get("program_id") or request.form.get("program_id") or "").strip()
-    try:
-        program_id = int(program_id_arg) if program_id_arg else None
-    except Exception:
-        program_id = None
+        program_id = int((request.form.get("program_id") or "").strip())
+        semester = int((request.form.get("semester") or "").strip())
+    except (TypeError, ValueError):
+        flash("Program and semester are required.", "danger")
+        return redirect(url_for("main.module_divisions"))
     if role in ("principal", "clerk"):
-        program_id = user_program_id
-
-    # Helper to generate codes like A, B, ..., Z, AA, AB, ...
-    def _generate_codes(n: int):
-        codes = []
-        i = 0
-        while len(codes) < n:
-            num = i
-            s = ""
-            while True:
-                s = chr(ord('A') + (num % 26)) + s
-                num = num // 26 - 1
-                if num < 0:
-                    break
-            codes.append(s)
-            i += 1
-        return codes
-
-    if not program_id:
-        flash("Program scope is required to rebalance divisions.", "danger")
+        try:
+            program_id = int(getattr(current_user, "program_id_fk", None) or 0)
+        except Exception:
+            program_id = 0
+    if not program_id or not _bulk_program_in_current_scope(program_id):
+        flash("You are not authorized to allocate divisions for that program.", "danger")
         return redirect(url_for("main.module_divisions"))
-
-    # Resolve program and planned settings
-    prog = db.session.get(Program, program_id)
-    if not prog:
-        flash("Selected program not found.", "danger")
-        return redirect(url_for("main.module_divisions"))
-
-    # Group students by semester for this program
-    students = db.session.execute(select(Student).filter_by(program_id_fk=program_id).order_by(Student.enrollment_no.asc())).scalars().all()
-    by_sem = {}
-    for s in students:
-        sem = int(getattr(s, "current_semester", None) or 0)
-        if sem <= 0:
-            # Skip if semester is not set
-            continue
-        by_sem.setdefault(sem, []).append(s)
-
-    # Process each semester independently, using planning if present
-    for semester, stu_list in sorted(by_sem.items()):
-        if not stu_list:
-            continue
-        plan = db.session.execute(select(ProgramDivisionPlan).filter_by(program_id_fk=program_id, semester=semester)).scalars().first()
-        capacity = None
-        num_divisions = None
-        roll_max = 200
-        if plan:
-            try:
-                capacity = int(plan.capacity_per_division)
-            except Exception:
-                capacity = None
-            try:
-                num_divisions = int(plan.num_divisions)
-            except Exception:
-                num_divisions = None
-            try:
-                roll_max = int(plan.roll_max_per_division or 200)
-            except Exception:
-                roll_max = 200
-        else:
-            # Fallback for BCA per earlier requirement
-            if (prog.program_name or "").strip().upper() == "BCA":
-                capacity = 67
-                # compute divisions based on capacity and student count
-                num_divisions = max(1, math.ceil(len(stu_list) / float(capacity)))
-                roll_max = 200
-            else:
-                flash(f"No division planning found for semester {semester}. Please ask the program principal to configure planning.", "warning")
-                # Skip this semester gracefully
-                continue
-
-        # Ensure divisions exist with planned capacity
-        codes = _generate_codes(num_divisions)
-        existing = (
-            db.session.execute(
-                select(Division)
-                .filter_by(program_id_fk=program_id, semester=semester)
-                .order_by(Division.division_code.asc())
-            ).scalars().all()
-        )
-        # Map codes to divisions; create missing
-        existing_map = {d.division_code: d for d in existing}
-        for code in codes:
-            if code in existing_map:
-                d = existing_map[code]
-                d.capacity = capacity
-            else:
-                d = Division(program_id_fk=program_id, semester=semester, division_code=code, capacity=capacity)
-                db.session.add(d)
-                existing_map[code] = d
-        db.session.commit()
-
-        # Reload divisions (now guaranteed)
-        divisions = [existing_map[c] for c in codes]
-        # Distribute students sequentially respecting capacity
-        idx = 0
-        for d in divisions:
-            assigned = 0
-            while (assigned < capacity) and (idx < len(stu_list)):
-                stu = stu_list[idx]
-                stu.division_id_fk = d.division_id
-                # Roll numbering per division from 1..roll_max if we had a field; placeholder logic
-                # Note: Student model currently has no roll_no field; kept as assignment ordering only.
-                idx += 1
-                assigned += 1
-        # Any remaining students spill into extra divisions: extend codes if planning underestimates
-        if idx < len(stu_list):
-            extra_needed = math.ceil((len(stu_list) - idx) / float(capacity))
-            extra_codes = _generate_codes(num_divisions + extra_needed)[num_divisions:]
-            for code in extra_codes:
-                d = Division(program_id_fk=program_id, semester=semester, division_code=code, capacity=capacity)
-                db.session.add(d)
-                divisions.append(d)
-            db.session.commit()
-            # Assign remaining
-            for d in divisions[num_divisions:]:
-                assigned = 0
-                while (assigned < capacity) and (idx < len(stu_list)):
-                    stu = stu_list[idx]
-                    stu.division_id_fk = d.division_id
-                    idx += 1
-                    assigned += 1
-
-        # Persist assignments for this semester
-        db.session.commit()
-
-    flash("Divisions rebalanced using program-specific planning.", "success")
-    return redirect(url_for("main.divisions_list"))
-
-    # Programs to process
-    if program_id:
-        programs = [db.session.get(Program, program_id)] if db.session.get(Program, program_id) else []
+    intake_batch = None
+    intake_batch_raw = (request.form.get("intake_batch_id") or "").strip()
+    if intake_batch_raw:
+        from ..models import ProgramIntakeBatch
+        try:
+            intake_batch = db.session.get(ProgramIntakeBatch, int(intake_batch_raw))
+        except (TypeError, ValueError):
+            intake_batch = None
+        if not intake_batch or intake_batch.program_id_fk != program_id or intake_batch.status != "active":
+            flash("Select an active annual intake record for this program.", "danger")
+            return redirect(url_for("main.module_divisions", program_id=program_id))
+        approved_intake = intake_batch.approved_intake
     else:
-        programs = db.session.execute(select(Program)).scalars().all() if role == "admin" else ([db.session.get(Program, user_program_id)] if user_program_id else [])
+        try:
+            approved_intake = int((request.form.get("approved_intake") or "").strip())
+        except (TypeError, ValueError):
+            approved_intake = 0
+    if not _can_manage_division_allocation(
+        program_id,
+        semester,
+        intake_batch.medium_tag if intake_batch else "",
+    ):
+        flash("Only an authorized Admin, Principal, Clerk, or assigned Semester Coordinator can manage this allocation.", "danger")
+        return redirect(url_for("main.module_divisions", program_id=program_id))
+    try:
+        preview = build_allocation_preview(
+            program_id, semester, approved_intake, _effective_trust_id(),
+            intake_batch_id=(intake_batch.intake_batch_id if intake_batch else None),
+            admission_academic_year=(intake_batch.admission_academic_year if intake_batch else None),
+            intake_division_capacity=(intake_batch.default_division_capacity if intake_batch else None),
+        )
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("main.module_divisions", program_id=program_id))
+    return render_template(
+        "division_allocation_preview.html",
+        preview=preview,
+        can_manage_allocation=_can_manage_division_allocation(
+            program_id,
+            semester,
+            intake_batch.medium_tag if intake_batch else "",
+        ),
+    )
 
-    total_updated = 0
-    for p in programs:
-        if not p:
-            continue
-        # Semesters present for this program
-        semesters = sorted({s.current_semester for s in db.session.execute(select(Student).filter_by(program_id_fk=p.program_id)).scalars().all() if s.current_semester})
-        for sem in semesters:
-            students = (
-                db.session.execute(
-                    select(Student)
-                    .filter_by(program_id_fk=p.program_id)
-                    .filter_by(current_semester=sem)
-                    .order_by(Student.enrollment_no.asc())
-                ).scalars().all()
-            )
-            required_n = max(math.ceil(len(students) / CAPACITY), 1)
-            # Ensure divisions and capacity
-            existing = (
-                db.session.execute(
-                    select(Division)
-                    .filter_by(program_id_fk=p.program_id, semester=sem)
-                    .order_by(Division.division_code.asc())
-                ).scalars().all()
-            )
-            for d in existing:
-                if d.capacity != CAPACITY:
-                    d.capacity = CAPACITY
-            # Create missing divisions
-            used_codes = {d.division_code for d in existing}
-            for code in _generate_codes(required_n):
-                if code in used_codes:
-                    continue
-                div = Division(program_id_fk=p.program_id, semester=sem, division_code=code, capacity=CAPACITY)
-                db.session.add(div)
-            db.session.commit()
-            # Refresh map
-            div_map = {d.division_code: d for d in db.session.execute(select(Division).filter_by(program_id_fk=p.program_id, semester=sem).order_by(Division.division_code.asc())).scalars().all()}
-            codes = sorted(list(div_map.keys()))
-            # Assign students in chunks of CAPACITY
-            for idx, s in enumerate(students):
-                bucket = idx // CAPACITY
-                if bucket >= len(codes):
-                    bucket = len(codes) - 1
-                code = codes[bucket]
-                target_div = div_map.get(code)
-                if target_div and s.division_id_fk != target_div.division_id:
-                    s.division_id_fk = target_div.division_id
-                    total_updated += 1
-            db.session.commit()
-    flash(f"Rebalanced divisions with capacity {CAPACITY}. Updated {total_updated} students.", "success")
-    return redirect(url_for('main.divisions_list'))
+
+@main_bp.route("/divisions/allocation/apply", methods=["POST"])
+@login_required
+@role_required("admin", "principal", "clerk", "faculty")
+@csrf_required
+def divisions_allocation_apply():
+    from ..services.division_allocation import apply_allocation, build_allocation_preview
+
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    try:
+        program_id = int((request.form.get("program_id") or "").strip())
+        semester = int((request.form.get("semester") or "").strip())
+    except (TypeError, ValueError):
+        flash("Invalid allocation request.", "danger")
+        return redirect(url_for("main.module_divisions"))
+    if role == "clerk":
+        try:
+            program_id = int(getattr(current_user, "program_id_fk", None) or 0)
+        except Exception:
+            program_id = 0
+    if not program_id or not _bulk_program_in_current_scope(program_id):
+        flash("You are not authorized to apply that allocation.", "danger")
+        return redirect(url_for("main.module_divisions"))
+    intake_batch = None
+    intake_batch_raw = (request.form.get("intake_batch_id") or "").strip()
+    if intake_batch_raw:
+        from ..models import ProgramIntakeBatch
+        try:
+            intake_batch = db.session.get(ProgramIntakeBatch, int(intake_batch_raw))
+        except (TypeError, ValueError):
+            intake_batch = None
+        if not intake_batch or intake_batch.program_id_fk != program_id or intake_batch.status != "active":
+            flash("The annual intake record is no longer available or active.", "danger")
+            return redirect(url_for("main.module_divisions", program_id=program_id))
+        approved_intake = intake_batch.approved_intake
+    else:
+        try:
+            approved_intake = int((request.form.get("approved_intake") or "").strip())
+        except (TypeError, ValueError):
+            approved_intake = 0
+    if not _can_manage_division_allocation(
+        program_id,
+        semester,
+        intake_batch.medium_tag if intake_batch else "",
+    ):
+        flash("You are not authorized to apply this division allocation.", "danger")
+        return redirect(url_for("main.module_divisions", program_id=program_id))
+    try:
+        preview = build_allocation_preview(
+            program_id, semester, approved_intake, _effective_trust_id(),
+            intake_batch_id=(intake_batch.intake_batch_id if intake_batch else None),
+            admission_academic_year=(intake_batch.admission_academic_year if intake_batch else None),
+            intake_division_capacity=(intake_batch.default_division_capacity if intake_batch else None),
+        )
+        valid_students = {assignment.enrollment_no for assignment in preview.assignments}
+        overrides = {}
+        for raw_assignment in request.form.getlist("division_assignment"):
+            try:
+                enrollment_no, division_code = raw_assignment.rsplit("|", 1)
+            except ValueError:
+                raise ValueError("Invalid manual division assignment.")
+            enrollment_no = enrollment_no.strip()
+            division_code = division_code.strip().upper()
+            if enrollment_no not in valid_students:
+                raise ValueError("A student in the allocation request is outside the current preview.")
+            overrides[enrollment_no] = division_code
+        result = apply_allocation(
+            preview,
+            (request.form.get("fingerprint") or "").strip(),
+            overrides=overrides,
+        )
+        result["manual_assignments_reviewed"] = len(overrides)
+        _bulk_audit_entry(
+            "division_allocation_apply",
+            {"program_id": program_id, "semester": semester, "approved_intake": approved_intake, "intake_batch_id": (intake_batch.intake_batch_id if intake_batch else None)},
+            result,
+            program_id=program_id,
+            semester=semester,
+        )
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+        return redirect(url_for("main.module_divisions", program_id=program_id))
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Division allocation failed")
+        flash("Division allocation failed; no changes were committed.", "danger")
+        return redirect(url_for("main.module_divisions", program_id=program_id))
+    flash(
+        f"Allocation applied: {result['students_moved']} students moved and "
+        f"{result['subject_enrollments_synced']} subject enrollments synchronized.",
+        "success",
+    )
+    return redirect(url_for("main.divisions_list", program_id=program_id, semester=semester))
 
 
 @main_bp.route("/divisions")
 @login_required
 @role_required("admin", "principal", "clerk")
 def divisions_list():
-    from ..models import Division, Program, Student
+    from ..models import Division, Program, ProgramIntakeBatch, Student
     # Filters
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
+    show_empty = (request.args.get("show_empty") or "").strip().lower() in {"1", "true", "yes", "on"}
 
     # Scope principal/clerk to their program
     role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -17980,15 +18871,25 @@ def divisions_list():
         q = q.where(Division.program_id_fk == program_id)
     if semester:
         q = q.where(Division.semester == semester)
-    divisions = db.session.execute(q.order_by(Division.program_id_fk.asc(), Division.semester.asc(), Division.division_code.asc())).scalars().all()
+    configured_divisions = db.session.execute(
+        q.order_by(Division.program_id_fk.asc(), Division.semester.asc(), Division.division_code.asc())
+    ).scalars().all()
 
     # Usage metrics (capacity vs enrolled)
     usage = {}
     total_capacity = 0
     total_enrolled = 0
-    for d in divisions:
+    for d in configured_divisions:
         try:
-            enrolled = db.session.scalar(select(func.count()).select_from(Student).filter_by(division_id_fk=d.division_id))
+            enrolled_q = select(func.count()).select_from(Student).filter(
+                Student.division_id_fk == d.division_id,
+                Student.program_id_fk == d.program_id_fk,
+                Student.current_semester == d.semester,
+                Student.is_active.is_(True),
+            )
+            if effective_trust_id:
+                enrolled_q = enrolled_q.filter(Student.trust_id_fk == effective_trust_id)
+            enrolled = db.session.scalar(enrolled_q)
         except Exception:
             enrolled = 0
         cap = int(d.capacity or 0)
@@ -18000,7 +18901,98 @@ def divisions_list():
             "capacity": cap,
             "utilization_pct": pct,
         }
-    overall_pct = round((total_enrolled * 100.0 / total_capacity), 1) if total_capacity else None
+
+    # Empty configured divisions are hidden in the ordinary operational view.
+    # They remain available through an explicit control for setup/reconciliation.
+    divisions = configured_divisions if show_empty else [
+        division for division in configured_divisions
+        if int(usage.get(division.division_id, {}).get("enrolled") or 0) > 0
+    ]
+
+    # A combined capacity/utilization across unrelated semesters is misleading.
+    # Build an actual-vs-intake summary independently for every active semester.
+    semester_summaries = []
+    if program_id:
+        student_stmt = select(
+            Student.current_semester,
+            Student.division_id_fk,
+            Student.admission_academic_year,
+            Student.intake_batch_id_fk,
+            Student.medium_tag,
+        ).filter(
+            Student.program_id_fk == program_id,
+            Student.is_active.is_(True),
+        )
+        if effective_trust_id:
+            student_stmt = student_stmt.filter(Student.trust_id_fk == effective_trust_id)
+        if semester:
+            student_stmt = student_stmt.filter(Student.current_semester == semester)
+        student_rows = db.session.execute(student_stmt).all()
+
+        intakes = db.session.execute(
+            select(ProgramIntakeBatch).filter_by(program_id_fk=program_id)
+        ).scalars().all()
+        intake_by_id = {batch.intake_batch_id: batch for batch in intakes}
+        intake_by_scope = {
+            (
+                (batch.admission_academic_year or "").strip(),
+                (batch.medium_tag or "").strip().lower(),
+            ): batch
+            for batch in intakes
+        }
+        intake_by_year_default = {
+            (batch.admission_academic_year or "").strip(): batch
+            for batch in intakes
+            if not (batch.medium_tag or "").strip()
+        }
+        divisions_by_semester = {}
+        for division in configured_divisions:
+            divisions_by_semester.setdefault(int(division.semester), []).append(division)
+        students_by_semester = {}
+        for row in student_rows:
+            if row.current_semester is None:
+                continue
+            students_by_semester.setdefault(int(row.current_semester), []).append(row)
+
+        for sem in sorted(students_by_semester):
+            rows = students_by_semester[sem]
+            assigned = sum(1 for row in rows if row.division_id_fk)
+            applicable_batches = {}
+            unresolved_cohorts = set()
+            for row in rows:
+                batch = intake_by_id.get(row.intake_batch_id_fk)
+                if not batch and row.admission_academic_year:
+                    year = (row.admission_academic_year or "").strip()
+                    medium = (row.medium_tag or "").strip().lower()
+                    batch = intake_by_scope.get((year, medium)) or intake_by_year_default.get(year)
+                if batch:
+                    applicable_batches[batch.intake_batch_id] = batch
+                else:
+                    unresolved_cohorts.add((row.admission_academic_year or "Not recorded").strip() or "Not recorded")
+            approved_intake = sum(int(batch.approved_intake or 0) for batch in applicable_batches.values())
+            filled_pct = round((len(rows) * 100.0 / approved_intake), 1) if approved_intake else None
+            operational_divisions = [
+                division for division in divisions_by_semester.get(sem, [])
+                if int(usage.get(division.division_id, {}).get("enrolled") or 0) > 0
+            ]
+            operational_capacity = sum(int(division.capacity or 0) for division in operational_divisions)
+            division_pct = round((assigned * 100.0 / operational_capacity), 1) if operational_capacity else None
+            semester_summaries.append({
+                "semester": sem,
+                "active_students": len(rows),
+                "assigned_students": assigned,
+                "unassigned_students": len(rows) - assigned,
+                "approved_intake": approved_intake or None,
+                "filled_pct": filled_pct,
+                "remaining_pct": round(max(0.0, 100.0 - filled_pct), 1) if filled_pct is not None else None,
+                "remaining_seats": max(0, approved_intake - len(rows)) if approved_intake else None,
+                "operational_divisions": len(operational_divisions),
+                "operational_capacity": operational_capacity or None,
+                "division_utilization_pct": division_pct,
+                "available_division_seats": max(0, operational_capacity - assigned) if operational_capacity else None,
+                "cohort_years": sorted({batch.admission_academic_year for batch in applicable_batches.values()}),
+                "unresolved_cohorts": sorted(unresolved_cohorts),
+            })
 
     prog_q = select(Program).order_by(Program.program_name.asc())
     if effective_trust_id:
@@ -18016,14 +19008,12 @@ def divisions_list():
         programs=programs,
         selected_program_id=program_id,
         selected_semester=semester,
+        show_empty=show_empty,
         role=role,
         user_program_id=user_program_id,
         usage=usage,
-        usage_summary={
-            "total_capacity": total_capacity,
-            "total_enrolled": total_enrolled,
-            "overall_pct": overall_pct,
-        },
+        semester_summaries=semester_summaries,
+        usage_summary={"total_capacity": total_capacity, "total_enrolled": total_enrolled},
     )
 
 

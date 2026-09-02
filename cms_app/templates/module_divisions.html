@@ -3,191 +3,53 @@
 {% block content %}
 <div class="container py-4">
   {% set role_display = (role or (current_user.role if current_user.is_authenticated else 'Guest')) %}
-  {% set role_display_lower = (role_display or '')|lower %}
-  <div class="section-header d-flex align-items-center justify-content-between mb-2">
-    <h3 class="mb-0 title d-flex align-items-center">{{ t('Divisions & Sections Module') }} <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h3>
-    <div class="actions"></div>
+  {% set role_lower = (role_display or '')|lower %}
+  <div class="section-header d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+    <div><h3 class="mb-1 title">{{ t('Divisions & Sections') }} <span class="role-badge ms-2">{{ role_display|capitalize }}</span></h3><div class="small text-muted">Review division requirements for one program and academic year at a time.</div></div>
+    {% if selected_program and role_lower in ['admin', 'principal'] %}<a class="btn btn-outline-primary" href="{{ url_for('main.program_intakes', program_id=selected_program.program_id) }}"><i class="bi bi-sliders me-1"></i> Manage Approved Intakes</a>{% endif %}
   </div>
-  {% if role_display_lower in ['admin','principal','clerk'] %}
-    <div class="small text-muted" data-bs-toggle="tooltip" data-bs-placement="right" title="Admins see all programs. Principals/Clerks are scoped to their program. Manage divisions per semester with capacity and codes.">Admin: Elevated access on this module.</div>
+
+  {% if programs and role_lower == 'admin' %}
+  <div class="card mb-3 border-primary"><div class="card-body"><form method="get" class="row g-3 align-items-end">
+    <div class="col-md-6"><label for="program_id" class="form-label fw-semibold">{{ t('Program') }} <span class="text-danger">*</span></label><select name="program_id" id="program_id" class="form-select" onchange="this.form.submit()" required><option value="">-- {{ t('Select Program') }} --</option>{% for p in programs %}<option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>{% endfor %}</select></div>
+    <div class="col-md-6"><div class="form-text pb-2">Division totals and rules load only after a program is selected.</div></div>
+  </form></div></div>
   {% endif %}
 
-  {% if programs %}
-  <div class="card mb-3 bg-light">
-    <div class="card-body py-2">
-      <form method="get" class="row g-2 align-items-center">
-        <div class="col-auto">
-          <label for="program_id" class="col-form-label fw-bold">{{ t('Select Program Scope') }}:</label>
-        </div>
-        <div class="col-auto">
-          <select name="program_id" id="program_id" class="form-select form-select-sm" onchange="this.form.submit()">
-            <option value="">-- {{ t('Select Program') }} --</option>
-            {% for p in programs %}
-            <option value="{{ p.program_id }}" {% if selected_program and selected_program.program_id == p.program_id %}selected{% endif %}>{{ p.program_name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="col-auto">
-             <span class="text-muted small">{{ t('Select a program to enable rebalancing and planning.') }}</span>
-        </div>
+  {% if not selected_program %}
+    <div class="alert alert-info"><strong>Select a program to continue.</strong> No combined capacity or utilization totals are shown.</div>
+  {% else %}
+    <div class="alert alert-light border d-flex flex-wrap justify-content-between align-items-center gap-2"><div><span class="text-muted">Program:</span> <strong>{{ selected_program.program_name }}</strong></div><div class="d-flex gap-2"><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.divisions_list', program_id=selected_program.program_id) }}">View Divisions</a>{% if role_lower in ['admin', 'principal'] %}<a class="btn btn-sm btn-primary" href="{{ url_for('main.division_new', program_id=selected_program.program_id) }}">Add Division</a>{% endif %}</div></div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-md-6"><div class="card h-100"><div class="card-body"><div class="text-muted">Configured divisions</div><div class="h3 mb-0">{{ usage_summary.division_count or 0 }}</div></div></div></div>
+      <div class="col-md-6"><div class="card h-100"><div class="card-body"><div class="text-muted">Active students in program</div><div class="h3 mb-0">{{ usage_summary.active_students or 0 }}</div><div class="small text-muted">Use semester and admission-year context below before interpreting capacity.</div></div></div></div>
+    </div>
+
+    <div class="card mb-3"><div class="card-header fw-semibold">Preview Division Requirement</div><div class="card-body">
+      {% set active_batches = intake_batches|selectattr('status', 'equalto', 'active')|list %}
+      {% if active_batches %}
+      <form method="post" action="{{ url_for('main.divisions_rebalance') }}" class="row g-3 align-items-end">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="program_id" value="{{ selected_program.program_id }}">
+        <div class="col-md-3"><label class="form-label">Semester</label><input type="number" min="1" max="{{ (selected_program.program_duration_years or 1) * 2 }}" name="semester" class="form-control" required></div>
+        <div class="col-md-6"><label class="form-label">Admission academic year</label><select name="intake_batch_id" class="form-select" required><option value="">-- Select approved intake --</option>{% for batch in active_batches %}<option value="{{ batch.intake_batch_id }}">{{ batch.admission_academic_year }}{% if batch.medium_tag %} · {{ batch.medium_tag }}{% endif %} · approved {{ batch.approved_intake }} · division capacity {{ batch.default_division_capacity }}</option>{% endfor %}</select></div>
+        <div class="col-md-3"><button class="btn btn-warning w-100" type="submit">Preview Requirement</button></div>
       </form>
+      <div class="form-text mt-2">Preview is non-mutating. Review enrolled count, approved intake, required divisions, and exceptions before applying allocation.</div>
+      {% else %}<div class="alert alert-warning mb-0">No active approved intake exists for this program. Division requirements cannot be calculated reliably. {% if role_lower in ['admin', 'principal'] %}<a href="{{ url_for('main.program_intakes', program_id=selected_program.program_id) }}" class="alert-link">Create an approved intake</a>.{% endif %}</div>{% endif %}
+    </div></div>
+
+    <div class="row g-3">
+      <div class="col-lg-7"><div class="card h-100"><div class="card-header fw-semibold">Existing Division Rules</div><div class="card-body">
+        {% if division_plans %}<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Semester</th><th>Divisions</th><th>Capacity / division</th><th>Total planned capacity</th><th>Roll maximum</th>{% if role_lower in ['admin', 'principal'] %}<th>Actions</th>{% endif %}</tr></thead><tbody>{% for plan in division_plans %}<tr><td>{{ plan.semester }}</td><td>{{ plan.num_divisions }}</td><td>{{ plan.capacity_per_division }}</td><td>{{ plan.num_divisions * plan.capacity_per_division }}</td><td>{{ plan.roll_max_per_division or 200 }}</td>{% if role_lower in ['admin', 'principal'] %}<td><div class="d-flex gap-1"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.module_divisions', program_id=selected_program.program_id, edit_plan_id=plan.plan_id) }}">Edit</a><form method="post" action="{{ url_for('main.divisions_planning_delete', plan_id=plan.plan_id) }}" onsubmit="return confirm('Delete this unused division rule? Rules linked to operational data cannot be deleted.');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-sm btn-outline-danger" type="submit">Delete</button></form></div></td>{% endif %}</tr>{% endfor %}</tbody></table></div>{% else %}<div class="text-muted">No approved division rules exist for this program.</div>{% endif %}
+      </div></div></div>
+      <div class="col-lg-5"><div class="card h-100"><div class="card-header fw-semibold">{{ 'Edit Division Rule' if edit_plan else 'Maintain Division Rule' }}</div><div class="card-body">
+        {% if role_lower in ['admin', 'principal'] %}<form method="post" action="{{ url_for('main.divisions_planning_save', program_id=selected_program.program_id) }}" class="row g-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="program_id" value="{{ selected_program.program_id }}">
+          <div class="col-6"><label class="form-label">Semester</label><input type="number" min="1" max="{{ (selected_program.program_duration_years or 1) * 2 }}" class="form-control" name="semester" value="{{ edit_plan.semester if edit_plan else '' }}" {% if edit_plan %}readonly{% endif %} required></div><div class="col-6"><label class="form-label">Capacity / division</label><input type="number" min="1" class="form-control" name="capacity_per_division" value="{{ edit_plan.capacity_per_division if edit_plan else '' }}" required></div><div class="col-6"><label class="form-label">Number of divisions</label><input type="number" min="1" class="form-control" name="num_divisions" value="{{ edit_plan.num_divisions if edit_plan else '' }}" required></div><div class="col-6"><label class="form-label">Roll maximum</label><input type="number" min="1" value="{{ edit_plan.roll_max_per_division if edit_plan else 200 }}" class="form-control" name="roll_max_per_division"></div><div class="col-12 d-flex gap-2"><button class="btn btn-primary flex-grow-1" type="submit">{{ 'Update Rule' if edit_plan else 'Save Reviewed Rule' }}</button>{% if edit_plan %}<a class="btn btn-outline-secondary" href="{{ url_for('main.module_divisions', program_id=selected_program.program_id) }}">Cancel</a>{% endif %}</div>
+        </form><div class="form-text mt-2">Save only after comparing the preview with approved intake and classroom capacity.</div>{% else %}<div class="text-muted">Admin/Principal maintains division rules. Clerk may preview and apply an approved allocation.</div>{% endif %}
+      </div></div></div>
     </div>
-  </div>
   {% endif %}
-
-  <p class="text-muted soft-hint">{{ t('Manage divisions/sections per program and semester.') }}</p>
-
-  <!-- Usage Summary -->
-  {% if usage_summary %}
-  <div class="row g-3 mb-3">
-    <div class="col-md-4">
-      <div class="card">
-        <div class="card-body">
-          <div class="text-muted">Total Capacity</div>
-          <div class="h4 mb-0">{{ usage_summary.total_capacity or 0 }}</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-md-4">
-      <div class="card">
-        <div class="card-body">
-          <div class="text-muted">Total Enrolled</div>
-          <div class="h4 mb-0">{{ usage_summary.total_enrolled or 0 }}</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-md-4">
-      <div class="card">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center">
-            <span class="text-muted">Utilization</span>
-            <span class="fw-semibold">{{ usage_summary.overall_pct if usage_summary.overall_pct is not none else '-' }}%</span>
-          </div>
-          <div class="progress mt-2" style="height: 8px;">
-            <div class="progress-bar" role="progressbar" data-pct="{{ usage_summary.overall_pct if usage_summary.overall_pct is not none else 0 }}" style="width: 0%;" aria-valuenow="{{ usage_summary.overall_pct if usage_summary.overall_pct is not none else 0 }}" aria-valuemin="0" aria-valuemax="100"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
-  <div class="row g-3">
-    <div class="col-md-6">
-      <div class="card mod-card mod-card--quick">
-        <div class="card-header">{{ t('Quick Actions') }}</div>
-        <div class="card-body">
-          <div class="card-icon" aria-hidden="true"><i class="bi bi-grid-3x3-gap"></i></div>
-          <div class="list-group">
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.divisions_list') }}">{{ t('View Divisions') }}</a>
-            <a class="list-group-item list-group-item-action" href="{{ url_for('main.division_new') }}">{{ t('Add Division') }}</a>
-            <form method="post" action="{{ url_for('main.divisions_rebalance') }}" class="mt-2">
-              {% if selected_program %}
-              <input type="hidden" name="program_id" value="{{ selected_program.program_id }}">
-              {% endif %}
-              <button type="submit" class="btn btn-sm btn-outline-warning" {% if not selected_program %}disabled title="{{ t('Select a program first') }}"{% endif %}>{{ t('Rebalance Divisions & Roll Nos') }}</button>
-            </form>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="col-md-6">
-      <div class="card mod-card mod-card--links">
-        <div class="card-header">{{ t('Helpful Links') }}</div>
-        <div class="card-body">
-          <div class="card-icon" aria-hidden="true"><i class="bi bi-info-circle"></i></div>
-          <ul class="list-unstyled mb-0 soft-hint">
-            <li>{{ t('Use program and semester filters to narrow context.') }}</li>
-            <li>{{ t('Division code typically A/B/C; keep it unique per semester.') }}</li>
-            <li>{{ t('Capacity defaults to 67 for BCA; other programs are principal-set.') }}</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Principal Planning -->
-  <div class="row g-3 mt-3">
-    <div class="col-md-6">
-      <div class="card">
-        <div class="card-header">{{ t('Division Planning (Principal)') }}</div>
-        <div class="card-body">
-          {% if selected_program %}
-          <form method="post" action="{{ url_for('main.divisions_planning_save', program_id=selected_program.program_id) }}" class="row g-2">
-            <div class="col-6">
-              <label class="form-label">{{ t('Semester') }}</label>
-              <input type="number" min="1" max="12" class="form-control" name="semester" required />
-            </div>
-            <div class="col-6">
-              <label class="form-label">{{ t('Capacity / Division') }}</label>
-              <input type="number" min="1" class="form-control" name="capacity_per_division" required />
-            </div>
-            <div class="col-6">
-              <label class="form-label">{{ t('Number of Divisions') }}</label>
-              <input type="number" min="1" class="form-control" name="num_divisions" required />
-            </div>
-            <div class="col-6">
-              <label class="form-label">{{ t('Roll Max / Division') }}</label>
-              <input type="number" min="1" value="200" class="form-control" name="roll_max_per_division" />
-            </div>
-            <div class="col-12 d-flex justify-content-end">
-              <button type="submit" class="btn btn-primary">{{ t('Save Planning') }}</button>
-            </div>
-          </form>
-          {% else %}
-            <div class="soft-hint">Admin: select a program via <code>?program_id=&lt;id&gt;</code> to plan divisions.</div>
-          {% endif %}
-        </div>
-      </div>
-    </div>
-    <div class="col-md-6">
-      <div class="card">
-        <div class="card-header">{{ t('Existing Plans') }}</div>
-        <div class="card-body">
-          {% if division_plans and division_plans|length > 0 %}
-          <div class="table-responsive">
-            <table class="table table-sm table-striped">
-              <thead>
-                <tr>
-                  <th>{{ t('Semester') }}</th>
-                  <th>{{ t('Divisions') }}</th>
-                  <th>{{ t('Capacity') }}</th>
-                  <th>{{ t('Roll Max') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for plan in division_plans %}
-                <tr>
-                  <td>{{ plan.semester }}</td>
-                  <td>{{ plan.num_divisions }}</td>
-                  <td>{{ plan.capacity_per_division }}</td>
-                  <td>{{ plan.roll_max_per_division or 200 }}</td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-          {% else %}
-            <div class="soft-hint">{{ t('No plans yet. Create one using the form.') }}</div>
-          {% endif %}
-        </div>
-      </div>
-    </div>
-  </div>
 </div>
-<script>
-  (function() {
-    try {
-      var bars = document.querySelectorAll('.progress-bar[data-pct]');
-      for (var i = 0; i < bars.length; i++) {
-        var el = bars[i];
-        var v = parseFloat(el.getAttribute('data-pct') || '0');
-        if (!isFinite(v)) v = 0;
-        if (v < 0) v = 0;
-        if (v > 100) v = 100;
-        el.style.width = v + '%';
-      }
-    } catch (e) {}
-  })();
-</script>
 {% endblock %}

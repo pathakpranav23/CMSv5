@@ -3,6 +3,7 @@
 {% set role_lower = (current_user.role|lower if current_user.is_authenticated else '') %}
 {% set can_manage = current_user.is_authenticated and (role_lower in ['admin','principal','clerk']) %}
 {% set can_bulk_manage = can_manage %}
+{% set can_select_students = can_bulk_manage or can_assign_division %}
 {% set can_view_contact = can_manage %}
 {% set role_display = (current_user.role if current_user.is_authenticated else 'Guest') %}
 <div class="section-header d-flex justify-content-between align-items-center mb-3">
@@ -131,15 +132,15 @@
   </span>
   
 
-{% if can_bulk_manage and students and students|length > 0 %}
-<form id="studentsBulkForm" method="post" action="{{ url_for('main.students_bulk_set_active') }}" class="mb-3">
+{% if can_select_students and students and students|length > 0 %}
+<form id="studentsBulkForm" method="post" action="{{ url_for('main.students_bulk_set_active') if can_bulk_manage else url_for('main.students_bulk_assign_division') }}" class="mb-3">
   <input type="hidden" name="return_to" value="{{ request.full_path }}" />
   <div class="card border-0 shadow-sm">
     <div class="card-body py-3 d-flex flex-column gap-3">
       <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div class="fw-semibold">Bulk Actions <span class="text-muted small ms-2" id="studentsSelectedCount">0 selected of {{ students|length }}</span></div>
+        <div class="fw-semibold">{{ 'Bulk Actions' if can_bulk_manage else 'Class Coordinator · Division Assignment' }} <span class="text-muted small ms-2" id="studentsSelectedCount">0 selected of {{ students|length }}</span></div>
         <div class="d-flex flex-wrap gap-2">
-          {% if students_credentials_download_url %}
+          {% if can_bulk_manage and students_credentials_download_url %}
           <a class="btn btn-sm btn-outline-dark" href="{{ students_credentials_download_url }}">Export Credentials Sheet</a>
           {% endif %}
           <button type="button" class="btn btn-sm btn-outline-secondary" onclick="selectAllStudentsRows(true);">Select Page</button>
@@ -147,12 +148,12 @@
         </div>
       </div>
       <div class="small text-muted" id="studentsBulkHint">Choose one or more students to enable bulk actions.</div>
-      <div class="d-flex flex-wrap gap-2">
+      {% if can_bulk_manage %}<div class="d-flex flex-wrap gap-2">
         <button type="submit" class="btn btn-sm btn-outline-success bulk-selection-required" onclick="return submitStudentsBulk('{{ url_for('main.students_bulk_set_active') }}', 'true');">Activate</button>
         <button type="submit" class="btn btn-sm btn-outline-warning bulk-selection-required" onclick="return submitStudentsBulk('{{ url_for('main.students_bulk_set_active') }}', 'false');">Archive</button>
         <button type="submit" class="btn btn-sm btn-outline-info bulk-selection-required" onclick="return submitStudentsBulk('{{ url_for('main.students_bulk_provision_users') }}');">Create User Accounts</button>
         <button type="submit" class="btn btn-sm btn-outline-primary bulk-selection-required" onclick="return submitStudentsBulk('{{ url_for('main.students_bulk_export') }}');">Export Selected</button>
-      </div>
+      </div>{% endif %}
       <div class="row g-2 align-items-end">
         <div class="col-12 col-lg-6">
           <label class="form-label form-label-sm mb-1" for="studentsBulkTargetDivisionId">Assign Division</label>
@@ -166,7 +167,7 @@
             <button type="submit" class="btn btn-outline-secondary bulk-selection-required" onclick="return submitStudentsAssignDivision();">Assign</button>
           </div>
         </div>
-        <div class="col-12 col-lg-4">
+        {% if can_bulk_manage %}<div class="col-12 col-lg-4">
           <label class="form-label form-label-sm mb-1" for="studentsBulkTargetSemester">Promote Semester</label>
           <div class="input-group input-group-sm">
             <select name="target_semester" id="studentsBulkTargetSemester" class="form-select">
@@ -177,7 +178,7 @@
             </select>
             <button type="submit" class="btn btn-outline-secondary bulk-selection-required" onclick="return submitStudentsPromoteSemester();">Promote</button>
           </div>
-        </div>
+        </div>{% endif %}
       </div>
     </div>
     <input type="hidden" name="set_active" id="studentsBulkSetActive" value="true" />
@@ -190,7 +191,7 @@
   <table class="table table-sm table-striped align-middle">
     <thead>
       <tr>
-        {% if can_bulk_manage %}<th><input type="checkbox" id="studentsSelectAll" onclick="toggleStudentsSelection(this)" /></th>{% endif %}
+        {% if can_select_students %}<th><input type="checkbox" id="studentsSelectAll" onclick="toggleStudentsSelection(this)" /></th>{% endif %}
         <th>#</th>
         <th>Photo</th>
         <th>Enrollment No.</th>
@@ -210,7 +211,7 @@
       {% for s in students %}
       {% set sem_div = division_map.get(s.division_id_fk) %}
       <tr>
-        {% if can_bulk_manage %}<td><input type="checkbox" class="student-row-checkbox" name="selected_ids" value="{{ s.enrollment_no }}" form="studentsBulkForm" onchange="updateStudentsSelectedCount()" /></td>{% endif %}
+        {% if can_select_students %}<td><input type="checkbox" class="student-row-checkbox" name="selected_ids" value="{{ s.enrollment_no }}" form="studentsBulkForm" onchange="updateStudentsSelectedCount()" /></td>{% endif %}
         <td>{{ loop.index }}</td>
         <td>
           {% if s.photo_url %}

@@ -1154,6 +1154,12 @@ def create_app():
             if 'medium_tag' not in cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE students ADD COLUMN medium_tag VARCHAR(32)")
+            if 'admission_academic_year' not in cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE students ADD COLUMN admission_academic_year VARCHAR(16)")
+            if 'intake_batch_id_fk' not in cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE students ADD COLUMN intake_batch_id_fk INTEGER REFERENCES program_intake_batches(intake_batch_id)")
 
             # 4. Attendance table
             att_cols = [c['name'] for c in inspector.get_columns('attendance')]

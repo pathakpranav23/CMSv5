@@ -35,11 +35,13 @@
               <td class="text-center">{{ r.students }}</td>
               <td class="text-center">{{ r.faculty }}</td>
               <td class="text-end">
-                {% if current_user.is_authenticated and current_user.is_super_admin %}
-                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.program_edit', program_id=r.program.program_id) }}">Edit</a>
+                {% if current_user.is_authenticated and (current_user.is_super_admin or (current_user.role or '')|lower == 'admin') %}
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.program_edit', program_id=r.program.program_id) }}">{% if current_user.is_super_admin %}Edit{% else %}Edit Duration{% endif %}</a>
+                  {% if current_user.is_super_admin %}
                   <form method="post" action="{{ url_for('main.program_delete', program_id=r.program.program_id) }}" class="d-inline" onsubmit="return confirm('Delete this program? This cannot be undone.');">
                     <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
                   </form>
+                  {% endif %}
                 {% else %}
                   <span class="text-muted">Read-only</span>
                 {% endif %}

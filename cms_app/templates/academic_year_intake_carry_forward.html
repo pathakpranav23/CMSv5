@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h2 class="mb-1 title">New Academic Year · Program Setup</h2>
+      <div class="small text-muted">Review before copying. New records are always created as drafts.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.admin_workflow_new_academic_year') }}">Back to workflow</a>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-4"><label class="form-label">Copy from academic year</label><input class="form-control" name="source_year" pattern="[0-9]{4}-[0-9]{2}" value="{{ source_year }}" required></div>
+        <div class="col-md-4"><label class="form-label">Create draft for academic year</label><input class="form-control" name="target_year" pattern="[0-9]{4}-[0-9]{2}" value="{{ target_year }}" required></div>
+        <div class="col-md-4"><button class="btn btn-outline-primary w-100" type="submit">Preview settings</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="alert alert-info"><strong>Nothing is activated automatically.</strong> Intake, class size, MOI and calculated maximum divisions are copied only as a reviewable draft.</div>
+
+  <div class="card">
+    <div class="card-header d-flex justify-content-between"><span>Program preview: {{ source_year }} → {{ target_year }}</span><span class="badge bg-secondary">{{ preview_rows|length }} source setup(s)</span></div>
+    <div class="card-body">
+      {% if preview_rows %}
+      <div class="table-responsive"><table class="table table-sm align-middle">
+        <thead><tr><th>Program</th><th>MOI</th><th>Approved intake</th><th>Class size</th><th>Maximum divisions</th><th>Target status</th></tr></thead>
+        <tbody>{% for row in preview_rows %}<tr>
+          <td>{{ row.program.program_name if row.program else row.source.program_id_fk }}</td>
+          <td>{{ row.source.medium_tag or 'All' }}</td>
+          <td>{{ row.source.approved_intake }}</td>
+          <td>{{ row.source.default_division_capacity }}</td>
+          <td>{{ row.maximum_divisions }}</td>
+          <td>{% if row.already_exists %}<span class="badge bg-secondary">Already exists — skipped</span>{% else %}<span class="badge bg-warning text-dark">Draft</span>{% endif %}</td>
+        </tr>{% endfor %}</tbody>
+      </table></div>
+      <form method="post" class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="source_year" value="{{ source_year }}">
+        <input type="hidden" name="target_year" value="{{ target_year }}">
+        <div class="small text-muted">After copying, open each program's Approved Intake page to edit exceptions and activate the approved records.</div>
+        <button class="btn btn-primary" type="submit" onclick="return confirm('Create inactive draft settings for {{ target_year }}?');">Create review drafts</button>
+      </form>
+      {% else %}<div class="text-muted">No program intake settings exist for {{ source_year }} in your authorized scope. Create the source-year setup first.</div>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -18,7 +18,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from cms_app import create_app, db
-from cms_app.models import Program, Division, Student, User, ProgramDivisionPlan, Institute
+from cms_app.models import Program, Division, Student, User, ProgramDivisionPlan, ProgramIntakeBatch, Institute
 
 
 HEADER_MAP: Dict[str, List[str]] = {
@@ -50,6 +50,7 @@ HEADER_MAP: Dict[str, List[str]] = {
     # Division & Semester
     "division_code": ["division", "div", "class", "section", "division name", "divison"],
     "current_semester": ["semester", "sem", "semester no", "sem no", "current sem"],
+    "admission_academic_year": ["admission academic year", "admission year", "batch year", "admission batch"],
     # Contact & DOB
     "mobile": [
         "mobile",
@@ -141,10 +142,10 @@ def normalize_headers(headers: List[str]) -> Dict[int, str]:
     mapping: Dict[int, str] = {}
     for idx, h in enumerate(headers):
         h_low = (h or "").strip().lower()
-        h_low = h_low.replace("’", "'").replace("—", "-").replace("–", "-")
+        h_low = h_low.replace("_", " ").replace("’", "'").replace("—", "-").replace("–", "-")
         for key, synonyms in HEADER_MAP.items():
             # use exact match with lowercase synonyms to avoid collisions like 'name' in "father's name"
-            synonyms_low = [s.lower() for s in synonyms]
+            synonyms_low = [s.lower() for s in synonyms] + [key.replace("_", " ").lower()]
             if h_low in synonyms_low:
                 mapping[idx] = key
                 break
@@ -164,6 +165,28 @@ def cell_to_str(val) -> str:
             return str(int(val))
         return str(val)
     return str(val).strip()
+
+
+def normalize_academic_year(val) -> str:
+    """Return an academic year in YYYY-YY form when the value is unambiguous.
+
+    College spreadsheets commonly store only the admission start year (for
+    example, 2026).  Treat that as the 2026-27 academic year while preserving
+    other values so genuine conflicts are still rejected by the importer.
+    """
+    value = cell_to_str(val).strip()
+    if re.fullmatch(r"\d{4}", value):
+        start_year = int(value)
+        return f"{start_year}-{(start_year + 1) % 100:02d}"
+    match = re.fullmatch(r"(\d{4})\s*[-/]\s*(\d{2}|\d{4})", value)
+    if match:
+        start_year = int(match.group(1))
+        end_year = int(match.group(2))
+        if len(match.group(2)) == 4:
+            end_year %= 100
+        if end_year == (start_year + 1) % 100:
+            return f"{start_year}-{end_year:02d}"
+    return value
 
 
 def to_int(val):
@@ -260,7 +283,19 @@ def ensure_student_user(enrollment_no, mobile, program_id, trust_id=None):
 
 
 
-def import_excel(path: str, program_id: int = None, trust_id: int = None, program_name: str = None, semester_hint: int = None, dry_run: bool = False):
+def import_excel(
+    path: str,
+    program_id: int = None,
+    trust_id: int = None,
+    program_name: str = None,
+    semester_hint: int = None,
+    dry_run: bool = False,
+    import_mode: str = "existing",
+    admission_academic_year_hint: str = None,
+    medium_hint: str = None,
+    division_hint: str = None,
+    replace_scope: bool = False,
+):
     # Determine semester
     semester = semester_hint or find_semester_from_filename(path) or 0
 
@@ -291,12 +326,69 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
             db.session.add(program)
             db.session.flush()
 
+    import_mode = (import_mode or "").strip().lower()
+    if import_mode not in {"new", "existing"}:
+        raise ValueError("Import type must be new admission or existing students.")
+    admission_academic_year_hint = (admission_academic_year_hint or "").strip()
+    year_match = re.fullmatch(r"(\d{4})-(\d{2})", admission_academic_year_hint)
+    if not year_match or int(year_match.group(2)) != (int(year_match.group(1)) + 1) % 100:
+        raise ValueError("A valid admission academic year is required, for example 2025-26.")
+    if not semester or semester < 1:
+        raise ValueError("An exact current semester is required.")
+    maximum_semester = max(int(program.program_duration_years or 0), 1) * 2
+    if semester > maximum_semester:
+        raise ValueError(
+            f"Semester {semester} is outside the configured {program.program_duration_years or 1}-year "
+            f"structure for {program.program_name}. Correct the program duration before importing."
+        )
+    medium_hint = (medium_hint or "").strip()
+    division_hint = (division_hint or "").strip().upper()
+    selected_intake_batch = None
+    if import_mode == "new":
+        batches = db.session.execute(
+            select(ProgramIntakeBatch).filter_by(
+                program_id_fk=program.program_id,
+                admission_academic_year=admission_academic_year_hint,
+                status="active",
+            )
+        ).scalars().all()
+        selected_intake_batch = next(
+            (batch for batch in batches if (batch.medium_tag or "").strip().lower() == medium_hint.lower()),
+            None,
+        ) or next((batch for batch in batches if not (batch.medium_tag or "").strip()), None)
+        if not selected_intake_batch:
+            raise ValueError("New admissions require an active approved-intake record for the selected program, academic year, and MOI.")
+
     created = 0
     updated = 0
     skipped = 0
     deleted = 0
     divisions_created = 0
     errors: List[str] = []
+    preview_rows = []
+    preview_total = 0
+    preview_limit = 200
+
+    def add_preview(row_number, data, action, status="valid", reason=""):
+        nonlocal preview_total
+        preview_total += 1
+        if len(preview_rows) >= preview_limit:
+            return
+        last_name = cell_to_str(data.get("last_name"))
+        first_name = cell_to_str(data.get("first_name"))
+        preview_rows.append({
+            "row_number": row_number,
+            "enrollment_no": cell_to_str(data.get("enrollment_no")),
+            "roll_no": cell_to_str(data.get("roll_no")),
+            "student_name": " ".join(part for part in (last_name, first_name) if part).strip() or "—",
+            "admission_academic_year": normalize_academic_year(data.get("admission_academic_year")) or admission_academic_year_hint,
+            "semester": to_int(data.get("current_semester")) or semester,
+            "medium_tag": cell_to_str(data.get("medium_tag")) or medium_hint or "—",
+            "division_code": cell_to_str(data.get("division_code")).upper() or division_hint or "Unassigned",
+            "action": action,
+            "status": status,
+            "reason": reason,
+        })
 
     # Get all existing students for this program and semester (for potential deletion)
     existing_q = select(Student).filter_by(program_id_fk=program.program_id, current_semester=semester)
@@ -330,14 +422,34 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                 # skip rows without enrollment number
                 skipped += 1
                 errors.append(f"Row {row_idx}: missing enrollment_no; skipped")
+                add_preview(row_idx, data, "skip", "error", "Missing enrollment number.")
                 continue
 
+            row_semester = to_int(data.get("current_semester"))
+            if row_semester and row_semester != semester:
+                skipped += 1
+                errors.append(f"Row {row_idx}: semester {row_semester} conflicts with selected semester {semester}; skipped")
+                add_preview(row_idx, data, "skip", "error", f"Semester {row_semester} conflicts with selected semester {semester}.")
+                continue
+            row_admission_year_raw = cell_to_str(data.get("admission_academic_year")).strip()
+            row_admission_year = normalize_academic_year(row_admission_year_raw)
+            if row_admission_year and row_admission_year != admission_academic_year_hint:
+                skipped += 1
+                errors.append(f"Row {row_idx}: admission year '{row_admission_year_raw}' conflicts with selected '{admission_academic_year_hint}'; skipped")
+                add_preview(row_idx, data, "skip", "error", f"Admission year {row_admission_year_raw} conflicts with selected {admission_academic_year_hint}.")
+                continue
             processed_enrollments.add(enrollment_no)
 
-            # Division (respect per-program planning)
-            division_code = cell_to_str(data.get("division_code")) or "A"
-            division = db.session.execute(select(Division).filter_by(program_id_fk=program.program_id, semester=semester, division_code=division_code)).scalars().first()
-            if not division:
+            # Division (respect selected import scope and per-program planning)
+            row_division_code = cell_to_str(data.get("division_code")).strip().upper()
+            if row_division_code and division_hint and row_division_code != division_hint:
+                skipped += 1
+                errors.append(f"Row {row_idx}: division '{row_division_code}' conflicts with selected '{division_hint}'; skipped")
+                add_preview(row_idx, data, "skip", "error", f"Division {row_division_code} conflicts with selected {division_hint}.")
+                continue
+            division_code = row_division_code or division_hint
+            division = db.session.execute(select(Division).filter_by(program_id_fk=program.program_id, semester=semester, division_code=division_code)).scalars().first() if division_code else None
+            if division_code and not division:
                 # Determine capacity from ProgramDivisionPlan; fallback to BCA=67 else Division default
                 plan = db.session.execute(select(ProgramDivisionPlan).filter_by(program_id_fk=program.program_id, semester=semester)).scalars().first()
                 cap = None
@@ -374,7 +486,13 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
             photo_url = cell_to_str(data.get("photo_url"))
             permanent_address = cell_to_str(data.get("permanent_address"))
             # Optional medium parsing
-            medium_raw = cell_to_str(data.get("medium_tag")).strip().lower()
+            row_medium_raw = cell_to_str(data.get("medium_tag")).strip()
+            if row_medium_raw and medium_hint and row_medium_raw.lower() != medium_hint.lower():
+                skipped += 1
+                errors.append(f"Row {row_idx}: MOI '{row_medium_raw}' conflicts with selected '{medium_hint}'; skipped")
+                add_preview(row_idx, data, "skip", "error", f"MOI {row_medium_raw} conflicts with selected {medium_hint}.")
+                continue
+            medium_raw = (row_medium_raw or medium_hint).lower()
             medium_map = {
                 "": "",
                 "general": "General",
@@ -415,7 +533,9 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                     except Exception:
                         pass
 
-            current_semester = semester or to_int(data.get("current_semester"))
+            current_semester = semester
+            admission_academic_year = admission_academic_year_hint
+            intake_batch = selected_intake_batch if import_mode == "new" else None
             roll_no = cell_to_str(data.get("roll_no"))
             aadhar_no = cell_to_str(data.get("aadhar_no"))
             category = cell_to_str(data.get("category"))
@@ -427,12 +547,13 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
             if trust_id:
                 st_q = st_q.filter(Student.trust_id_fk == int(trust_id))
             student = db.session.execute(st_q).scalars().first()
+            student_was_existing = student is not None
             if not student:
                 student = Student(
                     enrollment_no=enrollment_no,
                     user_id_fk=user_id,
                     program_id_fk=program.program_id,
-                    division_id_fk=division.division_id,
+                    division_id_fk=(division.division_id if division else None),
                     trust_id_fk=trust_id,
                     last_name=surname,
                     first_name=student_name,
@@ -444,6 +565,8 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                     photo_url=photo_url,
                     permanent_address=permanent_address,
                     current_semester=current_semester,
+                    admission_academic_year=admission_academic_year or None,
+                    intake_batch_id_fk=(intake_batch.intake_batch_id if intake_batch else None),
                     roll_no=roll_no,
                     aadhar_no=aadhar_no or None,
                     category=category or None,
@@ -462,7 +585,7 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                 except Exception:
                     pass
                 student.program_id_fk = program.program_id
-                student.division_id_fk = division.division_id
+                student.division_id_fk = division.division_id if division else None
                 if not student.user_id_fk and user_id:
                     student.user_id_fk = user_id
                 student.last_name = surname or student.last_name
@@ -474,6 +597,9 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                 student.photo_url = photo_url or student.photo_url
                 student.permanent_address = permanent_address or student.permanent_address
                 student.current_semester = current_semester or student.current_semester
+                if admission_academic_year:
+                    student.admission_academic_year = admission_academic_year
+                    student.intake_batch_id_fk = intake_batch.intake_batch_id if intake_batch else None
                 if aadhar_no:
                     student.aadhar_no = aadhar_no
                 if category:
@@ -487,6 +613,7 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
             except Exception:
                 student.medium_tag = medium_tag or (student.medium_tag or None)
                 errors.append(f"Row {row_idx}: failed to compute medium_tag due to data format")
+            add_preview(row_idx, data, "update" if student_was_existing else "create")
 
     except InvalidFileException:
         # Fallback path: xlrd for legacy .xls or malformed files
@@ -519,13 +646,33 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                     pass
                 skipped += 1
                 errors.append(f"Row {r+1}: missing enrollment_no; skipped")
+                add_preview(r + 1, data, "skip", "error", "Missing enrollment number.")
                 continue
             
+            row_semester = to_int(data.get("current_semester"))
+            if row_semester and row_semester != semester:
+                skipped += 1
+                errors.append(f"Row {r+1}: semester {row_semester} conflicts with selected semester {semester}; skipped")
+                add_preview(r + 1, data, "skip", "error", f"Semester {row_semester} conflicts with selected semester {semester}.")
+                continue
+            row_admission_year_raw = cell_to_str(data.get("admission_academic_year")).strip()
+            row_admission_year = normalize_academic_year(row_admission_year_raw)
+            if row_admission_year and row_admission_year != admission_academic_year_hint:
+                skipped += 1
+                errors.append(f"Row {r+1}: admission year '{row_admission_year_raw}' conflicts with selected '{admission_academic_year_hint}'; skipped")
+                add_preview(r + 1, data, "skip", "error", f"Admission year {row_admission_year_raw} conflicts with selected {admission_academic_year_hint}.")
+                continue
             processed_enrollments.add(enrollment_no)
 
-            division_code = cell_to_str(data.get("division_code")) or "A"
-            division = db.session.execute(select(Division).filter_by(program_id_fk=program.program_id, semester=semester, division_code=division_code)).scalars().first()
-            if not division:
+            row_division_code = cell_to_str(data.get("division_code")).strip().upper()
+            if row_division_code and division_hint and row_division_code != division_hint:
+                skipped += 1
+                errors.append(f"Row {r+1}: division '{row_division_code}' conflicts with selected '{division_hint}'; skipped")
+                add_preview(r + 1, data, "skip", "error", f"Division {row_division_code} conflicts with selected {division_hint}.")
+                continue
+            division_code = row_division_code or division_hint
+            division = db.session.execute(select(Division).filter_by(program_id_fk=program.program_id, semester=semester, division_code=division_code)).scalars().first() if division_code else None
+            if division_code and not division:
                 plan = db.session.execute(select(ProgramDivisionPlan).filter_by(program_id_fk=program.program_id, semester=semester)).scalars().first()
                 cap = None
                 if plan:
@@ -550,7 +697,13 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
             photo_url = cell_to_str(data.get("photo_url"))
             permanent_address = cell_to_str(data.get("permanent_address"))
             # Optional medium parsing
-            medium_raw = cell_to_str(data.get("medium_tag")).strip().lower()
+            row_medium_raw = cell_to_str(data.get("medium_tag")).strip()
+            if row_medium_raw and medium_hint and row_medium_raw.lower() != medium_hint.lower():
+                skipped += 1
+                errors.append(f"Row {r+1}: MOI '{row_medium_raw}' conflicts with selected '{medium_hint}'; skipped")
+                add_preview(r + 1, data, "skip", "error", f"MOI {row_medium_raw} conflicts with selected {medium_hint}.")
+                continue
+            medium_raw = (row_medium_raw or medium_hint).lower()
             medium_map = {
                 "": "",
                 "general": "General",
@@ -591,22 +744,30 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                     except Exception:
                         pass
 
-            current_semester = semester or to_int(data.get("current_semester"))
+            current_semester = semester
+            admission_academic_year = admission_academic_year_hint
+            intake_batch = selected_intake_batch if import_mode == "new" else None
             aadhar_no = cell_to_str(data.get("aadhar_no"))
             category = cell_to_str(data.get("category"))
 
             # Ensure User exists
-            user_id = ensure_student_user(enrollment_no, mobile, program.program_id)
+            user_id = ensure_student_user(enrollment_no, mobile, program.program_id, trust_id=trust_id)
 
-            student = db.session.execute(select(Student).filter_by(enrollment_no=enrollment_no)).scalars().first()
+            st_q = select(Student).filter_by(enrollment_no=enrollment_no)
+            if trust_id:
+                st_q = st_q.filter(Student.trust_id_fk == int(trust_id))
+            student = db.session.execute(st_q).scalars().first()
+            student_was_existing = student is not None
             if not student:
+                preview_action = "create"
                 student = Student(
                     enrollment_no=enrollment_no,
                     user_id_fk=user_id,
                     program_id_fk=program.program_id,
-                    division_id_fk=division.division_id,
-                    surname=surname,
-                    student_name=student_name,
+                    division_id_fk=(division.division_id if division else None),
+                    trust_id_fk=trust_id,
+                    last_name=surname,
+                    first_name=student_name,
                     father_name=father_name,
                     mobile=mobile,
                     date_of_birth=dob,
@@ -615,6 +776,8 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                     photo_url=photo_url,
                     permanent_address=permanent_address,
                     current_semester=current_semester,
+                    admission_academic_year=admission_academic_year or None,
+                    intake_batch_id_fk=(intake_batch.intake_batch_id if intake_batch else None),
                     aadhar_no=aadhar_no or None,
                     category=category or None,
                     is_active=True,
@@ -622,16 +785,17 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                 db.session.add(student)
                 created += 1
             else:
+                preview_action = "update"
                 try:
                     student.is_active = True
                 except Exception:
                     pass
                 student.program_id_fk = program.program_id
-                student.division_id_fk = division.division_id
+                student.division_id_fk = division.division_id if division else None
                 if not student.user_id_fk and user_id:
                     student.user_id_fk = user_id
-                student.surname = surname or student.surname
-                student.student_name = student_name or student.student_name
+                student.last_name = surname or student.last_name
+                student.first_name = student_name or student.first_name
                 student.mobile = mobile or student.mobile
                 student.father_name = father_name or student.father_name
                 student.date_of_birth = dob or student.date_of_birth
@@ -639,6 +803,9 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                 student.photo_url = photo_url or student.photo_url
                 student.permanent_address = permanent_address or student.permanent_address
                 student.current_semester = current_semester or student.current_semester
+                if admission_academic_year:
+                    student.admission_academic_year = admission_academic_year
+                    student.intake_batch_id_fk = intake_batch.intake_batch_id if intake_batch else None
                 updated += 1
             # Assign medium with BCom defaulting to General when absent
             try:
@@ -646,11 +813,12 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
             except Exception:
                 student.medium_tag = medium_tag or (student.medium_tag or None)
                 errors.append(f"Row {r+1}: failed to compute medium_tag due to data format")
+            add_preview(r + 1, data, preview_action)
 
     # Delete students that are in DB for this Program+Semester but NOT in the Excel file.
     # For multi-medium programs like B.Com, only delete students that share the same medium(s)
     # as rows present in this import, so importing English does not delete Gujarati, and vice versa.
-    if mediums_seen:
+    if replace_scope and mediums_seen:
         normalized_mediums = {m.strip() for m in mediums_seen}
         for existing in existing_students:
             enr = existing.enrollment_no
@@ -660,7 +828,7 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
             if existing_medium in normalized_mediums:
                 db.session.delete(existing)
                 deleted += 1
-    else:
+    elif replace_scope:
         # Fallback: no medium information, keep legacy behavior (program+semester full replacement)
         existing_enrollments = {s.enrollment_no for s in existing_students}
         students_to_delete = existing_enrollments - processed_enrollments
@@ -671,12 +839,29 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
                     db.session.delete(s_to_del)
                     deleted += 1
 
+    if import_mode == "new" and selected_intake_batch:
+        mapped_count = db.session.execute(
+            select(func.count()).select_from(Student).filter_by(
+                intake_batch_id_fk=selected_intake_batch.intake_batch_id,
+                is_active=True,
+            )
+        ).scalar() or 0
+        if mapped_count > int(selected_intake_batch.approved_intake or 0):
+            db.session.rollback()
+            raise ValueError(
+                f"Approved intake exceeded: {mapped_count} active students would be linked to an "
+                f"approved intake of {selected_intake_batch.approved_intake}."
+            )
+
     if not dry_run:
         db.session.commit()
     else:
         db.session.rollback()
     print(f"Imported from {path}: created={created}, updated={updated}, skipped={skipped}, deleted={deleted}, divisions_created={divisions_created}, errors={len(errors)}")
     # Return a detailed report for UI display
+    start_year = int(admission_academic_year_hint[:4])
+    completion_start = start_year + max(int(program.program_duration_years or 1), 1)
+    completion_academic_year = f"{completion_start}-{str(completion_start + 1)[-2:]}"
     return {
         "created": created,
         "updated": updated,
@@ -688,6 +873,15 @@ def import_excel(path: str, program_id: int = None, trust_id: int = None, progra
         "program_name": program.program_name,
         "program_id": program.program_id,
         "semester": semester,
+        "import_mode": import_mode,
+        "admission_academic_year": admission_academic_year_hint,
+        "completion_academic_year": completion_academic_year,
+        "medium_tag": medium_hint or None,
+        "division_code": division_hint or None,
+        "approved_intake": (selected_intake_batch.approved_intake if selected_intake_batch else None),
+        "preview_rows": preview_rows,
+        "preview_total": preview_total,
+        "preview_limit": preview_limit,
         "path": path,
     }
 

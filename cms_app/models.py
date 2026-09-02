@@ -113,6 +113,29 @@ class ProgramDivisionPlan(db.Model):
     )
 
 
+class ProgramIntakeBatch(db.Model):
+    """Approved annual intake; separate from curriculum-scheme versioning."""
+    __tablename__ = "program_intake_batches"
+    intake_batch_id = db.Column(db.Integer, primary_key=True)
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
+    admission_academic_year = db.Column(db.String(16), nullable=False)
+    approved_intake = db.Column(db.Integer, nullable=False)
+    default_division_capacity = db.Column(db.Integer, nullable=False)
+    medium_tag = db.Column(db.String(32), nullable=False, default="")
+    status = db.Column(db.String(16), nullable=False, default="active")
+    approved_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    approved_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "program_id_fk", "admission_academic_year", "medium_tag",
+            name="uq_program_intake_batch_scope",
+        ),
+    )
+
+
 class User(UserMixin, db.Model):
     __tablename__ = "users"
     user_id = db.Column(db.Integer, primary_key=True)
@@ -187,6 +210,9 @@ class Student(db.Model):
     photo_url = db.Column(db.String(255))
     permanent_address = db.Column(db.String(255))
     current_semester = db.Column(db.Integer)
+    # Nullable during the safe migration period; never infer from enrollment_no.
+    admission_academic_year = db.Column(db.String(16))
+    intake_batch_id_fk = db.Column(db.Integer, db.ForeignKey("program_intake_batches.intake_batch_id"))
     # Medium of instruction (e.g., English, Gujarati)
     medium_tag = db.Column(db.String(32))
     aadhar_no = db.Column(db.String(32))

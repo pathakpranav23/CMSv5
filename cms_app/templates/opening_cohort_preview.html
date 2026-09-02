@@ -1,0 +1,72 @@
+{% extends "layout.html" %}
+{% block page_class %}opening-cohort-preview{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h2 class="mb-1 title">Opening Student Cohort Preview</h2>
+      <div class="text-muted">{{ preview.program.program_name }} · Current session {{ preview.current_academic_year }} · {{ preview.duration_years }}-year program</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.module_divisions', program_id=preview.program.program_id) }}">Back to Divisions</a>
+  </div>
+
+  <div class="alert alert-info">
+    This is a one-time onboarding aid for active students whose admission academic year is blank. The proposal uses current semester only; confirmed admission years are preserved and exceptions are never guessed.
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-4"><div class="card h-100"><div class="card-body"><div class="text-muted">Proposed mappings</div><div class="h3">{{ preview.proposed_count }}</div></div></div></div>
+    <div class="col-md-4"><div class="card h-100"><div class="card-body"><div class="text-muted">Already confirmed</div><div class="h3">{{ preview.preserved_students|length }}</div></div></div></div>
+    <div class="col-md-4"><div class="card h-100"><div class="card-body"><div class="text-muted">Manual review</div><div class="h3">{{ preview.exceptions|length }}</div></div></div></div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">Batch start → batch completion preview</div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>Current stage</th><th>Current semester(s)</th><th>Batch admission year</th><th>Batch completion year</th><th class="text-end">Students</th></tr></thead>
+          <tbody>
+          {% for group in preview.proposed_groups %}
+            <tr>
+              <td>{{ group.current_stage }}</td>
+              <td>{{ group.semesters|join(', ') }}</td>
+              <td><strong>{{ group.admission_academic_year }}</strong></td>
+              <td><strong>{{ group.completion_academic_year }}</strong></td>
+              <td class="text-end">{{ group.students|length }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-4">No blank admission years can be proposed.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {% if preview.exceptions %}
+  <div class="card border-warning mb-3">
+    <div class="card-header">Manual review required</div>
+    <div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Enrollment</th><th>Student</th><th>Semester</th><th>Reason</th></tr></thead><tbody>
+      {% for item in preview.exceptions %}<tr><td>{{ item.student.enrollment_no }}</td><td>{{ item.student.full_name }}</td><td>{{ item.student.current_semester or '—' }}</td><td>{{ item.reason }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+  {% endif %}
+
+  {% if preview.proposed_count %}
+  <form method="post" action="{{ url_for('main.opening_cohort_apply') }}" class="card">
+    <div class="card-body d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+      <div><strong>Confirm opening-cohort mapping</strong><div class="small text-muted">Only blank admission academic years will be filled. No intake, division, attendance, fee, or result record will be changed.</div></div>
+      <div class="d-flex gap-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="program_id" value="{{ preview.program.program_id }}">
+        <input type="hidden" name="current_academic_year" value="{{ preview.current_academic_year }}">
+        <input type="hidden" name="fingerprint" value="{{ preview.fingerprint }}">
+        <a class="btn btn-outline-secondary" href="{{ url_for('main.module_divisions', program_id=preview.program.program_id) }}">Cancel</a>
+        <button class="btn btn-primary" type="submit">Apply {{ preview.proposed_count }} mappings</button>
+      </div>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

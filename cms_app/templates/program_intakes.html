@@ -1,0 +1,63 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div><h3 class="mb-1 title">Approved Program Intakes</h3><div class="small text-muted">Academic setup—not day-to-day division allocation.</div></div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.module_divisions', program_id=selected_program.program_id) }}">Back to Divisions</a>
+  </div>
+  <div class="alert alert-light border">Program: <strong>{{ selected_program.program_name }}</strong></div>
+  {% if return_to %}<div class="alert alert-info"><strong>Student import needs this setup.</strong> Confirm the admission year, approved intake, division capacity and MOI below; save it as Active, then return to the import page.</div>{% endif %}
+
+  <div class="card mb-3">
+    <div class="card-header fw-semibold">{{ 'Edit Intake' if edit_batch else 'Create Intake' }}</div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('main.program_intake_batch_save') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="program_id" value="{{ selected_program.program_id }}">
+        <input type="hidden" name="intake_batch_id" value="{{ edit_batch.intake_batch_id if edit_batch else '' }}">
+        <input type="hidden" name="return_to" value="{{ return_to }}">
+        <div class="col-md-3"><label class="form-label">Admission academic year</label><input name="admission_academic_year" class="form-control" placeholder="2026-27" pattern="[0-9]{4}-[0-9]{2}" value="{{ edit_batch.admission_academic_year if edit_batch else prefill_year }}" required></div>
+        <div class="col-md-2"><label class="form-label">Approved intake</label><input type="number" min="1" name="approved_intake" class="form-control" value="{{ edit_batch.approved_intake if edit_batch else '' }}" required></div>
+        <div class="col-md-2"><label class="form-label">Division capacity</label><input type="number" min="1" name="default_division_capacity" class="form-control" value="{{ edit_batch.default_division_capacity if edit_batch else '' }}" required></div>
+        <div class="col-md-2"><label class="form-label">MOI</label><input name="medium_tag" class="form-control" placeholder="English" value="{{ edit_batch.medium_tag if edit_batch else prefill_medium }}"></div>
+        <div class="col-md-2"><label class="form-label">Status</label><select name="status" class="form-select">{% for value in ['active', 'draft', 'closed'] %}<option value="{{ value }}" {% if edit_batch and edit_batch.status == value %}selected{% endif %}>{{ value|title }}</option>{% endfor %}</select></div>
+        <div class="col-md-1 d-flex align-items-end"><button class="btn btn-primary w-100">Save</button></div>
+      </form>
+      <div class="d-flex justify-content-between align-items-center mt-2">
+        <div class="form-text">This records sanctioned intake. Existing students are not mapped automatically.</div>
+        {% if edit_batch %}<a class="btn btn-sm btn-link" href="{{ url_for('main.program_intakes', program_id=selected_program.program_id) }}">Cancel edit</a>{% endif %}
+      </div>
+      {% if return_to %}<div class="mt-3"><a class="btn btn-outline-secondary" href="{{ return_to }}"><i class="bi bi-arrow-left me-1"></i> Return to Student Import</a></div>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header fw-semibold">Intake History</div>
+    <div class="card-body">
+      {% if intake_batches %}
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Admission year</th><th>MOI</th><th>Approved intake</th><th>Division capacity</th><th>Linked students</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+        <tbody>{% for batch in intake_batches %}
+          {% set linked = linked_counts.get(batch.intake_batch_id, 0) %}
+          <tr>
+            <td>{{ batch.admission_academic_year }}</td><td>{{ batch.medium_tag or 'All' }}</td><td>{{ batch.approved_intake }}</td><td>{{ batch.default_division_capacity }}</td><td>{{ linked }}</td><td>{{ batch.status|title }}</td>
+            <td class="text-end text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.program_intakes', program_id=selected_program.program_id, edit_id=batch.intake_batch_id) }}">Edit</a>
+              <form method="post" action="{{ url_for('main.program_intake_batch_status', intake_batch_id=batch.intake_batch_id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="status" value="{{ 'active' if batch.status == 'closed' else 'closed' }}">
+                <button class="btn btn-sm btn-outline-warning" type="submit">{{ 'Reopen' if batch.status == 'closed' else 'Close' }}</button>
+              </form>
+              {% if linked == 0 %}
+              <form method="post" action="{{ url_for('main.program_intake_batch_delete', intake_batch_id=batch.intake_batch_id) }}" class="d-inline" onsubmit="return confirm('Delete the unused {{ batch.admission_academic_year }} intake record?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+              </form>
+              {% else %}<button class="btn btn-sm btn-outline-secondary" type="button" disabled title="Close this record instead; linked students prevent deletion.">Delete</button>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}</tbody>
+      </table></div>
+      {% else %}<div class="text-muted">No intake records exist for this program.</div>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

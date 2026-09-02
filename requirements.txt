@@ -5,6 +5,7 @@ Flask-Login==0.6.3
 # psycopg2-binary==2.9.9 # Optional/Prod only
 python-dotenv==1.0.0
 openpyxl==3.1.2
+xlrd==2.0.1
 SQLAlchemy==1.4.49
 Flask-Limiter==4.1.1
 Flask-Caching==2.3.1

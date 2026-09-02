@@ -1,0 +1,53 @@
+{% extends 'layout.html' %}
+{% block content %}
+<div class="container py-4">
+  <div class="section-header d-flex justify-content-between align-items-center mb-3">
+    <div><h2 class="mb-1 title">Division Allocation Preview</h2><div class="text-muted">{{ preview.program.program_name }} · Semester {{ preview.semester }}{% if preview.admission_academic_year %} · Admission batch {{ preview.admission_academic_year }}{% endif %}</div></div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.module_divisions', program_id=preview.program.program_id) }}">Back to planning</a>
+  </div>
+  <div class="row g-3 mb-3">
+    <div class="col-md"><div class="card h-100"><div class="card-body"><div class="text-muted">Active students</div><div class="h3">{{ preview.active_students }}</div></div></div></div>
+    <div class="col-md"><div class="card h-100"><div class="card-body"><div class="text-muted">Approved intake</div><div class="h3">{{ preview.approved_intake }}</div></div></div></div>
+    <div class="col-md"><div class="card h-100"><div class="card-body"><div class="text-muted">Division capacity</div><div class="h3">{{ preview.division_capacity }}</div></div></div></div>
+    <div class="col-md"><div class="card h-100"><div class="card-body"><div class="text-muted">Required / planned</div><div class="h3">{{ preview.required_divisions }} / {{ preview.planned_divisions }}</div></div></div></div>
+  </div>
+  {% for error in preview.errors %}<div class="alert alert-danger">{{ error }}</div>{% endfor %}
+  {% for warning in preview.warnings %}<div class="alert alert-warning">{{ warning }}</div>{% endfor %}
+  <div class="card mb-3"><div class="card-header">Proposed operational allocation</div><div class="card-body"><div class="row g-2">
+    {% for row in preview.divisions %}<div class="col-md-4"><div class="border rounded p-3"><strong>Division {{ row.code }}</strong><div><span data-division-count="{{ row.code }}">{{ row.proposed }}</span> / {{ row.capacity }} students</div></div></div>{% endfor %}
+  </div></div></div>
+  {% set can_apply_allocation = preview.can_apply and can_manage_allocation %}
+  {% if can_apply_allocation %}<form method="post" action="{{ url_for('main.divisions_allocation_apply') }}">{% endif %}
+  <div class="card mb-3"><div class="card-header d-flex justify-content-between"><span>Student allocation <span class="badge bg-secondary">{{ preview.assignments|length }}</span></span><span class="small text-muted">Review or change individual divisions before applying</span></div><div class="card-body table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Enrollment</th><th>Student</th><th>Current</th><th>Proposed division</th></tr></thead><tbody>
+    {% for assignment in preview.assignments %}<tr><td>{{ assignment.enrollment_no }}</td><td>{{ assignment.student_name }}</td><td>{{ assignment.from_division }}</td><td>{% if can_apply_allocation %}<select class="form-select form-select-sm division-assignment" name="division_assignment" aria-label="Division for {{ assignment.student_name }}">{% for division in preview.divisions %}<option value="{{ assignment.enrollment_no }}|{{ division.code }}" {% if assignment.to_division == division.code %}selected{% endif %}>Division {{ division.code }}</option>{% endfor %}</select>{% else %}{{ assignment.to_division }}{% endif %}</td></tr>{% else %}<tr><td colspan="4" class="text-muted">No active students are available for allocation.</td></tr>{% endfor %}
+  </tbody></table></div></div>
+  {% if can_apply_allocation %}
+  <div class="text-end">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="program_id" value="{{ preview.program.program_id }}" />
+    <input type="hidden" name="semester" value="{{ preview.semester }}" />
+    <input type="hidden" name="approved_intake" value="{{ preview.approved_intake }}" />
+    {% if preview.intake_batch_id %}<input type="hidden" name="intake_batch_id" value="{{ preview.intake_batch_id }}" />{% endif %}
+    <input type="hidden" name="fingerprint" value="{{ preview.fingerprint }}" />
+    <button class="btn btn-success" type="submit">Apply reviewed allocation</button>
+  </div></form>
+  {% elif preview.can_apply %}<div class="alert alert-info">Preview is ready. An Admin, Principal, Clerk, or assigned Semester Coordinator must apply it.</div>{% endif %}
+</div>
+{% if can_apply_allocation %}<script>
+(() => {
+  const selects = Array.from(document.querySelectorAll('.division-assignment'));
+  const refreshCounts = () => {
+    const counts = {};
+    selects.forEach((select) => {
+      const code = select.value.split('|').pop();
+      counts[code] = (counts[code] || 0) + 1;
+    });
+    document.querySelectorAll('[data-division-count]').forEach((node) => {
+      node.textContent = counts[node.dataset.divisionCount] || 0;
+    });
+  };
+  selects.forEach((select) => select.addEventListener('change', refreshCounts));
+  refreshCounts();
+})();
+</script>{% endif %}
+{% endblock %}

@@ -14,7 +14,7 @@
     <div class="col-12">
       <div class="alert alert-warning d-flex align-items-center" role="alert">
         <i class="bi bi-shield-check me-2"></i>
-        <div>Validation only — no changes saved.</div>
+        <div><strong>Validation preview</strong> — no student data has been changed yet.</div>
       </div>
     </div>
     {% endif %}
@@ -38,8 +38,13 @@
           <h5 class="card-title">Import Context</h5>
           <ul class="list-unstyled mb-0">
             <li><strong>Program</strong>: {{ report.program_name or "-" }}</li>
+            <li><strong>Import type</strong>: {{ 'New admissions' if report.import_mode == 'new' else ('Existing / continuing students' if report.import_mode == 'existing' else '-') }}</li>
             <li><strong>Semester</strong>: {{ report.semester if report.semester is not none else "-" }}</li>
-            <li><strong>File</strong>: {{ report.path or "-" }}</li>
+            <li><strong>Batch</strong>: {{ report.admission_academic_year or '-' }} → {{ report.completion_academic_year or '-' }}</li>
+            <li><strong>MOI</strong>: {{ report.medium_tag or "-" }}</li>
+            <li><strong>Division</strong>: {{ report.division_code or "Unassigned" }}</li>
+            {% if report.approved_intake is not none %}<li><strong>Approved intake</strong>: {{ report.approved_intake }}</li>{% endif %}
+            <li><strong>File</strong>: {{ report.file_name or "-" }}</li>
           </ul>
         </div>
       </div>
@@ -50,19 +55,84 @@
         <div class="card-body">
           <h5 class="card-title">Actions</h5>
           <div class="d-flex flex-wrap gap-2">
+            {% if confirmation_token %}
+            <form method="post" action="{{ url_for('main.students_import_confirm') }}" onsubmit="return confirm('Execute this validated student import now?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="confirmation_token" value="{{ confirmation_token }}">
+              <button class="btn btn-success" type="submit"><i class="bi bi-check2-circle me-1"></i> Confirm &amp; Import</button>
+            </form>
+            {% endif %}
             {% if report.program_id %}
             <a class="btn btn-primary" href="{{ url_for('main.students', program_id=report.program_id) }}">
               <i class="bi bi-people me-1"></i> View Students in Program
             </a>
             {% endif %}
             <a class="btn btn-outline-secondary" href="{{ url_for('main.students_import') }}">
-              <i class="bi bi-file-earmark-arrow-up me-1"></i> Import Another File
+              <i class="bi bi-file-earmark-arrow-up me-1"></i> {{ 'Correct & Re-upload' if report.dry_run and not confirmation_token else 'Import Another File' }}
             </a>
           </div>
         </div>
       </div>
     </div>
   </div>
+
+  {% if report.preview_rows %}
+  <div class="card shadow-sm mt-4" id="studentPreviewCard">
+    <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <div>
+        <h5 class="mb-1">{{ 'Imported students' if report.executed else 'Student preview' }}</h5>
+        <div class="small text-muted">
+          Showing up to {{ report.preview_limit }} of {{ report.preview_total }} processed spreadsheet rows.
+          {% if report.preview_total > report.preview_limit %}Use the final export/report for the remaining records.{% endif %}
+        </div>
+      </div>
+      <div class="d-flex flex-wrap gap-2">
+        <label class="visually-hidden" for="previewActionFilter">Filter by action</label>
+        <select class="form-select form-select-sm" id="previewActionFilter" style="width:auto">
+          <option value="all">All actions</option>
+          <option value="create">Create</option>
+          <option value="update">Update</option>
+          <option value="skip">Skip / error</option>
+        </select>
+        <label class="visually-hidden" for="previewSearch">Search students</label>
+        <input class="form-control form-control-sm" id="previewSearch" type="search" placeholder="Search name or enrollment" style="width:240px">
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0" id="studentPreviewTable">
+        <thead class="table-light">
+          <tr><th>Row</th><th>Enrollment</th><th>Roll</th><th>Student</th><th>Batch</th><th>Sem</th><th>MOI</th><th>Division</th><th>Action</th><th>Validation</th></tr>
+        </thead>
+        <tbody>
+          {% for student in report.preview_rows %}
+          <tr data-action="{{ student.action }}" data-status="{{ student.status }}">
+            <td>{{ student.row_number }}</td>
+            <td>{{ student.enrollment_no or '—' }}</td>
+            <td>{{ student.roll_no or '—' }}</td>
+            <td><strong>{{ student.student_name }}</strong></td>
+            <td>{{ student.admission_academic_year }}</td>
+            <td>{{ student.semester }}</td>
+            <td>{{ student.medium_tag }}</td>
+            <td>{{ student.division_code }}</td>
+            <td><span class="badge {% if student.action == 'create' %}bg-success{% elif student.action == 'update' %}bg-info text-dark{% else %}bg-secondary{% endif %}">{{ student.action|title }}</span></td>
+            <td>
+              {% if student.status == 'error' %}<span class="text-danger"><i class="bi bi-x-circle me-1"></i>{{ student.reason }}</span>
+              {% else %}<span class="text-success"><i class="bi bi-check-circle me-1"></i>Valid</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer bg-white d-flex align-items-center justify-content-between">
+      <span class="small text-muted" id="previewPageStatus"></span>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Student preview pages">
+        <button class="btn btn-outline-secondary" type="button" id="previewPrev">Previous</button>
+        <button class="btn btn-outline-secondary" type="button" id="previewNext">Next</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <div class="row g-3 mt-1">
     <div class="col-12">
@@ -87,4 +157,35 @@
     <small class="text-muted">Report generated at {{ (now() if false else '') }}.</small>
   </div>
 </div>
+{% if report.preview_rows %}
+<script>
+(() => {
+  const rows = Array.from(document.querySelectorAll('#studentPreviewTable tbody tr'));
+  const filter = document.getElementById('previewActionFilter');
+  const search = document.getElementById('previewSearch');
+  const previous = document.getElementById('previewPrev');
+  const next = document.getElementById('previewNext');
+  const status = document.getElementById('previewPageStatus');
+  const pageSize = 25;
+  let page = 1;
+  const render = () => {
+    const term = search.value.trim().toLowerCase();
+    const action = filter.value;
+    const matches = rows.filter((row) => (action === 'all' || row.dataset.action === action) && (!term || row.textContent.toLowerCase().includes(term)));
+    const pages = Math.max(1, Math.ceil(matches.length / pageSize));
+    page = Math.min(page, pages);
+    rows.forEach((row) => { row.hidden = true; });
+    matches.slice((page - 1) * pageSize, page * pageSize).forEach((row) => { row.hidden = false; });
+    status.textContent = matches.length ? `Showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, matches.length)} of ${matches.length}` : 'No matching students';
+    previous.disabled = page <= 1;
+    next.disabled = page >= pages;
+  };
+  filter.addEventListener('change', () => { page = 1; render(); });
+  search.addEventListener('input', () => { page = 1; render(); });
+  previous.addEventListener('click', () => { page -= 1; render(); });
+  next.addEventListener('click', () => { page += 1; render(); });
+  render();
+})();
+</script>
+{% endif %}
 {% endblock %}
