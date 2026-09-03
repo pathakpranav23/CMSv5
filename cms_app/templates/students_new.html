@@ -126,6 +126,10 @@
   </div>
 
   <div class="col-12">
+    <div class="row g-3 mb-3">
+      <div class="col-md-6"><label for="home_city" class="form-label">Home City / Town / Village</label><input type="text" id="home_city" name="home_city" class="form-control" maxlength="96" value="{{ form_data.get('home_city','') }}" placeholder="e.g. Mahuva or Kalsar"></div>
+      <div class="col-md-6"><label for="home_district" class="form-label">Home District</label><input type="text" id="home_district" name="home_district" class="form-control" maxlength="96" value="{{ form_data.get('home_district','') }}" placeholder="e.g. Bhavnagar"></div>
+    </div>
     <label for="permanent_address" class="form-label">Permanent Address</label>
     <textarea id="permanent_address" name="permanent_address" class="form-control" rows="2" placeholder="House No, Street, Area, City, State, PIN">{{ form_data.get('permanent_address','') }}</textarea>
   </div>

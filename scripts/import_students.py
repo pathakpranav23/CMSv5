@@ -68,6 +68,8 @@ HEADER_MAP: Dict[str, List[str]] = {
     "gender": ["gender", "sex"],
     "photo_url": ["photo", "student photo", "photo url", "image", "profile photo"],
     "permanent_address": ["permanent address", "address"],
+    "home_city": ["home city", "city", "town", "village", "city town village", "home town"],
+    "home_district": ["home district", "district"],
     "aadhar_no": [
         "aadhar card number",
         "aadhaar card number",
@@ -485,6 +487,8 @@ def import_excel(
                 gender = ""
             photo_url = cell_to_str(data.get("photo_url"))
             permanent_address = cell_to_str(data.get("permanent_address"))
+            home_city = cell_to_str(data.get("home_city"))
+            home_district = cell_to_str(data.get("home_district"))
             # Optional medium parsing
             row_medium_raw = cell_to_str(data.get("medium_tag")).strip()
             if row_medium_raw and medium_hint and row_medium_raw.lower() != medium_hint.lower():
@@ -564,6 +568,8 @@ def import_excel(
                     medium_tag=None,
                     photo_url=photo_url,
                     permanent_address=permanent_address,
+                    home_city=home_city or None,
+                    home_district=home_district or None,
                     current_semester=current_semester,
                     admission_academic_year=admission_academic_year or None,
                     intake_batch_id_fk=(intake_batch.intake_batch_id if intake_batch else None),
@@ -596,6 +602,8 @@ def import_excel(
                 student.gender = gender or student.gender
                 student.photo_url = photo_url or student.photo_url
                 student.permanent_address = permanent_address or student.permanent_address
+                student.home_city = home_city or student.home_city
+                student.home_district = home_district or student.home_district
                 student.current_semester = current_semester or student.current_semester
                 if admission_academic_year:
                     student.admission_academic_year = admission_academic_year
@@ -696,6 +704,8 @@ def import_excel(
                 gender = ""
             photo_url = cell_to_str(data.get("photo_url"))
             permanent_address = cell_to_str(data.get("permanent_address"))
+            home_city = cell_to_str(data.get("home_city"))
+            home_district = cell_to_str(data.get("home_district"))
             # Optional medium parsing
             row_medium_raw = cell_to_str(data.get("medium_tag")).strip()
             if row_medium_raw and medium_hint and row_medium_raw.lower() != medium_hint.lower():
@@ -775,6 +785,8 @@ def import_excel(
                     medium_tag=None,
                     photo_url=photo_url,
                     permanent_address=permanent_address,
+                    home_city=home_city or None,
+                    home_district=home_district or None,
                     current_semester=current_semester,
                     admission_academic_year=admission_academic_year or None,
                     intake_batch_id_fk=(intake_batch.intake_batch_id if intake_batch else None),
@@ -802,6 +814,8 @@ def import_excel(
                 student.gender = gender or student.gender
                 student.photo_url = photo_url or student.photo_url
                 student.permanent_address = permanent_address or student.permanent_address
+                student.home_city = home_city or student.home_city
+                student.home_district = home_district or student.home_district
                 student.current_semester = current_semester or student.current_semester
                 if admission_academic_year:
                     student.admission_academic_year = admission_academic_year

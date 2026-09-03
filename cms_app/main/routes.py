@@ -11,7 +11,7 @@ import re
 from xml.etree import ElementTree as ET
 from sqlalchemy import or_, select, and_, cast, Integer, false, update, MetaData, Table, inspect as sa_inspect
 from sqlalchemy.orm import selectinload
-from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementRevision, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, MaterialRevision, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification, StudentFollowUpTask, EnrollmentSyncRequest, LessonPlanImportDraft, LessonPlan, LessonPlanUnit, LessonPlanTopic, LessonPlanDelivery, DataAuditLog
+from ..models import Student, Program, Division, Attendance, Grade, StudentCreditLog, FeesRecord, FeePayment, Subject, Faculty, SubjectType, CreditStructure, CourseAssignment, StudentSubjectEnrollment, User, Announcement, AnnouncementRevision, AnnouncementAudience, AnnouncementDismissal, AnnouncementRecipient, PasswordChangeLog, SubjectMaterial, MaterialRevision, SubjectMaterialLog, FeeStructure, ProgramBankDetails, SemesterCoordinator, StudentSemesterResult, Trust, Institute, TimetableSettings, SystemMessage, SystemMessageRead, Notification, StudentFollowUpTask, EnrollmentSyncRequest, LessonPlanImportDraft, LessonPlan, LessonPlanUnit, LessonPlanTopic, LessonPlanDelivery, DataAuditLog, AcademicYear, StudentAcademicEnrollment
 from .. import db, csrf_required, limiter, cache
 from sqlalchemy import func
 from ..api_utils import api_success, api_error
@@ -129,6 +129,8 @@ _STUDENT_FIELD_NAMES = [
     "gender",
     "photo_url",
     "permanent_address",
+    "home_city",
+    "home_district",
     "current_semester",
     "admission_academic_year",
     "intake_batch_id_fk",
@@ -1058,6 +1060,32 @@ def academic_year_options():
         end_year_short = str((y + 1))[-2:]
         options.append(f"{y}-{end_year_short}")
     return options
+
+
+def _academic_year_scope():
+    """Return the tenant and optional institute scope allowed for year administration."""
+    trust_id = _effective_trust_id()
+    institute_id = None
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role == "principal" and getattr(current_user, "program_id_fk", None):
+        program = db.session.get(Program, current_user.program_id_fk)
+        institute_id = getattr(program, "institute_id_fk", None) if program else None
+    return trust_id, institute_id
+
+
+def _available_academic_years(trust_id, institute_id=None):
+    labels = set(academic_year_options())
+    if not trust_id:
+        return sorted(labels, reverse=True)
+    query = select(AcademicYear.year_label).where(AcademicYear.trust_id_fk == trust_id)
+    if institute_id:
+        query = query.where(or_(AcademicYear.institute_id_fk == institute_id, AcademicYear.institute_id_fk.is_(None)))
+    labels.update(value for value in db.session.execute(query).scalars().all() if value)
+    history_query = select(StudentAcademicEnrollment.academic_year).where(StudentAcademicEnrollment.trust_id_fk == trust_id)
+    if institute_id:
+        history_query = history_query.where(StudentAcademicEnrollment.institute_id_fk == institute_id)
+    labels.update(value for value in db.session.execute(history_query).scalars().all() if value)
+    return sorted(labels, reverse=True)
 
 
 def get_semester_coordinators_for_scope(program_id: int, semester: int, medium: str, academic_year: str):
@@ -4465,6 +4493,13 @@ def dashboard():
     start_year = now.year if now.month >= 6 else (now.year - 1)
     end_year_short = str((start_year + 1))[-2:]
     academic_year = f"{start_year}-{end_year_short}"
+    selected_dashboard_year = (request.args.get("academic_year") or academic_year).strip()
+    if selected_dashboard_year != academic_year and role in ("admin", "principal"):
+        return redirect(url_for(
+            "main.annual_enrollment_history",
+            academic_year=selected_dashboard_year,
+            program_id=(selected_program.program_id if selected_program else ""),
+        ))
 
     # Summary metrics scope:
     # - Admin: overview across all programs in the trust (pid=None, trust scoped)
@@ -5938,6 +5973,8 @@ def dashboard():
         charts_semester_scope=(charts_semester_scope if (role_lower == 'admin') else None),
         student_view=student_view,
         acting_trust=acting_trust,
+        dashboard_academic_years=_available_academic_years(effective_trust_id, getattr(selected_program, "institute_id_fk", None)),
+        active_dashboard_year=academic_year,
     )
 
 @main_bp.route("/announcements")
@@ -9554,6 +9591,8 @@ def students_new():
         photo_file = request.files.get("photo_file")
         photo_url = ""
         permanent_address = (form.get("permanent_address") or "").strip()
+        home_city = (form.get("home_city") or "").strip()
+        home_district = (form.get("home_district") or "").strip()
 
         errors = []
         # Required fields
@@ -9633,6 +9672,8 @@ def students_new():
                     errors.append("Failed to save photo. Please try again.")
         if permanent_address and len(permanent_address) > 255:
             errors.append("Permanent Address is too long (max 255 characters).")
+        if len(home_city) > 96 or len(home_district) > 96:
+            errors.append("City/Town and District must each be 96 characters or fewer.")
 
         # Principal scope restriction: only allow within assigned program
         try:
@@ -9680,6 +9721,8 @@ def students_new():
                     "aadhar_no": aadhar_no,
                     # photo_file cannot be re-populated after error
                     "permanent_address": permanent_address,
+                    "home_city": home_city,
+                    "home_district": home_district,
                     "current_semester": current_semester_raw,
                 },
             )
@@ -9789,6 +9832,8 @@ def students_new():
                 "medium_tag": medium_tag or None,
                 "photo_url": photo_url or None,
                 "permanent_address": permanent_address or None,
+                "home_city": home_city or None,
+                "home_district": home_district or None,
                 "current_semester": current_semester,
                 "category": category or None,
                 "aadhar_no": aadhar_no or None,
@@ -9861,6 +9906,8 @@ def students_edit(enrollment_no):
         photo_file = request.files.get("photo_file")
         remove_photo = form.get("remove_photo")
         permanent_address = (form.get("permanent_address") or "").strip()
+        home_city = (form.get("home_city") or "").strip()
+        home_district = (form.get("home_district") or "").strip()
         photo_url = student.photo_url
 
         errors = []
@@ -9907,6 +9954,8 @@ def students_edit(enrollment_no):
             errors.append("Gender must be Male, Female, or Other.")
         if medium_tag and medium_tag not in ("English", "Gujarati", "General"):
             errors.append("Medium must be English, Gujarati, or General.")
+        if len(home_city) > 96 or len(home_district) > 96:
+            errors.append("City/Town and District must each be 96 characters or fewer.")
 
         # Aadhar validation
         if aadhar_no:
@@ -9985,6 +10034,8 @@ def students_edit(enrollment_no):
                     "category": category,
                     "aadhar_no": aadhar_no,
                     "permanent_address": permanent_address,
+                    "home_city": home_city,
+                    "home_district": home_district,
                     "current_semester": current_semester_raw,
                     "photo_url": photo_url or "",
                 },
@@ -10017,6 +10068,8 @@ def students_edit(enrollment_no):
                 "medium_tag": medium_tag or None,
                 "photo_url": photo_url or None,
                 "permanent_address": permanent_address or None,
+                "home_city": home_city or None,
+                "home_district": home_district or None,
                 "current_semester": current_semester,
                 "category": category or None,
                 "aadhar_no": aadhar_no or None,
@@ -10064,6 +10117,8 @@ def students_edit(enrollment_no):
         "category": student.category or "",
         "aadhar_no": student.aadhar_no or "",
         "permanent_address": student.permanent_address or "",
+        "home_city": getattr(student, "home_city", None) or "",
+        "home_district": getattr(student, "home_district", None) or "",
         "current_semester": student.current_semester or "",
         "photo_url": student.photo_url or "",
     }
@@ -15770,6 +15825,349 @@ def module_admin():
     return render_template("module_admin.html", role=role, urls=urls, health=health, top_actions=top_actions)
 
 
+def _scoped_program_ids_for_year_history(trust_id, institute_id=None):
+    query = select(Program.program_id).join(Institute, Program.institute_id_fk == Institute.institute_id)
+    if trust_id:
+        query = query.where(Institute.trust_id_fk == trust_id)
+    if institute_id:
+        query = query.where(Institute.institute_id == institute_id)
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    if role == "principal" and getattr(current_user, "program_id_fk", None):
+        query = query.where(Program.program_id == current_user.program_id_fk)
+    return list(db.session.execute(query).scalars().all())
+
+
+@main_bp.route("/annual-enrollment-history")
+@login_required
+@role_required("admin", "principal")
+def annual_enrollment_history():
+    trust_id, institute_id = _academic_year_scope()
+    if not trust_id:
+        abort(403)
+    years = _available_academic_years(trust_id, institute_id)
+    selected_year = (request.args.get("academic_year") or current_academic_year()).strip()
+    if not re.fullmatch(r"\d{4}-\d{2}", selected_year):
+        abort(400)
+    program_ids = _scoped_program_ids_for_year_history(trust_id, institute_id)
+    requested_program_id = request.args.get("program_id", type=int)
+    if requested_program_id and requested_program_id in program_ids:
+        program_ids = [requested_program_id]
+
+    view = (request.args.get("view") or "students").strip().lower()
+    if view not in ("students", "faculty", "subjects"):
+        view = "students"
+
+    programs = db.session.execute(
+        select(Program).where(Program.program_id.in_(program_ids or [-1])).order_by(Program.program_name)
+    ).scalars().all()
+    faculty_rows = []
+    subject_rows = []
+    if view == "faculty":
+        faculty_rows = db.session.execute(
+            select(Faculty, Subject, Program, Division, CourseAssignment)
+            .join(CourseAssignment, CourseAssignment.faculty_id_fk == Faculty.user_id_fk)
+            .join(Subject, Subject.subject_id == CourseAssignment.subject_id_fk)
+            .join(Program, Program.program_id == Subject.program_id_fk)
+            .outerjoin(Division, Division.division_id == CourseAssignment.division_id_fk)
+            .where(Subject.program_id_fk.in_(program_ids or [-1]))
+            .where(CourseAssignment.academic_year == selected_year)
+            .where(CourseAssignment.is_active.is_(True))
+            .order_by(Faculty.full_name, Program.program_name, Subject.subject_name)
+        ).all()
+    elif view == "subjects":
+        subject_query = (
+            select(Subject, Program, Faculty, Division)
+            .join(Program, Program.program_id == Subject.program_id_fk)
+            .outerjoin(CourseAssignment, and_(CourseAssignment.subject_id_fk == Subject.subject_id, CourseAssignment.academic_year == selected_year, CourseAssignment.is_active.is_(True)))
+            .outerjoin(Faculty, Faculty.user_id_fk == CourseAssignment.faculty_id_fk)
+            .outerjoin(Division, Division.division_id == CourseAssignment.division_id_fk)
+            .where(Subject.program_id_fk.in_(program_ids or [-1]))
+            .where(Subject.is_active.is_(True))
+        )
+        subject_rows = db.session.execute(subject_query.order_by(Program.program_name, Subject.semester, Subject.subject_name)).all()
+
+    query = (
+        select(StudentAcademicEnrollment, Student.student_name, Student.surname, Program.program_name)
+        .join(Student, Student.enrollment_no == StudentAcademicEnrollment.student_id_fk)
+        .join(Program, Program.program_id == StudentAcademicEnrollment.program_id_fk)
+        .where(StudentAcademicEnrollment.trust_id_fk == trust_id)
+        .where(StudentAcademicEnrollment.academic_year == selected_year)
+        .where(StudentAcademicEnrollment.program_id_fk.in_(program_ids or [-1]))
+    )
+    option_scope = (
+        StudentAcademicEnrollment.trust_id_fk == trust_id,
+        StudentAcademicEnrollment.academic_year == selected_year,
+        StudentAcademicEnrollment.program_id_fk.in_(program_ids or [-1]),
+    )
+    semester_options = [value for value in db.session.execute(
+        select(StudentAcademicEnrollment.semester)
+        .where(*option_scope)
+        .where(StudentAcademicEnrollment.semester.isnot(None))
+        .distinct()
+        .order_by(StudentAcademicEnrollment.semester)
+    ).scalars().all() if value is not None]
+    gender_options = [value.strip() for value in db.session.execute(
+        select(StudentAcademicEnrollment.gender_snapshot)
+        .where(*option_scope)
+        .where(StudentAcademicEnrollment.gender_snapshot.isnot(None))
+        .where(func.trim(StudentAcademicEnrollment.gender_snapshot) != "")
+        .distinct()
+        .order_by(StudentAcademicEnrollment.gender_snapshot)
+    ).scalars().all() if value and value.strip()]
+    category_options = [value.strip() for value in db.session.execute(
+        select(StudentAcademicEnrollment.category_snapshot)
+        .where(*option_scope)
+        .where(StudentAcademicEnrollment.category_snapshot.isnot(None))
+        .where(func.trim(StudentAcademicEnrollment.category_snapshot) != "")
+        .distinct()
+        .order_by(StudentAcademicEnrollment.category_snapshot)
+    ).scalars().all() if value and value.strip()]
+    semester = request.args.get("semester", type=int)
+    category_filter = (request.args.get("category") or "").strip()
+    gender_filter = (request.args.get("gender") or "").strip()
+    status_filter = (request.args.get("status") or "").strip().lower()
+    location_query = (request.args.get("location") or "").strip()
+    location_scope = (request.args.get("location_scope") or "").strip().lower()
+    student_search = (request.args.get("q") or "").strip()
+    if semester:
+        query = query.where(StudentAcademicEnrollment.semester == semester)
+    if category_filter:
+        query = query.where(StudentAcademicEnrollment.category_snapshot == category_filter)
+    if gender_filter:
+        query = query.where(StudentAcademicEnrollment.gender_snapshot == gender_filter)
+    if status_filter:
+        query = query.where(StudentAcademicEnrollment.enrollment_status == status_filter)
+    if location_query:
+        location_pattern = f"%{location_query}%"
+        query = query.where(or_(
+            StudentAcademicEnrollment.home_city_snapshot.ilike(location_pattern),
+            StudentAcademicEnrollment.home_district_snapshot.ilike(location_pattern),
+            StudentAcademicEnrollment.address_snapshot.ilike(location_pattern),
+        ))
+    if location_scope == "mahuva":
+        query = query.where(func.lower(func.trim(StudentAcademicEnrollment.home_city_snapshot)) == "mahuva")
+    elif location_scope == "outside":
+        query = query.where(and_(StudentAcademicEnrollment.home_city_snapshot.isnot(None), func.trim(StudentAcademicEnrollment.home_city_snapshot) != "", func.lower(func.trim(StudentAcademicEnrollment.home_city_snapshot)) != "mahuva"))
+    elif location_scope == "unknown":
+        query = query.where(or_(StudentAcademicEnrollment.home_city_snapshot.is_(None), func.trim(StudentAcademicEnrollment.home_city_snapshot) == ""))
+    if student_search:
+        search_pattern = f"%{student_search}%"
+        query = query.where(or_(Student.enrollment_no.ilike(search_pattern), Student.student_name.ilike(search_pattern), Student.surname.ilike(search_pattern)))
+    query = query.order_by(Program.program_name, StudentAcademicEnrollment.semester, Student.surname, Student.student_name)
+    rows = db.session.execute(query).all()
+    total_filtered = len(rows)
+    page = max(1, request.args.get("page", default=1, type=int) or 1)
+    per_page = request.args.get("per_page", default=25, type=int) or 25
+    per_page = per_page if per_page in (10, 25, 50, 100) else 25
+    page_count = max(1, int(math.ceil(total_filtered / per_page)))
+    page = min(page, page_count)
+    visible_rows = rows[(page - 1) * per_page:page * per_page]
+    report_rows = []
+    program_totals, category_totals, gender_totals, status_totals = {}, {}, {}, {}
+    city_totals = {}
+    mahuva_count = outside_mahuva_count = unknown_location_count = 0
+    for annual, first_name, surname, program_name in rows:
+        program_label = program_name or "Unspecified"
+        category = (annual.category_snapshot or "Not recorded").strip() or "Not recorded"
+        gender = (annual.gender_snapshot or "Not recorded").strip() or "Not recorded"
+        status = (annual.enrollment_status or "continuing").replace("_", " ").title()
+        program_totals[program_label] = program_totals.get(program_label, 0) + 1
+        category_totals[category] = category_totals.get(category, 0) + 1
+        gender_totals[gender] = gender_totals.get(gender, 0) + 1
+        status_totals[status] = status_totals.get(status, 0) + 1
+        city = (annual.home_city_snapshot or "").strip()
+        if city:
+            city_totals[city] = city_totals.get(city, 0) + 1
+            if city.casefold() == "mahuva":
+                mahuva_count += 1
+            else:
+                outside_mahuva_count += 1
+        else:
+            unknown_location_count += 1
+    for annual, first_name, surname, program_name in visible_rows:
+        program_label = program_name or "Unspecified"
+        category = (annual.category_snapshot or "Not recorded").strip() or "Not recorded"
+        gender = (annual.gender_snapshot or "Not recorded").strip() or "Not recorded"
+        status = (annual.enrollment_status or "continuing").replace("_", " ").title()
+        report_rows.append({
+            "annual": annual,
+            "student_name": f"{first_name or ''} {surname or ''}".strip(),
+            "program_name": program_label,
+            "category": category,
+            "gender": gender,
+            "status": status,
+            "city": (annual.home_city_snapshot or "Not structured").strip() or "Not structured",
+            "district": (annual.home_district_snapshot or "Not structured").strip() or "Not structured",
+        })
+    year_record = db.session.execute(
+        select(AcademicYear).where(
+            AcademicYear.trust_id_fk == trust_id,
+            AcademicYear.year_label == selected_year,
+            or_(AcademicYear.institute_id_fk == institute_id, AcademicYear.institute_id_fk.is_(None)) if institute_id else AcademicYear.institute_id_fk.is_(None),
+        )
+    ).scalars().first()
+    return render_template(
+        "annual_enrollment_history.html",
+        selected_year=selected_year,
+        active_year=current_academic_year(),
+        years=years,
+        year_record=year_record,
+        report_rows=report_rows,
+        programs=programs,
+        requested_program_id=requested_program_id,
+        program_totals=sorted(program_totals.items()),
+        category_totals=sorted(category_totals.items()),
+        gender_totals=sorted(gender_totals.items()),
+        status_totals=sorted(status_totals.items()),
+        city_totals=sorted(city_totals.items(), key=lambda item: (-item[1], item[0].casefold())),
+        mahuva_count=mahuva_count,
+        outside_mahuva_count=outside_mahuva_count,
+        unknown_location_count=unknown_location_count,
+        total_filtered=total_filtered, page=page, page_count=page_count, per_page=per_page,
+        view=view, faculty_rows=faculty_rows, subject_rows=subject_rows,
+        semester_options=semester_options, gender_options=gender_options, category_options=category_options,
+        filters={"semester": semester, "category": category_filter, "gender": gender_filter, "status": status_filter, "location": location_query, "location_scope": location_scope, "q": student_search},
+    )
+
+
+@main_bp.route("/annual-enrollment-history/initialize", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+@csrf_required
+def annual_enrollment_history_initialize():
+    trust_id, institute_id = _academic_year_scope()
+    selected_year = (request.form.get("academic_year") or "").strip()
+    refresh_locations_only = (request.form.get("action") or "").strip() == "refresh_locations"
+    if not trust_id or selected_year != current_academic_year():
+        abort(400)
+    year_record = db.session.execute(select(AcademicYear).where(
+        AcademicYear.trust_id_fk == trust_id,
+        AcademicYear.institute_id_fk == institute_id,
+        AcademicYear.year_label == selected_year,
+    )).scalars().first()
+    if not year_record:
+        year_record = AcademicYear(
+            trust_id_fk=trust_id, institute_id_fk=institute_id, year_label=selected_year,
+            status="active", created_by_user_id_fk=current_user.user_id, activated_by_user_id_fk=current_user.user_id,
+            activated_at=datetime.now(timezone.utc),
+        )
+        db.session.add(year_record)
+        db.session.flush()
+    program_ids = _scoped_program_ids_for_year_history(trust_id, institute_id)
+    students = db.session.execute(select(Student).where(
+        Student.program_id_fk.in_(program_ids or [-1]), Student.is_active.is_(True)
+    )).scalars().all()
+    existing_rows = db.session.execute(select(StudentAcademicEnrollment).where(
+        StudentAcademicEnrollment.academic_year_id_fk == year_record.academic_year_id
+    )).scalars().all()
+    existing = {row.student_id_fk: row for row in existing_rows}
+    created = refreshed = 0
+    for student in students:
+        if student.enrollment_no in existing:
+            annual = existing[student.enrollment_no]
+            if annual.confirmation_status == "draft":
+                annual.address_snapshot = student.permanent_address
+                annual.home_city_snapshot = getattr(student, "home_city", None)
+                annual.home_district_snapshot = getattr(student, "home_district", None)
+                refreshed += 1
+            continue
+        if refresh_locations_only:
+            continue
+        program = db.session.get(Program, student.program_id_fk)
+        db.session.add(StudentAcademicEnrollment(
+            student_id_fk=student.enrollment_no,
+            academic_year_id_fk=year_record.academic_year_id,
+            academic_year=selected_year,
+            admission_academic_year=student.admission_academic_year,
+            trust_id_fk=trust_id,
+            institute_id_fk=getattr(program, "institute_id_fk", None),
+            program_id_fk=student.program_id_fk,
+            semester=student.current_semester,
+            division_id_fk=student.division_id_fk,
+            medium_tag=student.medium_tag,
+            gender_snapshot=student.gender,
+            category_snapshot=student.category,
+            address_snapshot=student.permanent_address,
+            home_city_snapshot=getattr(student, "home_city", None),
+            home_district_snapshot=getattr(student, "home_district", None),
+            enrollment_status="new" if student.admission_academic_year == selected_year else "continuing",
+            confirmation_status="draft",
+        ))
+        created += 1
+    remaining_unstructured = sum(
+        1 for annual in existing_rows
+        if annual.confirmation_status == "draft" and not (annual.home_city_snapshot or "").strip()
+    )
+    audit_action = "annual_enrollment_history_location_refresh" if refresh_locations_only else "annual_enrollment_history_initialize"
+    _bulk_audit_entry(audit_action, {"academic_year": selected_year}, {"created": created, "location_snapshots_refreshed": refreshed, "remaining_unstructured": remaining_unstructured, "existing": len(existing)})
+    db.session.commit()
+    if refresh_locations_only:
+        flash(f"Refreshed {refreshed} draft location snapshot(s). {remaining_unstructured} record(s) still need a structured Home City / Town / Village value.", "success" if refreshed else "warning")
+    else:
+        flash(f"Prepared {created} new record(s) and refreshed {refreshed} draft location snapshot(s). Review them before year closure.", "success")
+    return redirect(url_for("main.annual_enrollment_history", academic_year=selected_year))
+
+
+@main_bp.route("/annual-enrollment-history/export.csv")
+@login_required
+@role_required("admin", "principal")
+def annual_enrollment_history_export():
+    trust_id, institute_id = _academic_year_scope()
+    selected_year = (request.args.get("academic_year") or current_academic_year()).strip()
+    if not trust_id or not re.fullmatch(r"\d{4}-\d{2}", selected_year):
+        abort(400)
+    program_ids = _scoped_program_ids_for_year_history(trust_id, institute_id)
+    requested_program_id = request.args.get("program_id", type=int)
+    if requested_program_id and requested_program_id in program_ids:
+        program_ids = [requested_program_id]
+    rows = (
+        select(StudentAcademicEnrollment, Student.student_name, Student.surname, Program.program_name)
+        .join(Student, Student.enrollment_no == StudentAcademicEnrollment.student_id_fk)
+        .join(Program, Program.program_id == StudentAcademicEnrollment.program_id_fk)
+        .where(StudentAcademicEnrollment.trust_id_fk == trust_id)
+        .where(StudentAcademicEnrollment.academic_year == selected_year)
+        .where(StudentAcademicEnrollment.program_id_fk.in_(program_ids or [-1]))
+    )
+    semester = request.args.get("semester", type=int)
+    category_filter = (request.args.get("category") or "").strip()
+    gender_filter = (request.args.get("gender") or "").strip()
+    status_filter = (request.args.get("status") or "").strip().lower()
+    location_query = (request.args.get("location") or "").strip()
+    location_scope = (request.args.get("location_scope") or "").strip().lower()
+    student_search = (request.args.get("q") or "").strip()
+    if semester:
+        rows = rows.where(StudentAcademicEnrollment.semester == semester)
+    if category_filter:
+        rows = rows.where(StudentAcademicEnrollment.category_snapshot == category_filter)
+    if gender_filter:
+        rows = rows.where(StudentAcademicEnrollment.gender_snapshot == gender_filter)
+    if status_filter:
+        rows = rows.where(StudentAcademicEnrollment.enrollment_status == status_filter)
+    if location_query:
+        pattern = f"%{location_query}%"
+        rows = rows.where(or_(StudentAcademicEnrollment.home_city_snapshot.ilike(pattern), StudentAcademicEnrollment.home_district_snapshot.ilike(pattern), StudentAcademicEnrollment.address_snapshot.ilike(pattern)))
+    if location_scope == "mahuva":
+        rows = rows.where(func.lower(func.trim(StudentAcademicEnrollment.home_city_snapshot)) == "mahuva")
+    elif location_scope == "outside":
+        rows = rows.where(and_(StudentAcademicEnrollment.home_city_snapshot.isnot(None), func.trim(StudentAcademicEnrollment.home_city_snapshot) != "", func.lower(func.trim(StudentAcademicEnrollment.home_city_snapshot)) != "mahuva"))
+    elif location_scope == "unknown":
+        rows = rows.where(or_(StudentAcademicEnrollment.home_city_snapshot.is_(None), func.trim(StudentAcademicEnrollment.home_city_snapshot) == ""))
+    if student_search:
+        pattern = f"%{student_search}%"
+        rows = rows.where(or_(Student.enrollment_no.ilike(pattern), Student.student_name.ilike(pattern), Student.surname.ilike(pattern)))
+    rows = db.session.execute(rows.order_by(Program.program_name, StudentAcademicEnrollment.semester, Student.surname)).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Academic Year", selected_year])
+    writer.writerow(["Generated At", datetime.now(timezone.utc).isoformat()])
+    writer.writerow(["Generated By", getattr(current_user, "username", current_user.user_id)])
+    writer.writerow([])
+    writer.writerow(["Enrollment No", "Student", "Program", "Semester", "Admission Year", "MOI", "Gender", "Category", "City/Town/Village", "District", "Permanent Address", "Status", "Confirmation"])
+    for annual, first_name, surname, program_name in rows:
+        writer.writerow([annual.student_id_fk, f"{first_name or ''} {surname or ''}".strip(), program_name, annual.semester, annual.admission_academic_year, annual.medium_tag, annual.gender_snapshot, annual.category_snapshot, annual.home_city_snapshot, annual.home_district_snapshot, annual.address_snapshot, annual.enrollment_status, annual.confirmation_status])
+    return Response(output.getvalue(), mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename=annual-enrollment-history-{selected_year}.csv"})
+
+
 @main_bp.route("/admin/workflows/new-academic-year")
 @login_required
 @role_required("admin", "principal")
@@ -15795,7 +16193,19 @@ def admin_workflow_new_academic_year():
             urls[k] = url_for(ep)
         except BuildError:
             urls[k] = None
-    return render_template("workflow_new_academic_year.html", role=role, urls=urls)
+    trust_id, institute_id = _academic_year_scope()
+    source_year = (request.args.get("source_year") or current_academic_year()).strip()
+    target_year = _next_academic_year_label(source_year)
+    year_rows = []
+    if trust_id:
+        year_query = select(AcademicYear).where(AcademicYear.trust_id_fk == trust_id)
+        if institute_id:
+            year_query = year_query.where(or_(AcademicYear.institute_id_fk == institute_id, AcademicYear.institute_id_fk.is_(None)))
+        year_rows = db.session.execute(year_query.order_by(AcademicYear.year_label.desc())).scalars().all()
+    return render_template(
+        "workflow_new_academic_year.html", role=role, urls=urls,
+        source_year=source_year, target_year=target_year, year_rows=year_rows,
+    )
 
 
 def _next_academic_year_label(value):
@@ -15804,6 +16214,80 @@ def _next_academic_year_label(value):
         return ""
     start = int(match.group(1)) + 1
     return f"{start}-{(start + 1) % 100:02d}"
+
+
+@main_bp.route("/admin/workflows/new-academic-year/prepare", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+@csrf_required
+def academic_year_prepare_draft():
+    trust_id, institute_id = _academic_year_scope()
+    source_year = (request.form.get("source_year") or "").strip()
+    target_year = (request.form.get("target_year") or "").strip()
+    if not trust_id or target_year != _next_academic_year_label(source_year):
+        flash("Choose consecutive academic years before preparing the draft.", "danger")
+        return redirect(url_for("main.admin_workflow_new_academic_year"))
+    existing_year = db.session.execute(select(AcademicYear).where(
+        AcademicYear.trust_id_fk == trust_id,
+        AcademicYear.institute_id_fk == institute_id,
+        AcademicYear.year_label == target_year,
+    )).scalars().first()
+    if existing_year:
+        flash(f"{target_year} already exists with status {existing_year.status.title()}.", "info")
+        return redirect(url_for("main.admin_workflow_new_academic_year", source_year=source_year))
+    source_record = db.session.execute(select(AcademicYear).where(
+        AcademicYear.trust_id_fk == trust_id,
+        AcademicYear.institute_id_fk == institute_id,
+        AcademicYear.year_label == source_year,
+    )).scalars().first()
+    if not source_record:
+        flash("Prepare the source year's Annual Enrollment History before starting rollover.", "warning")
+        return redirect(url_for("main.annual_enrollment_history", academic_year=source_year))
+    source_rows = db.session.execute(select(StudentAcademicEnrollment).where(
+        StudentAcademicEnrollment.academic_year_id_fk == source_record.academic_year_id,
+        StudentAcademicEnrollment.enrollment_status.in_(("new", "continuing", "repeating", "transferred_in")),
+    )).scalars().all()
+    if not source_rows:
+        flash("The source year contains no eligible Annual Enrollment History records.", "warning")
+        return redirect(url_for("main.annual_enrollment_history", academic_year=source_year))
+    target_record = AcademicYear(
+        trust_id_fk=trust_id, institute_id_fk=institute_id, year_label=target_year,
+        status="draft", source_year_label=source_year, created_by_user_id_fk=current_user.user_id,
+    )
+    db.session.add(target_record)
+    db.session.flush()
+    continuing = completed = 0
+    for source in source_rows:
+        program = db.session.get(Program, source.program_id_fk)
+        max_semester = max(1, int(getattr(program, "program_duration_years", 1) or 1) * 2)
+        next_semester = int(source.semester or 0) + 2
+        if next_semester > max_semester:
+            completed += 1
+            continue
+        db.session.add(StudentAcademicEnrollment(
+            student_id_fk=source.student_id_fk,
+            academic_year_id_fk=target_record.academic_year_id,
+            academic_year=target_year,
+            admission_academic_year=source.admission_academic_year,
+            trust_id_fk=source.trust_id_fk,
+            institute_id_fk=source.institute_id_fk,
+            program_id_fk=source.program_id_fk,
+            semester=next_semester,
+            division_id_fk=None,
+            medium_tag=source.medium_tag,
+            gender_snapshot=source.gender_snapshot,
+            category_snapshot=source.category_snapshot,
+            address_snapshot=source.address_snapshot,
+            home_city_snapshot=source.home_city_snapshot,
+            home_district_snapshot=source.home_district_snapshot,
+            enrollment_status="continuing",
+            confirmation_status="draft",
+        ))
+        continuing += 1
+    _bulk_audit_entry("academic_year_prepare_draft", {"source_year": source_year, "target_year": target_year}, {"continuing_drafts": continuing, "completion_candidates": completed})
+    db.session.commit()
+    flash(f"Prepared {target_year} as Draft with {continuing} continuing student record(s). {completed} completion candidate(s) were not carried forward.", "success")
+    return redirect(url_for("main.annual_enrollment_history", academic_year=target_year))
 
 
 @main_bp.route("/admin/workflows/new-academic-year/intakes", methods=["GET", "POST"])

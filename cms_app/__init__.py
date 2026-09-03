@@ -1160,6 +1160,24 @@ def create_app():
             if 'intake_batch_id_fk' not in cols:
                 with db.engine.begin() as conn:
                     conn.execute("ALTER TABLE students ADD COLUMN intake_batch_id_fk INTEGER REFERENCES program_intake_batches(intake_batch_id)")
+            if 'home_city' not in cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE students ADD COLUMN home_city VARCHAR(96)")
+            if 'home_district' not in cols:
+                with db.engine.begin() as conn:
+                    conn.execute("ALTER TABLE students ADD COLUMN home_district VARCHAR(96)")
+
+            # Annual Enrollment History location snapshots (additive upgrades only).
+            if 'student_academic_enrollments' in inspector.get_table_names():
+                annual_cols = [c['name'] for c in inspector.get_columns('student_academic_enrollments')]
+                for column_name, column_type in (
+                    ('address_snapshot', 'VARCHAR(255)'),
+                    ('home_city_snapshot', 'VARCHAR(96)'),
+                    ('home_district_snapshot', 'VARCHAR(96)'),
+                ):
+                    if column_name not in annual_cols:
+                        with db.engine.begin() as conn:
+                            conn.execute(f"ALTER TABLE student_academic_enrollments ADD COLUMN {column_name} {column_type}")
 
             # 4. Attendance table
             att_cols = [c['name'] for c in inspector.get_columns('attendance')]

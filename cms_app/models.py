@@ -136,6 +136,64 @@ class ProgramIntakeBatch(db.Model):
     )
 
 
+class AcademicYear(db.Model):
+    """Tenant-scoped academic-year lifecycle; operational history is never reset."""
+    __tablename__ = "academic_years"
+    academic_year_id = db.Column(db.Integer, primary_key=True)
+    trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"), nullable=False)
+    institute_id_fk = db.Column(db.Integer, db.ForeignKey("institutes.institute_id"))
+    year_label = db.Column(db.String(16), nullable=False)
+    status = db.Column(db.String(16), nullable=False, default="draft")
+    source_year_label = db.Column(db.String(16))
+    created_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    activated_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    created_at = db.Column(db.DateTime, default=utc_now)
+    activated_at = db.Column(db.DateTime)
+    closed_at = db.Column(db.DateTime)
+
+    __table_args__ = (
+        db.UniqueConstraint("trust_id_fk", "institute_id_fk", "year_label", name="uq_academic_year_scope"),
+        db.CheckConstraint("status IN ('draft','review','active','locked','closed')", name="ck_academic_year_status"),
+    )
+
+
+class StudentAcademicEnrollment(db.Model):
+    """One immutable-in-spirit, auditable student participation record per academic year."""
+    __tablename__ = "student_academic_enrollments"
+    annual_enrollment_id = db.Column(db.Integer, primary_key=True)
+    student_id_fk = db.Column(db.String(32), db.ForeignKey("students.enrollment_no"), nullable=False)
+    academic_year_id_fk = db.Column(db.Integer, db.ForeignKey("academic_years.academic_year_id"), nullable=False)
+    academic_year = db.Column(db.String(16), nullable=False)
+    admission_academic_year = db.Column(db.String(16))
+    trust_id_fk = db.Column(db.Integer, db.ForeignKey("trusts.trust_id"), nullable=False)
+    institute_id_fk = db.Column(db.Integer, db.ForeignKey("institutes.institute_id"))
+    program_id_fk = db.Column(db.Integer, db.ForeignKey("programs.program_id"), nullable=False)
+    semester = db.Column(db.Integer)
+    division_id_fk = db.Column(db.Integer, db.ForeignKey("divisions.division_id"))
+    medium_tag = db.Column(db.String(32))
+    gender_snapshot = db.Column(db.String(16))
+    category_snapshot = db.Column(db.String(32))
+    address_snapshot = db.Column(db.String(255))
+    home_city_snapshot = db.Column(db.String(96))
+    home_district_snapshot = db.Column(db.String(96))
+    enrollment_status = db.Column(db.String(24), nullable=False, default="continuing")
+    confirmation_status = db.Column(db.String(16), nullable=False, default="draft")
+    confirmed_by_user_id_fk = db.Column(db.Integer, db.ForeignKey("users.user_id"))
+    confirmed_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+
+    __table_args__ = (
+        db.UniqueConstraint("student_id_fk", "academic_year_id_fk", name="uq_student_annual_enrollment"),
+        db.Index("ix_annual_enrollment_scope", "trust_id_fk", "academic_year", "program_id_fk"),
+        db.CheckConstraint(
+            "enrollment_status IN ('new','continuing','repeating','transferred_in','transferred_out','discontinued','completed')",
+            name="ck_annual_enrollment_status",
+        ),
+        db.CheckConstraint("confirmation_status IN ('draft','confirmed')", name="ck_annual_confirmation_status"),
+    )
+
+
 class User(UserMixin, db.Model):
     __tablename__ = "users"
     user_id = db.Column(db.Integer, primary_key=True)
@@ -209,6 +267,8 @@ class Student(db.Model):
     gender = db.Column(db.String(16))
     photo_url = db.Column(db.String(255))
     permanent_address = db.Column(db.String(255))
+    home_city = db.Column(db.String(96))
+    home_district = db.Column(db.String(96))
     current_semester = db.Column(db.Integer)
     # Nullable during the safe migration period; never infer from enrollment_no.
     admission_academic_year = db.Column(db.String(16))

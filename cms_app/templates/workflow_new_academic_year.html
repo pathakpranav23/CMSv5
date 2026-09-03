@@ -14,6 +14,29 @@
     </div>
   </div>
 
+  <div class="card mb-3 border-primary">
+    <div class="card-header">Prepare the next academic year safely</div>
+    <div class="card-body">
+      <p>This creates a <strong>Draft</strong>. It does not delete or reset attendance, results, payments, receipts, or prior-year records.</p>
+      <form method="post" action="{{ url_for('main.academic_year_prepare_draft') }}" class="row g-2 align-items-end">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-4"><label class="form-label">Source year</label><input class="form-control" name="source_year" value="{{ source_year }}" readonly></div>
+        <div class="col-md-4"><label class="form-label">New year</label><input class="form-control" name="target_year" value="{{ target_year }}" readonly></div>
+        <div class="col-md-4"><button class="btn btn-primary w-100" type="submit">Prepare {{ target_year }} Draft</button></div>
+      </form>
+      <div class="small text-muted mt-2">Continuing students are proposed two semesters ahead; completion candidates are excluded and reported for review. Divisions are intentionally left unassigned.</div>
+    </div>
+  </div>
+
+  {% if year_rows %}
+  <div class="card mb-3">
+    <div class="card-header">Academic-year lifecycle</div>
+    <div class="table-responsive"><table class="table mb-0"><thead><tr><th>Year</th><th>Status</th><th>Source</th><th>Created</th><th>History</th></tr></thead><tbody>
+      {% for year in year_rows %}<tr><td>{{ year.year_label }}</td><td><span class="badge bg-{{ 'success' if year.status == 'active' else ('secondary' if year.status in ['locked','closed'] else 'warning') }}">{{ year.status|title }}</span></td><td>{{ year.source_year_label or '—' }}</td><td>{{ year.created_at.strftime('%d %b %Y') if year.created_at else '—' }}</td><td><a href="{{ url_for('main.annual_enrollment_history', academic_year=year.year_label) }}">View</a></td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+  {% endif %}
+
   <div class="row g-3">
     <div class="col-lg-8">
       <div class="card">

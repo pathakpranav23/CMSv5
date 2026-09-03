@@ -14,6 +14,15 @@
         {% endif %}
       </div>
       <div class="actions d-flex gap-2 flex-wrap">
+        {% if (current_user.role|lower) in ['admin', 'principal'] %}
+          <label class="visually-hidden" for="dashboardAcademicYear">Academic year</label>
+          <select id="dashboardAcademicYear" class="form-select form-select-sm" style="width:auto" aria-label="Select academic year">
+            {% for year in dashboard_academic_years or [active_dashboard_year] %}
+              <option value="{{ year }}" {% if year == active_dashboard_year %}selected{% endif %}>{{ year }}{% if year == active_dashboard_year %} — Active{% else %} — History{% endif %}</option>
+            {% endfor %}
+          </select>
+          <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.annual_enrollment_history', academic_year=active_dashboard_year) }}">Annual Enrollment History</a>
+        {% endif %}
         <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.notice_board') }}">{{ t('Notices') }}</a>
         <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.module_announcements') }}">{{ t('Announcements') }}</a>
         {% if current_user.is_authenticated %}
@@ -29,6 +38,15 @@
       </div>
     </div>
   </div>
+  {% if (current_user.role|lower) in ['admin', 'principal'] %}
+  <script>
+    document.getElementById('dashboardAcademicYear')?.addEventListener('change', function () {
+      const target = new URL(window.location.href);
+      target.searchParams.set('academic_year', this.value);
+      window.location.assign(target.toString());
+    });
+  </script>
+  {% endif %}
 
   {% if acting_trust %}
     <div class="alert alert-warning d-flex justify-content-between align-items-center mb-3 shadow-sm border-warning">

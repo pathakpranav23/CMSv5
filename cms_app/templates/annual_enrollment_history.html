@@ -1,0 +1,65 @@
+{% extends "layout.html" %}
+{% block content %}
+<style>
+  .history-page,.history-page *{min-width:0}.history-page{overflow-x:clip}.history-record{overflow-wrap:anywhere}
+  .history-record-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:1rem}
+  .history-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:.75rem}
+  .history-filter-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:.75rem}
+  .history-kv{display:grid;grid-template-columns:minmax(95px,35%) 1fr;gap:.35rem .75rem}
+  @media(max-width:575.98px){.history-kv{grid-template-columns:1fr;gap:.1rem}}
+</style>
+<div class="container-fluid py-3 history-page">
+  <div class="section-header d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div><h2 class="mb-1 title">Annual Enrollment History</h2><div class="text-muted">Academic-year reporting without replacing historical values with today's data.</div></div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.dashboard') }}">Dashboard</a>
+      {% if view=='students' %}<a class="btn btn-outline-primary" href="{{ url_for('main.annual_enrollment_history_export',academic_year=selected_year,program_id=requested_program_id or '',semester=filters.semester or '',category=filters.category,gender=filters.gender,status=filters.status,location=filters.location,location_scope=filters.location_scope,q=filters.q) }}">Export filtered CSV</a>{% endif %}
+      {% if view=='students' and selected_year==active_year and (not year_record or year_record.status not in ['locked','closed']) %}<form method="post" action="{{ url_for('main.annual_enrollment_history_initialize') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="academic_year" value="{{ selected_year }}"><input type="hidden" name="action" value="refresh_locations"><button class="btn btn-outline-info" type="submit">Refresh draft locations</button></form>{% endif %}
+      <a class="btn btn-primary" href="{{ url_for('main.admin_workflow_new_academic_year',source_year=selected_year) }}">Prepare New Academic Year</a>
+    </div>
+  </div>
+  {% if selected_year!=active_year or (year_record and year_record.status in ['locked','closed']) %}<div class="alert alert-info"><strong>Historical year — read-only.</strong> You are viewing {{ selected_year }}. Editing is disabled.</div>{% elif year_record and year_record.status=='draft' %}<div class="alert alert-warning"><strong>Draft year.</strong> Review these proposals before activation.</div>{% endif %}
+
+  <nav class="nav nav-pills gap-2 mb-3" aria-label="Report data type">
+    {% for key,label in [('students','Students'),('faculty','Faculty'),('subjects','Subjects')] %}<a class="nav-link {% if view==key %}active{% endif %}" href="{{ url_for('main.annual_enrollment_history',academic_year=selected_year,program_id=requested_program_id or '',view=key) }}">{{ label }}</a>{% endfor %}
+  </nav>
+
+  <div class="card mb-3"><div class="card-body"><form method="get">
+    <input type="hidden" name="view" value="{{ view }}">
+    <div class="history-filter-grid">
+      <div><label class="form-label" for="historyYear">Academic year</label><select class="form-select" id="historyYear" name="academic_year">{% for year in years %}<option value="{{ year }}" {% if year==selected_year %}selected{% endif %}>{{ year }}{% if year==active_year %} — Active{% endif %}</option>{% endfor %}</select></div>
+      <div><label class="form-label" for="historyProgram">Program</label><select class="form-select" id="historyProgram" name="program_id"><option value="">All authorized programs</option>{% for program in programs %}<option value="{{ program.program_id }}" {% if requested_program_id==program.program_id %}selected{% endif %}>{{ program.program_name }}</option>{% endfor %}</select></div>
+      {% if view=='students' %}
+      <div><label class="form-label" for="historySemester">Semester</label><select class="form-select" id="historySemester" name="semester"><option value="">All semesters</option>{% for value in semester_options %}<option value="{{ value }}" {% if filters.semester==value %}selected{% endif %}>Semester {{ value }}</option>{% endfor %}</select></div>
+      <div><label class="form-label" for="historyStatus">Enrollment status</label><select class="form-select" id="historyStatus" name="status"><option value="">All statuses</option>{% for value in ['new','continuing','repeating','transferred_in','transferred_out','discontinued','completed'] %}<option value="{{ value }}" {% if filters.status==value %}selected{% endif %}>{{ value.replace('_',' ')|title }}</option>{% endfor %}</select></div>
+      <div><label class="form-label" for="historyGender">Gender</label><select class="form-select" id="historyGender" name="gender"><option value="">All genders</option>{% for value in gender_options %}<option value="{{ value }}" {% if filters.gender==value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+      <div><label class="form-label" for="historyCategory">Category</label><select class="form-select" id="historyCategory" name="category"><option value="">All categories</option>{% for value in category_options %}<option value="{{ value }}" {% if filters.category==value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+      <div><label class="form-label" for="historyLocation">City, town, village or address</label><input class="form-control" id="historyLocation" name="location" value="{{ filters.location }}" placeholder="e.g. Kalsar"></div>
+      <div><label class="form-label" for="historyLocationScope">Mahuva region</label><select class="form-select" id="historyLocationScope" name="location_scope"><option value="">All locations</option><option value="mahuva" {% if filters.location_scope=='mahuva' %}selected{% endif %}>Mahuva</option><option value="outside" {% if filters.location_scope=='outside' %}selected{% endif %}>Outside Mahuva</option><option value="unknown" {% if filters.location_scope=='unknown' %}selected{% endif %}>Location not structured</option></select></div>
+      <div><label class="form-label" for="historySearch">Student search</label><input class="form-control" id="historySearch" name="q" value="{{ filters.q }}" placeholder="Name or enrollment number"></div>
+      <div><label class="form-label" for="historyPageSize">Records per page</label><select class="form-select" id="historyPageSize" name="per_page">{% for size in [10,25,50,100] %}<option value="{{ size }}" {% if per_page==size %}selected{% endif %}>{{ size }}</option>{% endfor %}</select></div>
+      {% endif %}
+    </div>
+    <div class="d-flex gap-2 flex-wrap mt-3"><button class="btn btn-dark" type="submit">Apply filters</button><a class="btn btn-outline-secondary" href="{{ url_for('main.annual_enrollment_history',academic_year=selected_year,view=view) }}">Reset</a></div>
+  </form></div></div>
+
+  {% if view=='students' %}
+    {% if not total_filtered %}<div class="card mb-3 border-warning"><div class="card-body"><h5>No matching Annual Enrollment History records</h5><p class="text-muted">No current totals are substituted. Change the filters or prepare the current-year history.</p>{% if selected_year==active_year and not filters.q and not filters.location and not filters.category and not filters.gender and not filters.status and not filters.semester %}<form method="post" action="{{ url_for('main.annual_enrollment_history_initialize') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="academic_year" value="{{ selected_year }}"><button class="btn btn-primary">Prepare Current-Year History</button></form>{% endif %}</div></div>
+    {% else %}
+    <div class="history-summary-grid mb-3">{% for label,value in [('Students found',total_filtered),('Mahuva',mahuva_count),('Outside Mahuva',outside_mahuva_count),('Location not structured',unknown_location_count)] %}<div class="card"><div class="card-body"><div class="text-muted">{{ label }}</div><div class="h2 mb-0">{{ value }}</div></div></div>{% endfor %}</div>
+    <div class="row g-3 mb-3">{% for title,values in [('Programs',program_totals),('Categories',category_totals),('Gender',gender_totals),('City/Town/Village',city_totals[:10])] %}<div class="col-lg-3 col-md-6"><div class="card h-100"><div class="card-header">{{ title }}</div><div class="card-body p-0"><ul class="list-group list-group-flush">{% for label,count in values %}<li class="list-group-item d-flex justify-content-between gap-2"><span>{{ label }}</span><strong>{{ count }}</strong></li>{% else %}<li class="list-group-item text-muted">No structured data</li>{% endfor %}</ul></div></div></div>{% endfor %}</div>
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2"><h3 class="h5 mb-0">Student records</h3><span class="text-muted">Page {{ page }} of {{ page_count }}</span></div>
+    <div class="history-record-grid">
+      {% for row in report_rows %}<article class="card history-record"><div class="card-body"><div class="d-flex justify-content-between gap-2"><div><h4 class="h6 mb-1">{{ row.student_name }}</h4><div class="text-muted small">{{ row.annual.student_id_fk }}</div></div><span class="badge bg-secondary align-self-start">{{ row.status }}</span></div><hr><div class="history-kv small"><span class="text-muted">Academic</span><span>{{ row.program_name }} · Semester {{ row.annual.semester or '—' }}</span><span class="text-muted">Admission batch</span><span>{{ row.annual.admission_academic_year or 'Not recorded' }}</span><span class="text-muted">Location</span><span>{{ row.city }}{% if row.district!='Not structured' %}, {{ row.district }}{% endif %}</span><span class="text-muted">Gender / Category</span><span>{{ row.gender }} · {{ row.category }}</span></div><details class="mt-3"><summary class="btn btn-sm btn-outline-secondary">View details</summary><div class="history-kv small mt-3"><span class="text-muted">Full address</span><span>{{ row.annual.address_snapshot or 'Not recorded' }}</span><span class="text-muted">MOI</span><span>{{ row.annual.medium_tag or 'Not recorded' }}</span><span class="text-muted">Confirmation</span><span>{{ row.annual.confirmation_status|title }}</span></div></details></div></article>{% endfor %}
+    </div>
+    <nav class="d-flex justify-content-between gap-2 mt-3" aria-label="Student result pages"><a class="btn btn-outline-secondary {% if page<=1 %}disabled{% endif %}" href="{{ url_for('main.annual_enrollment_history',academic_year=selected_year,view=view,program_id=requested_program_id or '',semester=filters.semester or '',category=filters.category,gender=filters.gender,status=filters.status,location=filters.location,location_scope=filters.location_scope,q=filters.q,per_page=per_page,page=page-1) }}">Previous</a><a class="btn btn-outline-secondary {% if page>=page_count %}disabled{% endif %}" href="{{ url_for('main.annual_enrollment_history',academic_year=selected_year,view=view,program_id=requested_program_id or '',semester=filters.semester or '',category=filters.category,gender=filters.gender,status=filters.status,location=filters.location,location_scope=filters.location_scope,q=filters.q,per_page=per_page,page=page+1) }}">Next</a></nav>
+    {% endif %}
+  {% elif view=='faculty' %}
+    <div class="alert alert-secondary">Faculty history is based only on course assignments explicitly saved for {{ selected_year }}.</div>
+    <div class="history-record-grid">{% for faculty,subject,program,division,assignment in faculty_rows %}<article class="card history-record"><div class="card-body"><h3 class="h6">{{ faculty.full_name }}</h3><div>{{ subject.subject_name }}</div><div class="text-muted small">{{ program.program_name }} · Semester {{ subject.semester }}{% if division %} · Division {{ division.division_code }}{% endif %}</div><span class="badge bg-info text-dark mt-2">{{ assignment.role|title }}</span></div></article>{% else %}<div class="alert alert-warning">No year-scoped faculty assignments were found.</div>{% endfor %}</div>
+  {% else %}
+    <div class="alert alert-secondary">Subject history lists active curriculum subjects and only assignments explicitly saved for {{ selected_year }}.</div>
+    <div class="history-record-grid">{% for subject,program,faculty,division in subject_rows %}<article class="card history-record"><div class="card-body"><h3 class="h6">{{ subject.subject_name }}</h3><div class="text-muted small">{{ program.program_name }} · Semester {{ subject.semester }} · {{ 'Elective' if subject.is_elective else 'Core' }}</div><hr><div class="small"><strong>Faculty:</strong> {{ faculty.full_name if faculty else 'Not assigned for this year' }}</div><div class="small"><strong>Division:</strong> {{ division.division_code if division else 'Not assigned' }}</div></div></article>{% else %}<div class="alert alert-warning">No subjects were found in your authorized scope.</div>{% endfor %}</div>
+  {% endif %}
+</div>
+{% endblock %}
