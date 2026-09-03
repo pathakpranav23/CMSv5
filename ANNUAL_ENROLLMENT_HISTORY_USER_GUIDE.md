@@ -53,6 +53,16 @@ The report provides:
 
 When no Annual Enrollment History exists, the application displays an explicit empty state. It does not substitute today's student totals into a historical report.
 
+## Confirming, closing, and reopening history
+
+1. Review the lifecycle validation summary for the selected academic year.
+2. Resolve every missing-semester error. Missing admission year, gender, category, and structured location are reporting-quality warnings.
+3. Select **Confirm Annual History** to freeze all draft records in the user's authorized scope. Filters do not limit this action.
+4. An Admin may select **Close Annual History** only after no draft records remain for the tenant and academic year.
+5. A closed year is read-only. If a correction is formally authorized, an Admin may select **Reopen for Correction**, make the correction, and confirm and close the history again.
+
+Principal users can review and confirm records only inside their permitted program/institute scope. Closing and reopening are Admin-only actions. Every lifecycle transition is recorded in the audit log.
+
 ## Current MVP limitation
 
 ## Location reporting

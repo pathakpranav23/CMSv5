@@ -12,20 +12,22 @@ def _login(client, username):
         return session["csrf_token"]
 
 
-def _seed(app):
+def _seed(app, suffix=""):
     with app.app_context():
-        trust = Trust(trust_name="Annual History Trust", trust_code="AHT")
+        trust = Trust(trust_name=f"Annual History Trust{suffix}", trust_code=f"AHT{suffix}")
         db.session.add(trust)
         db.session.flush()
-        institute = Institute(trust_id_fk=trust.trust_id, institute_name="Annual History College", institute_code="AHC")
+        institute = Institute(trust_id_fk=trust.trust_id, institute_name=f"Annual History College{suffix}", institute_code=f"AHC{suffix}")
         db.session.add(institute)
         db.session.flush()
-        program = Program(institute_id_fk=institute.institute_id, program_name="BCA-HISTORY", program_duration_years=3)
+        program = Program(institute_id_fk=institute.institute_id, program_name=f"BCA-HISTORY{suffix}", program_duration_years=3)
         db.session.add(program)
         db.session.flush()
-        user = User(username="annual-history-admin", password_hash=generate_password_hash("secret"), role="admin", trust_id_fk=trust.trust_id)
+        username = f"annual-history-admin{suffix}"
+        enrollment_no = f"AH-001{suffix}"
+        user = User(username=username, password_hash=generate_password_hash("secret"), role="admin", trust_id_fk=trust.trust_id)
         student = Student(
-            enrollment_no="AH-001", program_id_fk=program.program_id, trust_id_fk=trust.trust_id,
+            enrollment_no=enrollment_no, program_id_fk=program.program_id, trust_id_fk=trust.trust_id,
             student_name="History", surname="Student", current_semester=1,
             admission_academic_year=current_academic_year(), gender="Female", category="SEBC", medium_tag="English", is_active=True,
             permanent_address="Station Road, Kalsar, Bhavnagar", home_city="Kalsar", home_district="Bhavnagar",
@@ -107,3 +109,51 @@ def test_dashboard_history_selection_redirects_to_read_only_history(client, app)
     assert response.status_code == 200
     assert b"Historical year" in response.data
     assert b"No current totals are substituted" in response.data
+
+
+def test_admin_can_confirm_close_and_reopen_annual_history(client, app):
+    trust_id, _ = _seed(app, "-L")
+    token = _login(client, "annual-history-admin-L")
+    year = current_academic_year()
+    client.post(
+        "/annual-enrollment-history/initialize",
+        data={"csrf_token": token, "academic_year": year},
+    )
+
+    confirmed = client.post(
+        "/annual-enrollment-history/lifecycle",
+        data={"csrf_token": token, "academic_year": year, "action": "confirm", "confirmation": f"CONFIRM {year}"},
+        follow_redirects=True,
+    )
+    assert confirmed.status_code == 200
+    assert b"Confirmed 1 Annual Enrollment History record" in confirmed.data
+    with app.app_context():
+        annual = StudentAcademicEnrollment.query.filter_by(student_id_fk="AH-001-L", academic_year=year).one()
+        academic_year = AcademicYear.query.filter_by(trust_id_fk=trust_id, year_label=year).one()
+        assert annual.confirmation_status == "confirmed"
+        assert annual.confirmed_by_user_id_fk is not None
+        assert academic_year.status == "locked"
+
+    closed = client.post(
+        "/annual-enrollment-history/lifecycle",
+        data={"csrf_token": token, "academic_year": year, "action": "close", "confirmation": f"CLOSE {year}"},
+        follow_redirects=True,
+    )
+    assert closed.status_code == 200
+    assert b"now closed and read-only" in closed.data
+    with app.app_context():
+        assert AcademicYear.query.filter_by(trust_id_fk=trust_id, year_label=year).one().status == "closed"
+
+    reopened = client.post(
+        "/annual-enrollment-history/lifecycle",
+        data={"csrf_token": token, "academic_year": year, "action": "reopen", "confirmation": f"REOPEN {year}"},
+        follow_redirects=True,
+    )
+    assert reopened.status_code == 200
+    assert b"Reopened 1 record" in reopened.data
+    with app.app_context():
+        annual = StudentAcademicEnrollment.query.filter_by(student_id_fk="AH-001-L", academic_year=year).one()
+        academic_year = AcademicYear.query.filter_by(trust_id_fk=trust_id, year_label=year).one()
+        assert annual.confirmation_status == "draft"
+        assert annual.confirmed_by_user_id_fk is None
+        assert academic_year.status == "review"

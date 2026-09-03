@@ -16006,6 +16006,18 @@ def annual_enrollment_history():
             or_(AcademicYear.institute_id_fk == institute_id, AcademicYear.institute_id_fk.is_(None)) if institute_id else AcademicYear.institute_id_fk.is_(None),
         )
     ).scalars().first()
+    scoped_history_rows = list(db.session.execute(
+        select(StudentAcademicEnrollment).where(*option_scope)
+    ).scalars().all())
+    draft_count = sum(1 for annual in scoped_history_rows if annual.confirmation_status == "draft")
+    confirmed_count = sum(1 for annual in scoped_history_rows if annual.confirmation_status == "confirmed")
+    validation_issues = {
+        "missing_semester": sum(1 for annual in scoped_history_rows if not annual.semester),
+        "missing_admission_year": sum(1 for annual in scoped_history_rows if not (annual.admission_academic_year or "").strip()),
+        "missing_gender": sum(1 for annual in scoped_history_rows if not (annual.gender_snapshot or "").strip()),
+        "missing_category": sum(1 for annual in scoped_history_rows if not (annual.category_snapshot or "").strip()),
+        "missing_location": sum(1 for annual in scoped_history_rows if not (annual.home_city_snapshot or "").strip()),
+    }
     return render_template(
         "annual_enrollment_history.html",
         selected_year=selected_year,
@@ -16026,6 +16038,7 @@ def annual_enrollment_history():
         total_filtered=total_filtered, page=page, page_count=page_count, per_page=per_page,
         view=view, faculty_rows=faculty_rows, subject_rows=subject_rows,
         semester_options=semester_options, gender_options=gender_options, category_options=category_options,
+        draft_count=draft_count, confirmed_count=confirmed_count, validation_issues=validation_issues,
         filters={"semester": semester, "category": category_filter, "gender": gender_filter, "status": status_filter, "location": location_query, "location_scope": location_scope, "q": student_search},
     )
 
@@ -16105,6 +16118,98 @@ def annual_enrollment_history_initialize():
         flash(f"Refreshed {refreshed} draft location snapshot(s). {remaining_unstructured} record(s) still need a structured Home City / Town / Village value.", "success" if refreshed else "warning")
     else:
         flash(f"Prepared {created} new record(s) and refreshed {refreshed} draft location snapshot(s). Review them before year closure.", "success")
+    return redirect(url_for("main.annual_enrollment_history", academic_year=selected_year))
+
+
+@main_bp.route("/annual-enrollment-history/lifecycle", methods=["POST"])
+@login_required
+@role_required("admin", "principal")
+@csrf_required
+def annual_enrollment_history_lifecycle():
+    trust_id, institute_id = _academic_year_scope()
+    selected_year = (request.form.get("academic_year") or "").strip()
+    action = (request.form.get("action") or "").strip().lower()
+    expected_confirmation = f"{action.upper()} {selected_year}"
+    if not trust_id or not re.fullmatch(r"\d{4}-\d{2}", selected_year) or action not in {"confirm", "close", "reopen"}:
+        abort(400)
+    if (request.form.get("confirmation") or "").strip() != expected_confirmation:
+        flash(f"Confirmation failed. Expected {expected_confirmation}.", "danger")
+        return redirect(url_for("main.annual_enrollment_history", academic_year=selected_year))
+    if action in {"close", "reopen"} and current_user.role != "admin":
+        abort(403)
+
+    year_query = select(AcademicYear).where(
+        AcademicYear.trust_id_fk == trust_id,
+        AcademicYear.year_label == selected_year,
+        or_(AcademicYear.institute_id_fk == institute_id, AcademicYear.institute_id_fk.is_(None)) if institute_id else AcademicYear.institute_id_fk.is_(None),
+    )
+    year_record = db.session.execute(year_query).scalars().first()
+    if not year_record:
+        flash("Prepare Annual Enrollment History before changing its lifecycle.", "danger")
+        return redirect(url_for("main.annual_enrollment_history", academic_year=selected_year))
+
+    program_ids = _scoped_program_ids_for_year_history(trust_id, institute_id)
+    row_query = select(StudentAcademicEnrollment).where(
+        StudentAcademicEnrollment.trust_id_fk == trust_id,
+        StudentAcademicEnrollment.academic_year == selected_year,
+        StudentAcademicEnrollment.program_id_fk.in_(program_ids or [-1]),
+    )
+    scoped_rows = list(db.session.execute(row_query).scalars().all())
+    if not scoped_rows:
+        flash("No Annual Enrollment History records are available for this scope.", "danger")
+        return redirect(url_for("main.annual_enrollment_history", academic_year=selected_year))
+
+    now = datetime.now(timezone.utc)
+    changed = 0
+    if action == "confirm":
+        missing_semester = sum(1 for row in scoped_rows if not row.semester)
+        if missing_semester:
+            flash(f"Confirmation blocked: {missing_semester} record(s) have no semester.", "danger")
+            return redirect(url_for("main.annual_enrollment_history", academic_year=selected_year))
+        for row in scoped_rows:
+            if row.confirmation_status == "draft":
+                row.confirmation_status = "confirmed"
+                row.confirmed_by_user_id_fk = current_user.user_id
+                row.confirmed_at = now
+                changed += 1
+        remaining_drafts = db.session.execute(select(func.count()).select_from(StudentAcademicEnrollment).where(
+            StudentAcademicEnrollment.trust_id_fk == trust_id,
+            StudentAcademicEnrollment.academic_year == selected_year,
+            StudentAcademicEnrollment.confirmation_status == "draft",
+        )).scalar_one()
+        year_record.status = "locked" if remaining_drafts == 0 else "review"
+        message = f"Confirmed {changed} Annual Enrollment History record(s)."
+    elif action == "close":
+        remaining_drafts = db.session.execute(select(func.count()).select_from(StudentAcademicEnrollment).where(
+            StudentAcademicEnrollment.trust_id_fk == trust_id,
+            StudentAcademicEnrollment.academic_year == selected_year,
+            StudentAcademicEnrollment.confirmation_status == "draft",
+        )).scalar_one()
+        if remaining_drafts:
+            flash(f"Closure blocked: {remaining_drafts} draft record(s) still require confirmation.", "danger")
+            return redirect(url_for("main.annual_enrollment_history", academic_year=selected_year))
+        year_record.status = "closed"
+        year_record.closed_at = now
+        changed = len(scoped_rows)
+        message = f"Annual Enrollment History for {selected_year} is now closed and read-only."
+    else:
+        for row in scoped_rows:
+            if row.confirmation_status == "confirmed":
+                row.confirmation_status = "draft"
+                row.confirmed_by_user_id_fk = None
+                row.confirmed_at = None
+                changed += 1
+        year_record.status = "review"
+        year_record.closed_at = None
+        message = f"Reopened {changed} record(s) for controlled review. Confirm them again after corrections."
+
+    _bulk_audit_entry(
+        f"annual_enrollment_history_{action}",
+        {"academic_year": selected_year, "institute_id": institute_id},
+        {"affected_records": changed},
+    )
+    db.session.commit()
+    flash(message, "success")
     return redirect(url_for("main.annual_enrollment_history", academic_year=selected_year))
 
 

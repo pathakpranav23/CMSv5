@@ -20,6 +20,27 @@
   </div>
   {% if selected_year!=active_year or (year_record and year_record.status in ['locked','closed']) %}<div class="alert alert-info"><strong>Historical year — read-only.</strong> You are viewing {{ selected_year }}. Editing is disabled.</div>{% elif year_record and year_record.status=='draft' %}<div class="alert alert-warning"><strong>Draft year.</strong> Review these proposals before activation.</div>{% endif %}
 
+  {% if view=='students' and year_record %}
+  <section class="card mb-3" aria-labelledby="historyLifecycleTitle">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2"><strong id="historyLifecycleTitle">Annual history lifecycle</strong><span class="badge bg-secondary">{{ year_record.status|title }}</span></div>
+    <div class="card-body">
+      <div class="history-summary-grid mb-3">
+        <div><span class="text-muted d-block">Draft records</span><strong class="h4">{{ draft_count }}</strong></div>
+        <div><span class="text-muted d-block">Confirmed records</span><strong class="h4">{{ confirmed_count }}</strong></div>
+        <div><span class="text-muted d-block">Missing semester</span><strong class="h4">{{ validation_issues.missing_semester }}</strong></div>
+        <div><span class="text-muted d-block">Location not structured</span><strong class="h4">{{ validation_issues.missing_location }}</strong></div>
+      </div>
+      {% if validation_issues.missing_admission_year or validation_issues.missing_gender or validation_issues.missing_category %}<div class="alert alert-warning py-2"><strong>Review warnings:</strong> missing admission year {{ validation_issues.missing_admission_year }}, gender {{ validation_issues.missing_gender }}, category {{ validation_issues.missing_category }}. These do not block confirmation but reduce reporting quality.</div>{% endif %}
+      <p class="text-muted small">Lifecycle actions apply to every Annual Enrollment History record in your authorized scope for {{ selected_year }}, not only the currently filtered results.</p>
+      <div class="d-flex gap-2 flex-wrap">
+        {% if draft_count %}<form method="post" action="{{ url_for('main.annual_enrollment_history_lifecycle') }}" onsubmit="return confirm('Confirm and freeze all reviewed records in your authorized scope for {{ selected_year }}?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="academic_year" value="{{ selected_year }}"><input type="hidden" name="action" value="confirm"><input type="hidden" name="confirmation" value="CONFIRM {{ selected_year }}"><button class="btn btn-success" type="submit" {% if validation_issues.missing_semester %}disabled title="Resolve missing semesters first"{% endif %}>Confirm Annual History</button></form>{% endif %}
+        {% if current_user.role=='admin' and not draft_count and confirmed_count and year_record.status!='closed' %}<form method="post" action="{{ url_for('main.annual_enrollment_history_lifecycle') }}" onsubmit="return confirm('Close {{ selected_year }}? It will become read-only until an Admin reopens it.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="academic_year" value="{{ selected_year }}"><input type="hidden" name="action" value="close"><input type="hidden" name="confirmation" value="CLOSE {{ selected_year }}"><button class="btn btn-dark" type="submit">Close Annual History</button></form>{% endif %}
+        {% if current_user.role=='admin' and not draft_count and confirmed_count %}<form method="post" action="{{ url_for('main.annual_enrollment_history_lifecycle') }}" onsubmit="return confirm('Reopen {{ selected_year }} for corrections? This action will be recorded in the audit log.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="academic_year" value="{{ selected_year }}"><input type="hidden" name="action" value="reopen"><input type="hidden" name="confirmation" value="REOPEN {{ selected_year }}"><button class="btn btn-outline-danger" type="submit">Reopen for Correction</button></form>{% endif %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
   <nav class="nav nav-pills gap-2 mb-3" aria-label="Report data type">
     {% for key,label in [('students','Students'),('faculty','Faculty'),('subjects','Subjects')] %}<a class="nav-link {% if view==key %}active{% endif %}" href="{{ url_for('main.annual_enrollment_history',academic_year=selected_year,program_id=requested_program_id or '',view=key) }}">{{ label }}</a>{% endfor %}
   </nav>
