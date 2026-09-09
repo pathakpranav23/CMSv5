@@ -79,14 +79,38 @@
                   <div>{{ summary.active_students }} / {{ summary.approved_intake }}</div>
                   <div class="small text-muted">{{ summary.filled_pct }}%</div>
                 {% else %}
-                  <span class="text-warning">N/A — intake setup required</span>
+                  <span class="text-warning">
+                    N/A — intake setup required
+                    {% if selected_program_id and role_lower in ['admin', 'principal', 'clerk'] %}
+                      ·
+                      <a href="{{ url_for('main.program_intakes', program_id=selected_program_id, semester=summary.semester, return_to=request.full_path if request else '/divisions?program_id=' ~ selected_program_id) }}"
+                         class="text-decoration-underline fw-medium"
+                         title="Configure the approved intake for Semester {{ summary.semester }} of this program">
+                        Set up intake →
+                      </a>
+                    {% endif %}
+                  </span>
                 {% endif %}
               </td>
               <td>
                 {% if summary.approved_intake %}{{ summary.remaining_seats }} seats · {{ summary.remaining_pct }}%{% else %}—{% endif %}
               </td>
               <td>
-                {% if summary.operational_divisions %}{{ summary.operational_divisions }} · {{ summary.operational_capacity }} seats{% else %}<span class="text-warning">Division setup required</span>{% endif %}
+                {% if summary.operational_divisions %}
+                  {{ summary.operational_divisions }} · {{ summary.operational_capacity }} seats
+                {% else %}
+                  <span class="text-warning">
+                    Division setup required
+                    {% if selected_program_id and role_lower in ['admin', 'principal', 'clerk'] %}
+                      ·
+                      <a href="{{ url_for('main.module_divisions', program_id=selected_program_id, semester=summary.semester) }}"
+                         class="text-decoration-underline fw-medium"
+                         title="Configure divisions for Semester {{ summary.semester }}">
+                        Configure divisions →
+                      </a>
+                    {% endif %}
+                  </span>
+                {% endif %}
               </td>
               <td>
                 {% if summary.division_utilization_pct is not none %}
