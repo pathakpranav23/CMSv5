@@ -80,8 +80,25 @@ def create_app():
     app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_CONTENT_LENGTH", str(32 * 1024 * 1024)))
     # Private application storage; never expose teaching resources through /static/.
     app.config["MATERIALS_STORAGE_DIR"] = os.environ.get("MATERIALS_STORAGE_DIR", os.path.join(app.instance_path, "materials"))
+    # Private payment-proofs storage (P0-3).  Files are only served via the
+    # authenticated, FK-ownership-gated download route.
+    app.config["PAYMENT_PROOFS_STORAGE_DIR"] = os.environ.get(
+        "PAYMENT_PROOFS_STORAGE_DIR", os.path.join(app.instance_path, "payment_proofs")
+    )
+    os.makedirs(app.config["PAYMENT_PROOFS_STORAGE_DIR"], exist_ok=True)
     # CSRF token TTL (seconds)
     app.config["CSRF_TOKEN_TTL"] = int(os.environ.get("CSRF_TOKEN_TTL", "7200"))
+    # P0-1 global CSRF whitelist: endpoints that do NOT require CSRF on POST/PUT/DELETE.
+    # The global enforce_global_csrf before_request hook (below, before return app)
+    # blocks all mutating requests unless the endpoint is listed here OR the request
+    # carries a correct, in-date session CSRF token matching the Flask-session one.
+    app.config.setdefault("CSRF_WHITELIST", {
+        "main.login",            # login form must accept POST without a prefetched session
+        "main.logout",           # logout is safe to trigger sessionlessly (idempotent)
+        "main.locale",           # language switcher is presentation-only, no state write
+        "main.forgot_password",  # accepts POST before any CSRF session; uses rate-limit for abuse
+        "main.reset_password",   # accepts POST from email token link before user has CSRF session
+    })
     # UI hints toggle: set INFO_HINTS_ENABLED=false to hide soft guidance text globally
     app.config["INFO_HINTS_ENABLED"] = (os.environ.get("INFO_HINTS_ENABLED", "false").lower() == "true")
 
@@ -1009,6 +1026,103 @@ def create_app():
                 "Enrollments": "એનલોલમેન્ટ્સ",
                 "Redis Active": "રેડિસ સક્રિય",
                 "In-memory cache": "ઇન-મેમરી કૅશ",
+                "Add Student": "વિદ્યાર્થી ઉમેરો",
+                "Bulk Import Students (Clerk)": "બલ્ક ઇમ્પોર્ટ વિદ્યાર્થીઓ (ક્લાર્ક)",
+                "Publish and manage college-wide announcements.": "કોલેજ-વ્યાપક જાહેરખબરો પ્રકાશિત કરો અને મેનેજ કરો.",
+                "Quick Actions": "ઝડપી ક્રિયાઓ",
+                "View Announcements": "જાહેરખબરો જુઓ",
+                "Create Announcement": "જાહેરખબર બનાવો",
+                "Helpful Links": "મદદરૂપ લિંક્સ",
+                "Audience targeting supports program, division, and roles.": "શ્રોતાઓ નિશ્વિત પ્રોગ્રામ, વિભાગ અને ભૂમિકાઓને સપોર્ટ કરે છે.",
+                "Dismissals let users hide announcements from their view.": "ડિસ્મિસલ વપરાશકારોને જાહેરખબરો છુપાવવા દે છે.",
+                "Use archive to keep the notice board clean.": "નોટિસ બોર્ડ સ્વચ્છ રાખવા આર્કાઇવનો ઉપયોગ કરો.",
+                "Advanced links for power users.": "પાવર યુઝર્સ માટે અદ્યતન લિંક્સ.",
+                "Manage fee heads, enter semester-wise amounts, and view structures.": "ફી હેડ્સ મેનેજ કરો, સેમેસ્ટર મુજબ રકમ દાખલ કરો અને સ્રક્ચર જુઓ.",
+                "Fee Heads": "ફી હેડ્સ",
+                "Add, rename, or delete heads per program and semester.": "પ્રોગ્રામ અને સેમેસ્ટર પ્રમાણે હેડ્સ ઉમેરો, નામ બદલો અથવા કાઢો.",
+                "Manage Fee Heads": "ફી હેડ્સ મેનેજ કરો",
+                "Fees Entry": "ફી એન્ટ્રી",
+                "Enter and review semester-wise component amounts, then freeze.": "સેમેસ્ટર પ્રમાણે ઘટકોની રકમ દાખલ કરો અને સમીક્ષા કરો, પછી ફ્રીઝ કરો.",
+                "Open Fees Entry": "ફી એન્ટ્રી ખોલો",
+                "Bulk Import": "બલ્ક ઇમ્પોર્ટ",
+                "Download sample and upload semester fees for a program.": "નમૂનો ડાઉનલોડ કરો અને પ્રોગ્રામ માટે સેમેસ્ટર ફી અપલોડ કરો.",
+                "Open Bulk Import": "બલ્ક ઇમ્પોર્ટ ખોલો",
+                "Structure View": "સ્રક્ચર વ્યૂ",
+                "Browse fee structure totals and components across programs.": "પ્રોગ્રામ્સમાં ફી સ્રક્ચરની કુલ અને ઘટકો બ્રાઉઝ કરો.",
+                "View Structure": "સ્રક્ચર જુઓ",
+                "Quick Payment": "ઝડપી ચુકવણી",
+                "Select program and semester, then pay via receipt page.": "પ્રોગ્રામ અને સેમેસ્ટર પસંદ કરો, પછી રસીદ પેજ મારફતે ચુકવો.",
+                "Open Quick Payment": "ઝડપી ચુકવણી ખોલો",
+                "Program Bank Details": "પ્રોગ્રામ બેંક વિગતો",
+                "Manage bank info and UPI QR per program for receipts.": "રસીદ માટે દરેક પ્રોગ્રામની બેંક માહિતી અને UPI QR મેનેજ કરો.",
+                "Open Bank Details": "બેંક વિગતો ખોલો",
+                "Payment Status": "ચુકવણી સ્થિતિ",
+                "View paid/unpaid by program, semester, and medium.": "પ્રોગ્રામ, સેમેસ્ટર અને માધ્યમ મુજબ ચુકવણી થયેલ/બાકી જુઓ.",
+                "Open Payment Status": "ચુકવણી સ્થિતિ ખોલો",
+                "Verification Queue": "ચકાસણી ક્યૂ",
+                "Review UTRs and proofs, then verify or reject payments.": "UTR અને પુરાવાની સમીક્ષા કરો, પછી ચુકવણી ચકાસો અથવા રદ કરો.",
+                "Open Verification Queue": "ચકાસણી ક્યૂ ખોલો",
+                "Bulk Import Fees": "બલ્ક ઇમ્પોર્ટ ફી",
+                "Select a program and semester to begin.": "શરૂઆત માટે પ્રોગ્રામ અને સેમેસ્ટર પસંદ કરો.",
+                "Download Sample": "નમૂનો ડાઉનલોડ કરો",
+                "The sample includes only the standard heads in the exact sequence below. No additional heads will be accepted by the importer.": "નમૂનામાં નીચે બતાવેલી ચોક્કસ ક્રમમાં માત્ર પ્રમાણભૂત હેડ્સ છે. ઇમ્પોર્ટમાં વધારાના હેડ્સ સ્વીકારવામાં નહીં આવે.",
+                "Expected Heads (in order):": "અપેક્ષિત હેડ્સ (ક્રમમાં):",
+                "Upload Filled Excel": "ભરેલું એક્સેલ અપલોડ કરો",
+                "Excel File (.xlsx)": "એક્સેલ ફાઇલ (.xlsx)",
+                "Import Fees": "ફી ઇમ્પોર્ટ કરો",
+                "Dry-run (validate only)": "ડ્રાય-રન (માત્ર ચકાસણી)",
+                "Validation only — no changes saved.": "માત્ર ચકાસણી — કોઈ ફેરફાર સેવ થયા નથી.",
+                "Set Scope": "સ્કોપ સેટ કરો",
+                "Tip:": "ટીપ:",
+                "If heads are empty for your scope, use Fee Heads to add or the seed-all button (admin/clerk) to pre-create heads for all programs and semesters.": "જો તમારા સ્કોપ માટે હેડ્સ ખાલી હોય, તો ફી હેડ્સ ઉમેરો અથવા 'સીડ-ઓલ' બટનથી તમામ પ્રોગ્રામ અને સેમેસ્ટર માટે હેડ્સ બનાવો.",
+                "Seed All Heads": "બધા હેડ્સ સીડ કરો",
+                "Staff Module": "સ્ટાફ મોડ્યુલ",
+                "Manage staff profiles and teaching assignments.": "સ્ટાફ પ્રોફાઇલ અને શિક્ષણ નિયુક્તિઓ મેનેજ કરો.",
+                "View Staff": "સ્ટાફ જુઓ",
+                "Add Staff": "સ્ટાફ ઉમેરો",
+                "Assign Staff to Divisions": "સ્ટાફને વિભાગોમાં સોંપો",
+                "My Attendance Report": "મારી હાજરી રિપોર્ટ",
+                "Admin Attendance Report": "એડમિન હાજરી રિપોર્ટ",
+                "Power Actions": "પાવર ક્રિયાઓ",
+                "Divisions & Sections Module": "વિભાગો અને સેકશન મોડ્યુલ",
+                "Manage divisions/sections per program and semester.": "પ્રોગ્રામ અને સેમેસ્ટર પ્રમાણે વિભાગો/સેકશન મેનેજ કરો.",
+                "View Divisions": "વિભાગો જુઓ",
+                "Add Division": "વિભાગ ઉમેરો",
+                "Rebalance Divisions & Roll Nos": "વિભાગો અને રોલ નં બેલેન્સ કરો",
+                "Division Planning (Principal)": "વિભાગ આયોજન (પ્રિન્સિપાલ)",
+                "Capacity / Division": "ક્ષમતા / વિભાગ",
+                "Number of Divisions": "વિભાગોની સંખ્યા",
+                "Roll Max / Division": "રોલ મહત્તમ / વિભાગ",
+                "Save Planning": "આયોજન સેવ કરો",
+                "Existing Plans": "હાલની યોજનાઓ",
+                "Roll Max": "રોલ મહત્તમ",
+                "No plans yet. Create one using the form.": "હજુ યોજનાઓ નથી. ફોર્મ વડે બનાવો.",
+                "Administrative tools and reports.": "પ્રશાસકીય સાધનો અને રિપોર્ટ્સ.",
+                "Attendance Report": "હાજરી રિપોર્ટ",
+                "Program Import": "પ્રોગ્રામ ઇમ્પોર્ટ",
+                "Clerk Bulk Import Students": "ક્લાર્ક બલ્ક ઇમ્પોર્ટ વિદ્યાર્થીઓ",
+                "Offer Electives": "ઇલેક્ટિવ ઓફર કરો",
+                "Assign Staff": "સ્ટાફ સોંપો",
+                "Core Enrollment": "કોર એનરોલમેન્ટ",
+                "Moderation": "સમીક્ષા",
+                "All Downloads": "બધા ડાઉનલોડ્સ",
+                "Your Subjects": "તમારા વિષયો",
+                "No enrolled subjects found for": " માટે નોંધાયેલા વિષયો મળ્યા નથી",
+                "Assigned Subjects": "સોંપાયેલ વિષયો",
+                "Share": "શેર",
+                "No active assignments found.": "સક્રિય નિયુક્તિઓ મળી નથી.",
+                "Select a subject to view or manage materials.": "સામગ્રી જોવા અથવા મેનેજ કરવા વિષય પસંદ કરો.",
+                "Select Program": "પ્રોગ્રામ પસંદ કરો",
+                "Download Sample Excel": "નમૂના એક્સેલ ડાઉનલોડ કરો",
+                "Expected columns: Sr No | Description | Amount | Notes (optional)": "અપેક્ષિત કૉલમ્સ: ક્રમ નં | વર્ણન | રકમ | નોંધ (વૈકલ્પિક)",
+                "Expected columns: Sr No | Description | Amount | Medium Tag | Notes (optional)": "અપેક્ષિત કૉલમ્સ: ક્રમ નં | વર્ણન | રકમ | માધ્યમ ટૅગ | નોંધ (વૈકલ્પિક)",
+                "View Students": "વિદ્યાર્થીઓ જુઓ",
+                "Please select a program.": "કૃપા કરીને પ્રોગ્રામ પસંદ કરો.",
+                "Please upload an Excel file.": "કૃપા કરીને એક્સેલ ફાઇલ અપલોડ કરો.",
+                "Failed to save uploaded file.": "અપલોડ કરેલી ફાઇલ સેવ થવામાં નિષ્ફળ.",
+                "File must be an Excel (.xlsx/.xls).": "ફાઇલ એક્સેલ (.xlsx/.xls) હોવી જોઈએ.",
+                "Select program and semester before uploading.": "અપલોડ કરતા પહેલાં પ્રોગ્રામ અને સેમેસ્ટર પસંદ કરો.",
+                "Medium is required for B.Com import. Choose English or Gujarati.": "B.Com ઇમ્પોર્ટ માટે માધ્યમ જરૂરી છે. English અથવા Gujarati પસંદ કરો.",
                 }
             }
             try:
@@ -1334,6 +1448,62 @@ def create_app():
             # Best-effort; skip if migration fails
             pass
 
+    @app.before_request
+    def enforce_global_csrf():
+        # Safe methods + static assets are always exempt.
+        try:
+            method = (request.method or "GET").upper()
+        except Exception:
+            method = "GET"
+        if method in ("GET", "HEAD", "OPTIONS", "TRACE"):
+            return None
+        try:
+            ep = request.endpoint
+        except Exception:
+            ep = None
+        if ep and "static" in ep:
+            return None
+        whitelist = set(app.config.get("CSRF_WHITELIST") or set())
+        if ep in whitelist:
+            return None
+
+        # Validate CSRF token (mirrors csrf_required decorator).
+        sess_token = (session.get("csrf_token") or "")
+        issued_at = session.get("csrf_token_issued_at")
+        ttl = current_app.config.get("CSRF_TOKEN_TTL", 7200)
+        now = int(time.time())
+        try:
+            hdr = request.headers.get("X-CSRF-Token") or ""
+            try:
+                _form_tok = request.form.get("csrf_token") if hasattr(request, "form") else None
+            except Exception:
+                _form_tok = None
+            token = ((_form_tok or hdr) or "").strip()
+        except Exception:
+            token = ""
+        fail = False
+        if not issued_at or (ttl > 0 and (now - int(issued_at)) > ttl):
+            fail = True
+        elif not token:
+            fail = True
+        elif token != sess_token:
+            fail = True
+        if fail:
+            try:
+                flash("Refresh the Page or login again", "warning")
+            except Exception:
+                pass
+            try:
+                ref = request.referrer
+            except Exception:
+                ref = None
+            try:
+                target = ref or url_for("main.index")
+            except Exception:
+                target = "/"
+            return redirect(target)
+        return None
+
     return app
 
 
@@ -1388,142 +1558,3 @@ def csrf_required(view_func):
                 return redirect(ref or url_for("main.index"))
         return view_func(*args, **kwargs)
     return _wrapped
-    @app.context_processor
-    def inject_i18n():
-        # Prefer session setting; fallback to user preference; default to English
-        try:
-            if not session.get("lang") and getattr(current_user, "is_authenticated", False):
-                pref = (getattr(current_user, "preferred_lang", None) or "").strip().lower()
-                if pref in {"en", "gu"}:
-                    session["lang"] = pref
-        except Exception:
-            pass
-        lang = (session.get("lang") or "en").strip().lower()
-        tr = {
-            "gu": {
-                "Dashboard": "ડેશબોર્ડ",
-                "Students": "વિદ્યાર્થીઓ",
-                "Program": "પ્રોગ્રામ",
-                "Semester": "સેમેસ્ટર",
-                "Medium": "માધ્યમ",
-                "Add Student": "વિદ્યાર્થી ઉમેરો",
-                "Bulk Import Students (Clerk)": "બલ્ક ઇમ્પોર્ટ (ક્લાર્ક)",
-                "Announcements": "જાહેરખબરો",
-                "Publish and manage college-wide announcements.": "કોલેજ-વ્યાપક જાહેરખબરો પ્રકાશિત કરો અને મેનેજ કરો.",
-                "Quick Actions": "ઝડપી ક્રિયાઓ",
-                "View Announcements": "જાહેરખબરો જુઓ",
-                "Create Announcement": "જાહેરખબર બનાવો",
-                "Notice Board": "નોટિસ બોર્ડ",
-                "Archive": "આર્કાઇવ",
-                "Helpful Links": "મદદરૂપ લિંક્સ",
-                "Audience targeting supports program, division, and roles.": "શ્રોતાઓ નિશ્વિત પ્રોગ્રામ, વિભાગ અને ભૂમિકાઓને સપોર્ટ કરે છે.",
-                "Dismissals let users hide announcements from their view.": "ડિસ્મિસલ વપરાશકારોને જાહેરખબરો છુપાવવા દે છે.",
-                "Use archive to keep the notice board clean.": "નોટિસ બોર્ડ સ્વચ્છ રાખવા આર્કાઇવનો ઉપયોગ કરો.",
-                "Advanced links for power users.": "પાવર યુઝર્સ માટે અદ્યતન લિંક્સ.",
-                "Manage Accounts": "ખાતાઓ મેનેજ કરો",
-                "Fees Module": "ફી મોડ્યુલ",
-                "Manage fee heads, enter semester-wise amounts, and view structures.": "ફી હેડ્સ મેનેજ કરો, સેમેસ્ટર મુજબ રકમ દાખલ કરો અને સ્રક્ચર જુઓ.",
-                "Fee Heads": "ફી હેડ્સ",
-                "Add, rename, or delete heads per program and semester.": "પ્રોગ્રામ અને સેમેસ્ટર પ્રમાણે હેડ્સ ઉમેરો, નામ બદલો અથવા કાઢો.",
-                "Manage Fee Heads": "ફી હેડ્સ મેનેજ કરો",
-                "Fees Entry": "ફી એન્ટ્રી",
-                "Enter and review semester-wise component amounts, then freeze.": "સેમેસ્ટર પ્રમાણે ઘટકોની રકમ દાખલ કરો અને સમીક્ષા કરો, પછી ફ્રીઝ કરો.",
-                "Open Fees Entry": "ફી એન્ટ્રી ખોલો",
-                "Bulk Import": "બલ્ક ઇમ્પોર્ટ",
-                "Download sample and upload semester fees for a program.": "નમૂનો ડાઉનલોડ કરો અને પ્રોગ્રામ માટે સેમેસ્ટર ફી અપલોડ કરો.",
-                "Open Bulk Import": "બલ્ક ઇમ્પોર્ટ ખોલો",
-                "Structure View": "સ્રક્ચર વ્યૂ",
-                "Browse fee structure totals and components across programs.": "પ્રોગ્રામ્સમાં ફી સ્રક્ચરની કુલ અને ઘટકો બ્રાઉઝ કરો.",
-                "View Structure": "સ્રક્ચર જુઓ",
-                "Quick Payment": "ઝડપી ચુકવણી",
-                "Select program and semester, then pay via receipt page.": "પ્રોગ્રામ અને સેમેસ્ટર પસંદ કરો, પછી રસીદ પેજ મારફતે ચુકવો.",
-                "Open Quick Payment": "ઝડપી ચુકવણી ખોલો",
-                "Program Bank Details": "પ્રોગ્રામ બેંક વિગતો",
-                "Manage bank info and UPI QR per program for receipts.": "રસીદ માટે દરેક પ્રોગ્રામની બેંક માહિતી અને UPI QR મેનેજ કરો.",
-                "Open Bank Details": "બેંક વિગતો ખોલો",
-                "Payment Status": "ચુકવણી સ્થિતિ",
-                "View paid/unpaid by program, semester, and medium.": "પ્રોગ્રામ, સેમેસ્ટર અને માધ્યમ મુજબ ચુકવણી થયેલ/બાકી જુઓ.",
-                "Open Payment Status": "ચુકવણી સ્થિતિ ખોલો",
-                "Verification Queue": "ચકાસણી ક્યૂ",
-                "Review UTRs and proofs, then verify or reject payments.": "UTR અને પુરાવાની સમીક્ષા કરો, પછી ચુકવણી ચકાસો અથવા રદ કરો.",
-                "Open Verification Queue": "ચકાસણી ક્યૂ ખોલો",
-                "Bulk Import Fees": "બલ્ક ઇમ્પોર્ટ ફી",
-                "Select a program and semester to begin.": "શરૂઆત માટે પ્રોગ્રામ અને સેમેસ્ટર પસંદ કરો.",
-                "Download Sample": "નમૂનો ડાઉનલોડ કરો",
-                "The sample includes only the standard heads in the exact sequence below. No additional heads will be accepted by the importer.": "નમૂનામાં નીચે બતાવેલી ચોક્કસ ક્રમમાં માત્ર પ્રમાણભૂત હેડ્સ છે. ઇમ્પોર્ટમાં વધારાના હેડ્સ સ્વીકારવામાં નહીં આવે.",
-                "Expected Heads (in order):": "અપેક્ષિત હેડ્સ (ક્રમમાં):",
-                "Upload Filled Excel": "ભરેલું એક્સેલ અપલોડ કરો",
-                "Excel File (.xlsx)": "એક્સેલ ફાઇલ (.xlsx)",
-                "Import Fees": "ફી ઇમ્પોર્ટ કરો",
-                "Dry-run (validate only)": "ડ્રાય-રન (માત્ર ચકાસણી)",
-                "Validation only — no changes saved.": "માત્ર ચકાસણી — કોઈ ફેરફાર સેવ થયા નથી.",
-                "Set Scope": "સ્કોપ સેટ કરો",
-                "Tip:": "ટીપ:",
-                "If heads are empty for your scope, use Fee Heads to add or the seed-all button (admin/clerk) to pre-create heads for all programs and semesters.": "જો તમારા સ્કોપ માટે હેડ્સ ખાલી હોય, તો ફી હેડ્સ ઉમેરો અથવા 'સીડ-ઓલ' બટનથી તમામ પ્રોગ્રામ અને સેમેસ્ટર માટે હેડ્સ બનાવો.",
-                "Seed All Heads": "બધા હેડ્સ સીડ કરો",
-                "Staff Module": "સ્ટાફ મોડ્યુલ",
-                "Manage staff profiles and teaching assignments.": "સ્ટાફ પ્રોફાઇલ અને શિક્ષણ નિયુક્તિઓ મેનેજ કરો.",
-                "View Staff": "સ્ટાફ જુઓ",
-                "Add Staff": "સ્ટાફ ઉમેરો",
-                "Assign Staff to Divisions": "સ્ટાફને વિભાગોમાં સોંપો",
-                "Subjects": "વિષયો",
-                "My Attendance Report": "મારી હાજરી રિપોર્ટ",
-                "Admin Attendance Report": "એડમિન હાજરી રિપોર્ટ",
-                "Power Actions": "પાવર ક્રિયાઓ",
-                "Divisions & Sections Module": "વિભાગો અને સેકશન મોડ્યુલ",
-                "Manage divisions/sections per program and semester.": "પ્રોગ્રામ અને સેમેસ્ટર પ્રમાણે વિભાગો/સેકશન મેનેજ કરો.",
-                "View Divisions": "વિભાગો જુઓ",
-                "Add Division": "વિભાગ ઉમેરો",
-                "Rebalance Divisions & Roll Nos": "વિભાગો અને રોલ નં બેલેન્સ કરો",
-                "Division Planning (Principal)": "વિભાગ આયોજન (પ્રિન્સિપાલ)",
-                "Capacity / Division": "ક્ષમતા / વિભાગ",
-                "Number of Divisions": "વિભાગોની સંખ્યા",
-                "Roll Max / Division": "રોલ મહત્તમ / વિભાગ",
-                "Save Planning": "આયોજન સેવ કરો",
-                "Existing Plans": "હાલની યોજનાઓ",
-                "Divisions": "વિભાગો",
-                "Capacity": "ક્ષમતા",
-                "Roll Max": "રોલ મહત્તમ",
-                "No plans yet. Create one using the form.": "હજુ યોજનાઓ નથી. ફોર્મ વડે બનાવો.",
-                "Admin Module": "એડમિન મોડ્યુલ",
-                "Administrative tools and reports.": "પ્રશાસકીય સાધનો અને રિપોર્ટ્સ.",
-                "Attendance Report": "હાજરી રિપોર્ટ",
-                "Manage Accounts": "ખાતાઓ મેનેજ કરો",
-                "Programs": "પ્રોગ્રામ્સ",
-                "Program Import": "પ્રોગ્રામ ઇમ્પોર્ટ",
-                "Clerk Bulk Import Students": "ક્લાર્ક બલ્ક ઇમ્પોર્ટ વિદ્યાર્થીઓ",
-                "Offer Electives": "ઇલેક્ટિવ ઓફર કરો",
-                "Assign Staff": "સ્ટાફ સોંપો",
-                "Core Enrollment": "કોર એનરોલમેન્ટ",
-                "Materials": "સામગ્રી",
-                "Moderation": "સમીક્ષા",
-                "All Downloads": "બધા ડાઉનલોડ્સ",
-                "Your Subjects": "તમારા વિષયો",
-                "No enrolled subjects found for": " માટે નોંધાયેલા વિષયો મળ્યા નથી",
-                "Assigned Subjects": "સોંપાયેલ વિષયો",
-                "Manage": "મેનેજ",
-                "Share": "શેર",
-                "No active assignments found.": "સક્રિય નિયુક્તિઓ મળી નથી.",
-                "Select a subject to view or manage materials.": "સામગ્રી જોવા અથવા મેનેજ કરવા વિષય પસંદ કરો.",
-                "Select Program": "પ્રોગ્રામ પસંદ કરો",
-                "Download Sample Excel": "નમૂના એક્સેલ ડાઉનલોડ કરો",
-                "Expected columns: Sr No | Description | Amount | Notes (optional)": "અપેક્ષિત કૉલમ્સ: ક્રમ નં | વર્ણન | રકમ | નોંધ (વૈકલ્પિક)",
-                "Expected columns: Sr No | Description | Amount | Medium Tag | Notes (optional)": "અપેક્ષિત કૉલમ્સ: ક્રમ નં | વર્ણન | રકમ | માધ્યમ ટૅગ | નોંધ (વૈકલ્પિક)",
-                "View Students": "વિદ્યાર્થીઓ જુઓ",
-                "Add Student": "વિદ્યાર્થી ઉમેરો",
-                "Bulk Import Students (Clerk)": "બલ્ક ઇમ્પોર્ટ વિદ્યાર્થીઓ (ક્લાર્ક)",
-                "Validation only — no changes saved.": "માત્ર ચકાસણી — કોઈ ફેરફાર સેવ થયા નથી.",
-                "Please select a program.": "કૃપા કરીને પ્રોગ્રામ પસંદ કરો.",
-                "Please upload an Excel file.": "કૃપા કરીને એક્સેલ ફાઇલ અપલોડ કરો.",
-                "Failed to save uploaded file.": "અપલોડ કરેલી ફાઇલ સેવ થવામાં નિષ્ફળ.",
-                "File must be an Excel (.xlsx/.xls).": "ફાઇલ એક્સેલ (.xlsx/.xls) હોવી જોઈએ.",
-                "Select program and semester before uploading.": "અપલોડ કરતા પહેલાં પ્રોગ્રામ અને સેમેસ્ટર પસંદ કરો.",
-                "Medium is required for B.Com import. Choose English or Gujarati.": "B.Com ઇમ્પોર્ટ માટે માધ્યમ જરૂરી છે. English અથવા Gujarati પસંદ કરો.",
-            }
-        }
-        def t(s):
-            s0 = (s or "")
-            if lang == "gu":
-                return tr.get("gu", {}).get(s0, s0)
-            return s0
-        return {"lang_code": lang, "t": t}

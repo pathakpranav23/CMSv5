@@ -1,18 +1,25 @@
+import os
 import pytest
 from cms_app import create_app, db
 from cms_app.models import User
 
 @pytest.fixture
 def app():
-    app = create_app()
+    _old_db = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+    try:
+        app = create_app()
+    finally:
+        if _old_db is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = _old_db
     app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     app.config['WTF_CSRF_ENABLED'] = False
     with app.app_context():
         db.create_all()
         yield app
         db.session.remove()
-        db.drop_all()
 
 @pytest.fixture
 def client(app):

@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, Response, session, send_file, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, Response, session, send_file, send_from_directory, jsonify, abort
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
 from urllib.parse import urlparse
@@ -18,6 +18,7 @@ from ..api_utils import api_success, api_error
 from werkzeug.security import check_password_hash, generate_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from functools import wraps
+from ..tenant import _require_same_trust, scoped_select  # P7 tenant isolation helpers
 from ..email_utils import send_email
 
 from datetime import datetime, timedelta, timezone
@@ -764,7 +765,10 @@ def _save_qr_image(file_storage, program_id: int) -> str:
     return os.path.join("uploads", "program_qr", final_name).replace("\\", "/")
 
 def _payment_proof_upload_dir():
-    base_dir = os.path.join(current_app.root_path, "static", "uploads", "payment_proofs")
+    # Payment proofs are sensitive PII; store them in Flask instance_path so
+    # the file is NEVER reachable through /static/.  Only the authenticated
+    # `main.download_payment_proof` route ever hands out bytes.
+    base_dir = current_app.config["PAYMENT_PROOFS_STORAGE_DIR"]
     try:
         os.makedirs(base_dir, exist_ok=True)
     except Exception:
@@ -800,7 +804,9 @@ def _save_payment_proof(file_storage, enrollment_no: str, program_id: int) -> st
     target_dir = _payment_proof_upload_dir()
     target_path = os.path.join(target_dir, final_name)
     file_storage.save(target_path)
-    return os.path.join("uploads", "payment_proofs", final_name).replace("\\", "/")
+    # Return ONLY the basename; the authenticated download route composes
+    # the full storage path at serve-time.
+    return final_name
 
 def _user_is_admin_or_principal_or_clerk():
     role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -812,7 +818,7 @@ def _user_is_admin_or_clerk():
 
 @main_bp.route("/fees/bank-details", methods=["GET"])
 @login_required
-@cache.cached(timeout=300, key_prefix=lambda: f"fees_bank_details_{getattr(current_user, 'role', 'unknown')}")
+@cache.cached(timeout=300, key_prefix=lambda: f"fees_bank_details_trust{_effective_trust_id() or 'all'}_{getattr(current_user, 'role', 'unknown')}")
 def fees_bank_details():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     # Allow view for admin/principal/clerk; restrict edit to admin/principal
@@ -822,8 +828,35 @@ def fees_bank_details():
         except Exception:
             pass
         return redirect(url_for("main.dashboard"))
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
-    details_map = { row.program_id_fk: row for row in db.session.execute(select(ProgramBankDetails)).scalars().all() }
+
+    # --- Tenant (Trust) scope fix (A-1 / A-2) ---
+    # Regular users see ONLY their trust's programs + bank details.
+    # Super Admin: respects the active workspace trust_id (from session).
+    effective_trust_id = _effective_trust_id()
+
+    # (a) Programs list: scope via Program.institute -> Institute.trust_id_fk JOIN
+    program_q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            program_q = program_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            program_q = program_q.where(false())
+    programs = db.session.execute(program_q).scalars().all()
+
+    # (b) Bank-details map: scope via ProgramBankDetails.program -> Program -> Institute
+    bd_q = select(ProgramBankDetails)
+    if effective_trust_id:
+        try:
+            bd_q = (
+                bd_q
+                .join(Program, ProgramBankDetails.program_id_fk == Program.program_id)
+                .join(Institute, Program.institute_id_fk == Institute.institute_id)
+                .filter(Institute.trust_id_fk == effective_trust_id)
+            )
+        except Exception:
+            bd_q = bd_q.where(false())
+    details_map = {row.program_id_fk: row for row in db.session.execute(bd_q).scalars().all()}
+
     return render_template(
         "fees_bank_details.html",
         programs=programs,
@@ -857,6 +890,28 @@ def fees_bank_details_edit():
         except Exception:
             pass
         return redirect(url_for("main.fees_bank_details"))
+
+    # --- Tenant (Trust) scope write-side gate (A-1 edit guard) ---
+    # Admin can only edit programs belonging to their trust (or SA workspace trust).
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id is not None:
+        try:
+            prog_trust_id = db.session.execute(
+                select(Institute.trust_id_fk)
+                .where(Institute.institute_id == program.institute_id_fk)
+            ).scalar_one_or_none()
+            if prog_trust_id is None or int(prog_trust_id) != int(effective_trust_id):
+                try:
+                    flash("You are not authorized to edit bank details for that program.", "danger")
+                except Exception:
+                    pass
+                return redirect(url_for("main.fees_bank_details"))
+        except Exception:
+            try:
+                flash("Failed to verify program ownership.", "danger")
+            except Exception:
+                pass
+            return redirect(url_for("main.fees_bank_details"))
 
     existing = db.session.execute(select(ProgramBankDetails).filter_by(program_id_fk=program.program_id)).scalars().first()
     if request.method == "POST":
@@ -944,16 +999,27 @@ def fees_bank_details_edit():
 
     return render_template("fees_bank_details_edit.html", program=program, details=existing)
 
-def get_program_bank_details_resolved(program_id: int):
+def get_program_bank_details_resolved(program_id: int, trust_id=None):
     """Resolve bank details for a program with agreed fallbacks.
 
     - If details exist for the program_id and active, return them.
     - If program name is 'MCOM' and missing, fallback to BCOM's details.
     - If program name is 'MSC(IT)', return None to hide bank block.
+
+    CRITICAL (Trust scope — fix A-5):
+    The MCOM -> BCOM fallback MUST only match programs inside the SAME trust.
+    Pass trust_id explicitly, or leave None to compute from current request.
     """
     program = db.session.get(Program, program_id)
     if not program:
         return None
+
+    if trust_id is None:
+        try:
+            trust_id = _effective_trust_id()
+        except Exception:
+            trust_id = None
+
     name = (program.program_name or "").strip().upper()
     row = db.session.execute(select(ProgramBankDetails).filter_by(program_id_fk=program_id, active=True)).scalars().first()
     if row:
@@ -961,7 +1027,14 @@ def get_program_bank_details_resolved(program_id: int):
     if name == "MSC(IT)":
         return None
     if name == "MCOM":
-        bcom = db.session.execute(select(Program).filter(Program.program_name.ilike("BCOM"))).scalars().first()
+        # Fallback BCOM search — trust-scoped to prevent cross-trust UPI mixup
+        bcom_q = select(Program).filter(Program.program_name.ilike("BCOM"))
+        if trust_id:
+            try:
+                bcom_q = bcom_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == trust_id)
+            except Exception:
+                bcom_q = bcom_q.where(false())
+        bcom = db.session.execute(bcom_q).scalars().first()
         if bcom:
             return db.session.execute(select(ProgramBankDetails).filter_by(program_id_fk=bcom.program_id, active=True)).scalars().first()
     return None
@@ -1689,23 +1762,9 @@ def _valid_external_material_url(value: str) -> bool:
 def _program_dropdown_context(q_program_raw: str = None, *, include_admin_all: bool = True, default_program_name: str = None, exclude_names: list = None, warn_unmapped: bool = True, fallback_to_first: bool = True, prefer_user_program_default: bool = True):
     role = (getattr(current_user, "role", "") or "").strip().lower()
     # Base list: all programs ordered by name
-    effective_trust_id = None
-    if getattr(current_user, "is_authenticated", False):
-        if getattr(current_user, "is_super_admin", False):
-            try:
-                effective_trust_id = int(session.get("active_trust_id") or 0) or None
-            except Exception:
-                effective_trust_id = None
-        else:
-            effective_trust_id = getattr(current_user, "trust_id_fk", None)
-
-    program_q = select(Program).order_by(Program.program_name.asc())
-    if effective_trust_id:
-        try:
-            from ..models import Institute
-            program_q = program_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
-        except Exception:
-            program_q = program_q.where(false())
+    # --- Scope: canonical tenant scoped_select (P7-C, site 1) ---
+    # Replaces manual inline _effective_trust_id variant from this location.
+    program_q = scoped_select(Program).order_by(Program.program_name.asc())
     program_list = db.session.execute(program_q).scalars().all()
     # Optional exclusions by display name
     try:
@@ -1783,7 +1842,7 @@ def _program_dropdown_context(q_program_raw: str = None, *, include_admin_all: b
             except Exception:
                 selected_program_id = None
         # For admin, do NOT fallback to first program if none is selected
-        allow_admin_fallback = bool(effective_trust_id)
+        allow_admin_fallback = bool(_effective_trust_id())
         if (selected_program_id is None) and program_list and ((role not in ("admin",)) or allow_admin_fallback) and fallback_to_first:
             try:
                 selected_program_id = program_list[0].program_id
@@ -1950,23 +2009,8 @@ def fees_entry():
                 pass
     else:
         # Admin: Apply Trust Scope
-        effective_trust_id = None
-        is_super = getattr(current_user, "is_super_admin", False)
-        if is_super:
-            try:
-                # Check for impersonated trust
-                if "active_trust_id" in session:
-                     effective_trust_id = int(session["active_trust_id"])
-            except:
-                pass
-        else:
-            effective_trust_id = getattr(current_user, "trust_id_fk", None)
-
-        q_prog = select(Program).order_by(Program.program_name.asc())
-        if effective_trust_id:
-             q_prog = q_prog.join(Institute).filter(Institute.trust_id_fk == effective_trust_id)
-        
-        programs = db.session.execute(q_prog).scalars().all()
+        # --- Scope: canonical tenant scoped_select (P7-C, site 2) ---
+        programs = db.session.execute(scoped_select(Program).order_by(Program.program_name.asc())).scalars().all()
     program_id_raw = (request.values.get("program_id") or "").strip()
     semester_raw = (request.values.get("semester") or "").strip()
     medium_raw = (request.values.get("medium") or "").strip()
@@ -2290,7 +2334,15 @@ def fees_receipt_semester():
         flash("You are not authorized to access fees receipt.", "danger")
         return redirect(url_for("main.dashboard"))
 
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    # Program dropdown for filter — trust-scoped (fix A-3)
+    effective_trust_id = _effective_trust_id()
+    program_q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            program_q = program_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            program_q = program_q.where(false())
+    programs = db.session.execute(program_q).scalars().all()
     # Optional student context for name display on receipt
     enr_raw = (request.args.get("enrollment_no") or "").strip()
     student_row = _fetch_student_mapping(enr_raw) if enr_raw else None
@@ -2498,7 +2550,15 @@ def fees_payment_status():
 
     from ..models import Program, FeePayment
 
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    # Program filter dropdown — trust-scoped (fix A-4)
+    effective_trust_id = _effective_trust_id()
+    program_q = select(Program).order_by(Program.program_name.asc())
+    if effective_trust_id:
+        try:
+            program_q = program_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
+        except Exception:
+            program_q = program_q.where(false())
+    programs = db.session.execute(program_q).scalars().all()
 
     program_id_raw = (request.args.get("program_id") or "").strip()
     semester_raw = (request.args.get("semester") or "").strip()
@@ -2980,6 +3040,68 @@ def fees_payments_queue():
     prog_ids = sorted({p.program_id_fk for p in payments if p.program_id_fk})
     programs = {p.program_id: p for p in db.session.execute(select(Program).filter(Program.program_id.in_(prog_ids))).scalars().all()} if prog_ids else {}
     return render_template("fees_verification_queue.html", payments=payments, students=students, programs=programs)
+
+# Authenticated payment-proof download.  Payment proofs contain sensitive
+# financial PII; they are stored in the Flask instance folder (NOT in /static/)
+# and are only downloadable by:
+#   - the enrolled student who owns the payment record
+#   - any admin/principal/clerk whose active trust_id matches the payment's
+#     program -> institute -> trust ownership chain
+#   - super_admin (trust_id_fk is None, treated as see-all)
+@main_bp.route("/fees/proof/<int:payment_id>", methods=["GET"])
+@login_required
+def download_payment_proof(payment_id):
+    fp = db.session.get(FeePayment, payment_id)
+    if not fp:
+        abort(404)
+    role = (getattr(current_user, "role", "") or "").strip().lower()
+    # Owner: student who personally submitted the payment.
+    # Resolve ownership via the explicit Student.user_id_fk foreign key link
+    # between the logged-in user and their enrollment record(s), so we don't
+    # depend on any particular username == enrollment_no convention.
+    if role == "student":
+        owned_enrs = db.session.execute(
+            select(Student.enrollment_no).where(
+                Student.user_id_fk == getattr(current_user, "user_id", None)
+            )
+        ).scalars().all()
+        if fp.enrollment_no not in owned_enrs:
+            abort(403)
+    else:
+        # Admin/principal/clerk/super-admin: scope via trust (or global)
+        if not _fee_payment_accessible(fp):
+            abort(403)
+    basename = (fp.proof_image_path or "").strip()
+    if not basename or os.path.isabs(basename) or ".." in basename.replace("\\", "/"):
+        abort(404)
+    # Support legacy records that still carry the old
+    # "uploads/payment_proofs/<name>" relative prefix after static migration
+    legacy_prefix = os.path.join("uploads", "payment_proofs").replace("\\", "/") + "/"
+    if basename.replace("\\", "/").startswith(legacy_prefix):
+        basename = basename.replace("\\", "/")[len(legacy_prefix):]
+    storage_dir = current_app.config["PAYMENT_PROOFS_STORAGE_DIR"]
+    target = os.path.join(storage_dir, basename)
+    if not os.path.isfile(target):
+        # Fallback: during cutover some uploads may still live in old static
+        # directory while migration hasn't run yet.  Don't hand out 404s for
+        # valid owners / authorized staff just because the file lives in the legacy
+        # location when we can still serve it here (and only here, through the
+        # authenticated route).
+        legacy_dir = os.path.join(current_app.root_path, "static", "uploads", "payment_proofs")
+        legacy_target = os.path.join(legacy_dir, basename)
+        if os.path.isfile(legacy_target):
+            storage_dir = legacy_dir
+        else:
+            abort(404)
+    ext = basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
+    mimetype = "application/pdf" if ext == "pdf" else "image/" + (ext or "png")
+    return send_from_directory(
+        storage_dir,
+        basename,
+        as_attachment=False,
+        download_name=basename,
+        mimetype=mimetype,
+    )
 
 # Verify a payment (Admin/Clerk), supports duplicate UTR override
 @main_bp.route("/fees/payments/<int:payment_id>/verify", methods=["POST"])
@@ -5994,14 +6116,9 @@ def announcements_list():
                 effective_trust_id = None
         else:
             effective_trust_id = getattr(current_user, "trust_id_fk", None)
-    prog_q = select(Program).order_by(Program.program_name.asc())
-    if effective_trust_id:
-        try:
-            from ..models import Institute
-            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
-        except Exception:
-            prog_q = prog_q.where(false())
-    programs = db.session.execute(prog_q).scalars().all()
+    # --- Scope: canonical tenant scoped_select (P7-C, site 3) ---
+    # announcements_list program dropdown
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name.asc())).scalars().all()
     q = select(Announcement)
     effective_trust_id = None
     if getattr(current_user, "is_authenticated", False):
@@ -6079,14 +6196,9 @@ def announcement_new():
                 effective_trust_id = None
         else:
             effective_trust_id = getattr(current_user, "trust_id_fk", None)
-    prog_q = select(Program).order_by(Program.program_name.asc())
-    if effective_trust_id:
-        try:
-            from ..models import Institute
-            prog_q = prog_q.join(Institute, Program.institute_id_fk == Institute.institute_id).filter(Institute.trust_id_fk == effective_trust_id)
-        except Exception:
-            prog_q = prog_q.where(false())
-    programs = db.session.execute(prog_q).scalars().all()
+    # --- Scope: canonical tenant scoped_select (P7-C, site 4) ---
+    # announcement_new/edit program dropdown
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name.asc())).scalars().all()
     # Student picker options (scoped for Principal/Faculty)
     students_for_picker = []
     try:
@@ -6316,7 +6428,9 @@ def announcement_edit(announcement_id: int):
             return redirect(url_for("main.announcements_list"))
     except Exception:
         pass
-    programs = db.session.execute(select(Program).order_by(Program.program_name.asc())).scalars().all()
+    # --- Scope: canonical tenant scoped_select (P7-C, site 5) ---
+    # announcement_edit program dropdown
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name.asc())).scalars().all()
     # Student picker options (scoped for Principal/Faculty)
     students_for_picker = []
     try:
@@ -8074,7 +8188,7 @@ def faculty_new():
         if emp_id:
             import json as _json
             EMPID_KEYS = {"emp id", "employee id", "empid", "employee code", "id"}
-            all_fac = db.session.execute(select(Faculty)).scalars().all()
+            all_fac = db.session.execute(scoped_select(Faculty)).scalars().all()
             for existing in all_fac:
                 try:
                     ed = _json.loads(existing.extra_data or "{}")
@@ -8143,7 +8257,7 @@ def faculty_new():
                     errors.append("Failed to save photo. Please try again.")
 
         if errors:
-            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+            programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
             # Scope program options for principals
             try:
                 _role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -8268,7 +8382,7 @@ def faculty_new():
         except Exception:
             db.session.rollback()
             errors.append("Failed to create faculty. Please try again.")
-            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+            programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
             # Scope program options for principals
             try:
                 _role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -8315,7 +8429,7 @@ def faculty_new():
         return redirect(url_for("main.faculty_list"))
 
     # GET
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     # Scope program options for principals
     try:
         _role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -8435,7 +8549,7 @@ def faculty_edit(faculty_id: int):
         # Emp ID uniqueness check (excluding current record)
         if emp_id:
             EMPID_KEYS = {"emp id", "employee id", "empid", "employee code", "id"}
-            all_fac = db.session.execute(select(Faculty)).scalars().all()
+            all_fac = db.session.execute(scoped_select(Faculty)).scalars().all()
             for existing in all_fac:
                 if existing.faculty_id == faculty_id:
                     continue
@@ -8510,7 +8624,7 @@ def faculty_edit(faculty_id: int):
                 errors.append("Failed to look up user for linking.")
 
         if errors:
-            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+            programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
             # Determine current linked username for display
             try:
                 current_user_link = db.session.get(User, f.user_id_fk) if f.user_id_fk else None
@@ -8591,7 +8705,7 @@ def faculty_edit(faculty_id: int):
         except Exception:
             db.session.rollback()
             errors.append("Failed to update faculty. Please try again.")
-            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+            programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
             try:
                 current_user_link = db.session.get(User, f.user_id_fk) if f.user_id_fk else None
                 linked_username = current_user_link.username if current_user_link else ""
@@ -8625,7 +8739,7 @@ def faculty_edit(faculty_id: int):
         return redirect(url_for("main.faculty_profile", faculty_id=faculty_id))
 
     # GET
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     try:
         extra = _json.loads(f.extra_data or "{}")
     except Exception:
@@ -8665,6 +8779,21 @@ def faculty_delete(faculty_id: int):
     f = db.session.get(Faculty, faculty_id)
     if not f:
         abort(404)
+
+    # --- Tenant (Trust) scope write-side gate (B-1) ---
+    # Only callers whose trust matches the Faculty row may delete it.
+    # SA with no active workspace is allowed global scope by design.
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id is not None:
+        target_trust_id = getattr(f, "trust_id_fk", None)
+        try:
+            if target_trust_id is None or int(target_trust_id) != int(effective_trust_id):
+                flash("You are not authorized to delete that faculty.", "danger")
+                return redirect(url_for("main.faculty_list"))
+        except Exception:
+            flash("Failed to verify faculty ownership.", "danger")
+            return redirect(url_for("main.faculty_list"))
+
     # If a principal removes a Faculty/Clerk from their program, delete the linked user too
     user_to_delete = None
     try:
@@ -8705,6 +8834,19 @@ def faculty_link_user(faculty_id: int):
     f = db.session.get(Faculty, faculty_id)
     if not f:
         abort(404)
+
+    # --- Tenant (Trust) scope write-side gate (B-9a — Faculty link user) ---
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id is not None:
+        target_trust_id = getattr(f, "trust_id_fk", None)
+        try:
+            if target_trust_id is None or int(target_trust_id) != int(effective_trust_id):
+                flash("You are not authorized to manage that faculty.", "danger")
+                return redirect(url_for("main.faculty_list"))
+        except Exception:
+            flash("Failed to verify faculty ownership.", "danger")
+            return redirect(url_for("main.faculty_list"))
+
     username = (request.form.get("username") or "").strip()
     if not username:
         flash("Please enter a username/email to link.", "warning")
@@ -8730,6 +8872,19 @@ def faculty_unlink_user(faculty_id: int):
     f = db.session.get(Faculty, faculty_id)
     if not f:
         abort(404)
+
+    # --- Tenant (Trust) scope write-side gate (B-9b — Faculty unlink user) ---
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id is not None:
+        target_trust_id = getattr(f, "trust_id_fk", None)
+        try:
+            if target_trust_id is None or int(target_trust_id) != int(effective_trust_id):
+                flash("You are not authorized to manage that faculty.", "danger")
+                return redirect(url_for("main.faculty_list"))
+        except Exception:
+            flash("Failed to verify faculty ownership.", "danger")
+            return redirect(url_for("main.faculty_list"))
+
     try:
         f.user_id_fk = None
         db.session.commit()
@@ -9196,12 +9351,23 @@ def students_bulk_set_active():
     results = []
     touched_program_id = None
     touched_semester = None
+    effective_trust_id = _effective_trust_id()
 
     for enrollment_no in selected_ids:
         row = student_map.get(enrollment_no)
         if not row:
             results.append({"id": enrollment_no, "status": "failed", "message": "Student not found"})
             continue
+        # --- Tenant (Trust) scope row-level gate (D-3 — bulk set-active) ---
+        if effective_trust_id is not None:
+            row_trust = row.get("trust_id_fk") if isinstance(row, dict) else getattr(row, "trust_id_fk", None)
+            try:
+                if row_trust is None or int(row_trust) != int(effective_trust_id):
+                    results.append({"id": enrollment_no, "status": "failed", "message": "Not authorized for this student"})
+                    continue
+            except Exception:
+                results.append({"id": enrollment_no, "status": "failed", "message": "Failed to verify ownership"})
+                continue
         current_state = bool(row.get("is_active"))
         if current_state == set_active:
             results.append({"id": enrollment_no, "status": "skipped", "message": "Already in requested state"})
@@ -9416,11 +9582,22 @@ def students_bulk_promote_semester():
     results = []
     touched_program_ids = set()
     student_map = _fetch_bulk_students_mapping_map(selected_ids)
+    effective_trust_id = _effective_trust_id()
     for enrollment_no in selected_ids:
         row = student_map.get(enrollment_no)
         if not row:
             results.append({"id": enrollment_no, "status": "failed", "message": "Student not found"})
             continue
+        # --- Tenant (Trust) scope row-level gate (D-3 — bulk promote-semester) ---
+        if effective_trust_id is not None:
+            row_trust = row.get("trust_id_fk") if isinstance(row, dict) else getattr(row, "trust_id_fk", None)
+            try:
+                if row_trust is None or int(row_trust) != int(effective_trust_id):
+                    results.append({"id": enrollment_no, "status": "failed", "message": "Not authorized for this student"})
+                    continue
+            except Exception:
+                results.append({"id": enrollment_no, "status": "failed", "message": "Failed to verify ownership"})
+                continue
         current_semester = row.get("current_semester")
         if current_semester == target_semester:
             results.append({"id": enrollment_no, "status": "skipped", "message": "Already in target semester"})
@@ -9688,7 +9865,7 @@ def students_new():
         if errors:
             # Show a general flash along with inline errors
             flash("Please fix the highlighted errors before submission.", "danger")
-            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+            programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
             # Scope restriction: principals/clerks only see their assigned program
             try:
                 user_role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -9847,7 +10024,7 @@ def students_new():
         return redirect(url_for("main.students"))
 
     # GET: render form
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     # Scope restriction: principals/clerks only see their assigned program
     try:
         user_role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -9887,6 +10064,20 @@ def students_edit(enrollment_no):
             return redirect(url_for("main.students"))
     except Exception:
         pass
+
+    # --- Tenant (Trust) scope write-side gate (B-3 — Student UPDATE) ---
+    # Admin/clerk may only edit students whose trust matches caller.
+    # SA with no active workspace is allowed global scope by design.
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id is not None:
+        target_trust_id = getattr(student, "trust_id_fk", None)
+        try:
+            if target_trust_id is None or int(target_trust_id) != int(effective_trust_id):
+                flash("You are not authorized to edit that student.", "danger")
+                return redirect(url_for("main.students"))
+        except Exception:
+            flash("Failed to verify student ownership.", "danger")
+            return redirect(url_for("main.students"))
 
     if request.method == "POST":
         form = request.form
@@ -10004,7 +10195,7 @@ def students_edit(enrollment_no):
 
         if errors:
             flash("Please fix the highlighted errors before submission.", "danger")
-            programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+            programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
             # Scope restriction: principals/clerks only see their assigned program
             try:
                 if user_role in ("principal", "clerk") and principal_program:
@@ -10081,7 +10272,7 @@ def students_edit(enrollment_no):
         return redirect(url_for("main.students"))
 
     # GET: render form with existing values
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     # Scope restriction: principals/clerks only see their assigned program
     try:
         user_role = (getattr(current_user, "role", "") or "").strip().lower()
@@ -10588,6 +10779,21 @@ def students_delete(enrollment_no):
             return redirect(url_for("main.students"))
     except Exception:
         pass
+
+    # --- Tenant (Trust) scope write-side gate (B-2) ---
+    # Admin/clerk may only delete students whose trust matches caller.
+    # SA with no active workspace is allowed global scope by design.
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id is not None:
+        target_trust_id = getattr(student, "trust_id_fk", None)
+        try:
+            if target_trust_id is None or int(target_trust_id) != int(effective_trust_id):
+                flash("You are not authorized to delete that student.", "danger")
+                return redirect(url_for("main.students"))
+        except Exception:
+            flash("Failed to verify student ownership.", "danger")
+            return redirect(url_for("main.students"))
+
     # Enforce safeguards: block delete if dependent records exist
     deps = {
         "attendance": db.session.scalar(select(func.count()).select_from(Attendance).filter_by(student_id_fk=enrollment_no)),
@@ -10632,6 +10838,19 @@ def students_link_user(enrollment_no):
     student_row = _fetch_student_mapping(enrollment_no)
     if not student_row:
         abort(404)
+
+    # --- Tenant (Trust) scope write-side gate (B-10a — Student link user) ---
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id is not None:
+        target_trust_id = student_row.get("trust_id_fk") if isinstance(student_row, dict) else getattr(student_row, "trust_id_fk", None)
+        try:
+            if target_trust_id is None or int(target_trust_id) != int(effective_trust_id):
+                flash("You are not authorized to manage that student.", "danger")
+                return redirect(url_for("main.students_show", enrollment_no=enrollment_no))
+        except Exception:
+            flash("Failed to verify student ownership.", "danger")
+            return redirect(url_for("main.students_show", enrollment_no=enrollment_no))
+
     username = (request.form.get("username") or "").strip()
     if not username:
         flash("Please enter a username/email to link.", "warning")
@@ -10656,6 +10875,19 @@ def students_unlink_user(enrollment_no):
     student_row = _fetch_student_mapping(enrollment_no)
     if not student_row:
         abort(404)
+
+    # --- Tenant (Trust) scope write-side gate (B-10b — Student unlink user) ---
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id is not None:
+        target_trust_id = student_row.get("trust_id_fk") if isinstance(student_row, dict) else getattr(student_row, "trust_id_fk", None)
+        try:
+            if target_trust_id is None or int(target_trust_id) != int(effective_trust_id):
+                flash("You are not authorized to manage that student.", "danger")
+                return redirect(url_for("main.students_show", enrollment_no=enrollment_no))
+        except Exception:
+            flash("Failed to verify student ownership.", "danger")
+            return redirect(url_for("main.students_show", enrollment_no=enrollment_no))
+
     try:
         _update_student_row(enrollment_no, {"user_id_fk": None})
         db.session.commit()
@@ -11185,7 +11417,7 @@ def offer_electives():
     from ..models import StudentSubjectEnrollment
 
     # Programs for filter
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     # Determine selected program (default BCA or first)
     program_id_raw = request.args.get("program_id")
     sem_raw = request.args.get("semester")
@@ -11358,7 +11590,7 @@ def offer_electives():
 @login_required
 @role_required("admin", "principal")
 def subjects_bulk_assign():
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     role_lower = (getattr(current_user, "role", "") or "").strip().lower()
     principal_program_id = getattr(current_user, "program_id_fk", None) if role_lower == "principal" else None
     program_id_raw = (request.values.get("program_id") or "").strip()
@@ -12185,7 +12417,7 @@ def subject_new():
 @login_required
 @role_required("principal", "clerk")
 def enroll_core():
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     program_id_raw = request.args.get("program_id") or request.form.get("program_id")
     sem_raw = request.args.get("semester") or request.form.get("semester")
 
@@ -12892,7 +13124,7 @@ def users_bulk_assign_program():
 def user_new():
     errors = []
     roles = ["Admin", "Principal", "Faculty", "Clerk", "Student"]
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     current_role = (getattr(current_user, "role", "") or "").strip().lower()
 
     # Super Admin: Fetch Trusts
@@ -13005,7 +13237,7 @@ def user_edit(user_id):
 
     errors = []
     roles = ["Admin", "Principal", "Faculty", "Clerk", "Student"]
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     current_role = (getattr(current_user, "role", "") or "").strip().lower()
     # Principals can only edit users within their program, excluding Admin/Principal accounts
     if current_role == "principal":
@@ -13161,6 +13393,21 @@ def user_delete(user_id: int):
             return redirect(url_for("main.users_list"))
     except Exception:
         pass
+
+    # --- Tenant (Trust) scope write-side gate (B-8 — worst corruption radius) ---
+    # Admin can only delete users belonging to their trust (or SA workspace trust).
+    # Super Admins with NO active trust workspace are allowed cross-trust (their
+    # scope is global by design).
+    effective_trust_id = _effective_trust_id()
+    if effective_trust_id is not None:
+        target_trust_id = getattr(u, "trust_id_fk", None)
+        try:
+            if target_trust_id is None or int(target_trust_id) != int(effective_trust_id):
+                flash("You are not authorized to delete that user.", "danger")
+                return redirect(url_for("main.users_list"))
+        except Exception:
+            flash("Failed to verify user ownership.", "danger")
+            return redirect(url_for("main.users_list"))
 
     # Principal restriction: only Clerk/Faculty within principal's program
     try:
@@ -14389,7 +14636,7 @@ def attendance_report_admin():
             ])
         return Response(buf.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=attendance_report.csv"})
 
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     # Precompute chart arrays for template (older Jinja compatibility)
     chart_subject_labels = [v.get("name", "") for v in totals_by_subject.values()]
     chart_subject_P = [int(v.get("P", 0)) for v in totals_by_subject.values()]
@@ -17426,8 +17673,8 @@ def students_import_template():
     # Provide a minimal CSV template for convenience
     import io
     sample = io.StringIO()
-    sample.write("Enrollment No,Surname,Student Name,Father Name,Division,Semester,Admission Academic Year,Mobile,DOB,Gender,Medium\n")
-    sample.write("2021BBA001,Doe,John,Richard,A,3,2024-25,9876543210,2003-01-15,Male,English\n")
+    sample.write("Enrollment No,Surname,Student Name,Father Name,Division,Semester,Admission Academic Year,Mobile,DOB,Gender,Medium,Permanent Address,Home City,Home Taluka,Home District,Home State,Home Pincode\n")
+    sample.write("2021BBA001,Doe,John,Richard,A,3,2024-25,9876543210,2003-01-15,Male,English,Near Bus Stand Kalsar,Kalsar,Mahuva,Bhavnagar,Gujarat,\n")
     data = sample.getvalue().encode("utf-8")
     return Response(
         data,
@@ -17448,9 +17695,9 @@ def students_import_template_xlsx():
     wb = Workbook()
     ws = wb.active
     ws.title = "Students"
-    ws.append(["Enrollment No", "Surname", "Student Name", "Father Name", "Division", "Semester", "Admission Academic Year", "Mobile", "DOB", "Gender", "Medium"])
-    ws.append(["2021BBA001", "Doe", "John", "Richard", "A", 3, "2024-25", "9876543210", "2003-01-15", "Male", "English"])
-    ws.append(["2021BBA002", "Patel", "Abhay", "Rajesh", "A", 3, "2024-25", "9988776655", "2003-02-20", "Male", "English"])
+    ws.append(["Enrollment No", "Surname", "Student Name", "Father Name", "Division", "Semester", "Admission Academic Year", "Mobile", "DOB", "Gender", "Medium", "Permanent Address", "Home City", "Home Taluka", "Home District", "Home State", "Home Pincode"])
+    ws.append(["2021BBA001", "Doe", "John", "Richard", "A", 3, "2024-25", "9876543210", "2003-01-15", "Male", "English", "Near Bus Stand Kalsar", "Kalsar", "Mahuva", "Bhavnagar", "Gujarat", ""])
+    ws.append(["2021BBA002", "Patel", "Abhay", "Rajesh", "A", 3, "2024-25", "9988776655", "2003-02-20", "Male", "English", "Mahuva 364290", "", "", "", "", "364290"])
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -23702,7 +23949,7 @@ def student_subject_allocation():
     subject_id = request.args.get("subject_id")
 
     # Data containers
-    programs = db.session.execute(select(Program).order_by(Program.program_name)).scalars().all()
+    programs = db.session.execute(scoped_select(Program).order_by(Program.program_name)).scalars().all()
     subjects = []
     students = []
     enrolled_student_ids = set()

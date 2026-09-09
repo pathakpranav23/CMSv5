@@ -27,6 +27,10 @@
             <span class="badge bg-info text-dark">Updated: {{ report.updated or 0 }}</span>
             <span class="badge bg-secondary">Skipped: {{ report.skipped or 0 }}</span>
             <span class="badge bg-warning text-dark">Divisions Created: {{ report.divisions_created or 0 }}</span>
+            <span class="badge bg-primary">Locations supplied: {{ report.location_approved or 0 }}</span>
+            <span class="badge bg-success">Locations auto-classified: {{ report.location_auto_approved or 0 }}</span>
+            <span class="badge bg-warning text-dark">Locations to review: {{ report.location_needs_review or 0 }}</span>
+            <span class="badge bg-secondary">Locations unresolved: {{ report.location_unresolved or 0 }}</span>
           </div>
         </div>
       </div>
@@ -109,7 +113,17 @@
             <td>{{ student.row_number }}</td>
             <td>{{ student.enrollment_no or '—' }}</td>
             <td>{{ student.roll_no or '—' }}</td>
-            <td><strong>{{ student.student_name }}</strong></td>
+            <td>
+              <strong>{{ student.student_name }}</strong>
+              {% if student.location %}
+              <div class="small text-muted mt-1">
+                {{ student.location.city or 'City unresolved' }}{% if student.location.taluka %}, {{ student.location.taluka }} Taluka{% endif %}{% if student.location.district %}, {{ student.location.district }}{% endif %}
+                <br><span class="badge {% if student.location.review_status in ['approved','auto_approved'] %}bg-success{% elif student.location.review_status == 'needs_review' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                  {{ student.location.review_status|replace('_',' ')|title }} · {{ student.location.confidence }}%
+                </span>
+              </div>
+              {% endif %}
+            </td>
             <td>{{ student.admission_academic_year }}</td>
             <td>{{ student.semester }}</td>
             <td>{{ student.medium_tag }}</td>
@@ -118,6 +132,7 @@
             <td>
               {% if student.status == 'error' %}<span class="text-danger"><i class="bi bi-x-circle me-1"></i>{{ student.reason }}</span>
               {% else %}<span class="text-success"><i class="bi bi-check-circle me-1"></i>Valid</span>{% endif %}
+              {% if student.location and student.location.explanation %}<div class="small text-muted mt-1">{{ student.location.explanation }}</div>{% endif %}
             </td>
           </tr>
           {% endfor %}

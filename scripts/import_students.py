@@ -2,6 +2,7 @@ import re
 import sys
 import os
 import csv
+import json
 from datetime import datetime
 from typing import Dict, List
 from sqlalchemy import func, select
@@ -19,6 +20,7 @@ if PROJECT_ROOT not in sys.path:
 
 from cms_app import create_app, db
 from cms_app.models import Program, Division, Student, User, ProgramDivisionPlan, ProgramIntakeBatch, Institute
+from cms_app.services.address_intelligence import classify_address
 
 
 HEADER_MAP: Dict[str, List[str]] = {
@@ -69,7 +71,10 @@ HEADER_MAP: Dict[str, List[str]] = {
     "photo_url": ["photo", "student photo", "photo url", "image", "profile photo"],
     "permanent_address": ["permanent address", "address"],
     "home_city": ["home city", "city", "town", "village", "city town village", "home town"],
+    "home_taluka": ["home taluka", "taluka", "tehsil", "sub district"],
     "home_district": ["home district", "district"],
+    "home_state": ["home state", "state"],
+    "home_pincode": ["home pincode", "pincode", "pin code", "postal code", "zip code"],
     "aadhar_no": [
         "aadhar card number",
         "aadhaar card number",
@@ -370,6 +375,34 @@ def import_excel(
     preview_rows = []
     preview_total = 0
     preview_limit = 200
+    location_counts = {"approved": 0, "auto_approved": 0, "needs_review": 0, "unresolved": 0}
+
+    def location_for(data):
+        return classify_address(
+            address=cell_to_str(data.get("permanent_address")),
+            city=cell_to_str(data.get("home_city")),
+            taluka=cell_to_str(data.get("home_taluka")),
+            district=cell_to_str(data.get("home_district")),
+            state=cell_to_str(data.get("home_state")),
+            pincode=cell_to_str(data.get("home_pincode")),
+        )
+
+    def apply_location(student, result):
+        if student.location_review_status == "approved" and result.review_status not in {"approved", "auto_approved"}:
+            return
+        payload = result.as_dict()
+        student.location_confidence = result.confidence
+        student.location_source = result.source
+        student.location_review_status = result.review_status
+        if result.review_status in {"approved", "auto_approved"}:
+            student.home_city = result.city or student.home_city
+            student.home_taluka = result.taluka or student.home_taluka
+            student.home_district = result.district or student.home_district
+            student.home_state = result.state or student.home_state
+            student.home_pincode = result.pincode or student.home_pincode
+            student.location_suggestion_json = None
+        else:
+            student.location_suggestion_json = json.dumps(payload, ensure_ascii=False)
 
     def add_preview(row_number, data, action, status="valid", reason=""):
         nonlocal preview_total
@@ -378,6 +411,7 @@ def import_excel(
             return
         last_name = cell_to_str(data.get("last_name"))
         first_name = cell_to_str(data.get("first_name"))
+        location = location_for(data)
         preview_rows.append({
             "row_number": row_number,
             "enrollment_no": cell_to_str(data.get("enrollment_no")),
@@ -390,6 +424,7 @@ def import_excel(
             "action": action,
             "status": status,
             "reason": reason,
+            "location": location.as_dict(),
         })
 
     # Get all existing students for this program and semester (for potential deletion)
@@ -489,6 +524,8 @@ def import_excel(
             permanent_address = cell_to_str(data.get("permanent_address"))
             home_city = cell_to_str(data.get("home_city"))
             home_district = cell_to_str(data.get("home_district"))
+            location_result = location_for(data)
+            location_counts[location_result.review_status] += 1
             # Optional medium parsing
             row_medium_raw = cell_to_str(data.get("medium_tag")).strip()
             if row_medium_raw and medium_hint and row_medium_raw.lower() != medium_hint.lower():
@@ -615,6 +652,7 @@ def import_excel(
                 if roll_no:
                     student.roll_no = roll_no
                 updated += 1
+            apply_location(student, location_result)
             # Assign medium with BCom defaulting to General when absent
             try:
                 student.medium_tag = medium_tag or (student.medium_tag or None)
@@ -706,6 +744,8 @@ def import_excel(
             permanent_address = cell_to_str(data.get("permanent_address"))
             home_city = cell_to_str(data.get("home_city"))
             home_district = cell_to_str(data.get("home_district"))
+            location_result = location_for(data)
+            location_counts[location_result.review_status] += 1
             # Optional medium parsing
             row_medium_raw = cell_to_str(data.get("medium_tag")).strip()
             if row_medium_raw and medium_hint and row_medium_raw.lower() != medium_hint.lower():
@@ -821,6 +861,7 @@ def import_excel(
                     student.admission_academic_year = admission_academic_year
                     student.intake_batch_id_fk = intake_batch.intake_batch_id if intake_batch else None
                 updated += 1
+            apply_location(student, location_result)
             # Assign medium with BCom defaulting to General when absent
             try:
                 student.medium_tag = medium_tag or (student.medium_tag or None)
@@ -896,6 +937,10 @@ def import_excel(
         "preview_rows": preview_rows,
         "preview_total": preview_total,
         "preview_limit": preview_limit,
+        "location_approved": location_counts["approved"],
+        "location_auto_approved": location_counts["auto_approved"],
+        "location_needs_review": location_counts["needs_review"],
+        "location_unresolved": location_counts["unresolved"],
         "path": path,
     }
 

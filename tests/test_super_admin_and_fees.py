@@ -846,6 +846,7 @@ def test_students_pages_tolerate_missing_aadhar_column(client, app, monkeypatch)
             "gender": "Male",
             "medium_tag": "English",
             "permanent_address": "Rajkot",
+            "csrf_token": csrf,
         },
         follow_redirects=True,
     )
@@ -871,7 +872,7 @@ def test_students_pages_tolerate_missing_aadhar_column(client, app, monkeypatch)
 
     link_response = client.post(
         "/students/ENR_STUDENTS_MIN/link-user",
-        data={"username": "student_link_target"},
+        data={"username": "student_link_target", "csrf_token": csrf},
         follow_redirects=True,
     )
     assert link_response.status_code == 200
@@ -879,6 +880,7 @@ def test_students_pages_tolerate_missing_aadhar_column(client, app, monkeypatch)
 
     unlink_response = client.post(
         "/students/ENR_STUDENTS_MIN/unlink-user",
+        data={"csrf_token": csrf},
         follow_redirects=True,
     )
     assert unlink_response.status_code == 200
@@ -994,6 +996,7 @@ def test_students_pages_tolerate_missing_aadhar_column(client, app, monkeypatch)
             "program_id": str(program_id),
             "semester": "4",
             "subject_id": "",
+            "csrf_token": csrf,
             "file": (bulk_csv, "students.csv"),
         },
         content_type="multipart/form-data",
@@ -1006,6 +1009,7 @@ def test_students_pages_tolerate_missing_aadhar_column(client, app, monkeypatch)
 
     delete_response = client.post(
         "/students/ENR_STUDENTS_MIN_DELETE/delete",
+        data={"csrf_token": csrf},
         follow_redirects=True,
     )
     assert delete_response.status_code == 200
@@ -1098,7 +1102,7 @@ def test_subject_pages_tolerate_missing_optional_subject_columns(client, app, mo
     monkeypatch.setattr(main_routes.db.session, "get", guarded_get)
     monkeypatch.setattr(main_routes, "_fetch_subject_mapping", legacy_fetch_subject)
 
-    _login(client, "admin_subject_minimal")
+    csrf = _login(client, "admin_subject_minimal")
 
     list_response = client.get(f"/subjects?program_id={program_id}&semester=4")
     assert list_response.status_code == 200
@@ -1110,7 +1114,7 @@ def test_subject_pages_tolerate_missing_optional_subject_columns(client, app, mo
 
     toggle_response = client.post(
         f"/subjects/{subject_id}/toggle-elective",
-        data={"action": "make_elective"},
+        data={"action": "make_elective", "csrf_token": csrf},
         follow_redirects=True,
     )
     assert toggle_response.status_code == 200

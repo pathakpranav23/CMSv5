@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 
 from .. import db
-from ..models import Division, Program, ProgramDivisionPlan, Student, StudentSubjectEnrollment
+from ..models import Division, Institute, Program, ProgramDivisionPlan, Student, StudentSubjectEnrollment
 
 
 def _division_codes(count: int) -> list[str]:
@@ -72,6 +72,22 @@ def build_allocation_preview(
     program = db.session.get(Program, program_id)
     if not program:
         raise ValueError("Program not found.")
+    # --- Program ownership (Trust) scope gate (Priority 6 — division_allocation, site 1) ---
+    # If a trust_id is supplied (non-SA request), verify the Program actually
+    # belongs to that trust via Program → Institute.trust_id_fk.  Raises
+    # ValueError so the caller surface a 404 / danger flash like any other
+    # bad program_id.
+    if trust_id:
+        try:
+            prog_trust = db.session.execute(
+                select(Institute.trust_id_fk).where(Institute.institute_id == program.institute_id_fk)
+            ).scalar_one_or_none()
+            if prog_trust is None or int(prog_trust) != int(trust_id):
+                raise ValueError("Program not found.")
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError("Failed to verify program ownership.")
     if semester < 1 or semester > 8:
         raise ValueError("Semester is outside the supported range.")
     if approved_intake <= 0:

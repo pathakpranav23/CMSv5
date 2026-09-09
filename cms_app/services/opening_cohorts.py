@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 
 from .. import db
-from ..models import Program, Student
+from ..models import Institute, Program, Student
 
 
 ACADEMIC_YEAR_RE = re.compile(r"^(\d{4})-(\d{2})$")
@@ -54,6 +54,21 @@ def build_opening_cohort_preview(program_id: int, current_academic_year: str, tr
     program = db.session.get(Program, int(program_id))
     if not program:
         raise ValueError("Program was not found.")
+    # --- Program ownership (Trust) scope gate (Priority 6 — opening_cohorts) ---
+    # If a trust_id is supplied (non-SA request), verify the loaded Program
+    # actually belongs to that trust via Program → Institute.trust_id_fk.
+    # Prevents IDs from other trusts being passed via hand-crafted URLs.
+    if trust_id:
+        try:
+            prog_trust = db.session.execute(
+                select(Institute.trust_id_fk).where(Institute.institute_id == program.institute_id_fk)
+            ).scalar_one_or_none()
+            if prog_trust is None or int(prog_trust) != int(trust_id):
+                raise ValueError("Program was not found.")
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError("Failed to verify program ownership.")
     duration = max(int(program.program_duration_years or 0), 1)
     maximum_semester = duration * 2
     query = select(Student).where(

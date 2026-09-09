@@ -172,6 +172,11 @@ def test_numeric_admission_start_year_matches_selected_academic_year(app, tmp_pa
             "medium_tag": "English",
             "division_code": "Unassigned",
             "action": "create",
-            "status": "valid",
-            "reason": "",
-        }]
+                "status": "valid",
+                "reason": "",
+                "location": {
+                    "city": "", "taluka": "", "district": "", "state": "", "pincode": "",
+                    "confidence": 0, "source": "unresolved", "review_status": "unresolved",
+                    "explanation": "No address was supplied.",
+                },
+            }]

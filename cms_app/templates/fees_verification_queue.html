@@ -1,9 +1,9 @@
 {% extends 'layout.html' %}
-{% block title %}Verification Queue{% endblock %}
+{% block title %}{{ t('Verification Queue') }}{% endblock %}
 {% block content %}
 <div class="container py-4">
   <div class="section-header d-flex justify-content-between align-items-center mb-3">
-    <h3 class="mb-0 title">Verification Queue</h3>
+    <h3 class="mb-0 title">{{ t('Verification Queue') }}</h3>
     <a class="btn btn-outline-secondary" href="{{ url_for('main.dashboard') }}">Back</a>
   </div>
 
@@ -42,7 +42,7 @@
             <td>{{ p.utr }}</td>
             <td>
               {% if p.proof_image_path %}
-                <a class="btn btn-sm btn-outline-primary" target="_blank" href="{{ url_for('static', filename=p.proof_image_path) }}">View</a>
+                <a class="btn btn-sm btn-outline-primary" target="_blank" href="{{ url_for('main.download_payment_proof', payment_id=p.payment_id) }}">View</a>
               {% else %}
                 <span class="text-muted">—</span>
               {% endif %}

@@ -8,6 +8,7 @@ from sqlalchemy import MetaData, Table, func, select
 from . import csrf_required, db
 from .decorators import super_admin_required
 from .email_utils import send_email
+from .tenant import _effective_trust_id  # canonical SA-workspace-aware implementation
 
 
 route_overrides_bp = Blueprint("route_overrides", __name__)
@@ -47,12 +48,6 @@ def _fetch_student_map(enrollment_no):
 def _user_is_admin_or_clerk():
     role = (getattr(current_user, "role", "") or "").strip().lower()
     return role in ("admin", "clerk")
-
-
-def _effective_trust_id():
-    if getattr(current_user, "is_super_admin", False):
-        return None
-    return getattr(current_user, "trust_id_fk", None)
 
 
 def _queue_query():
